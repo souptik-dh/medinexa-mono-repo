@@ -272,6 +272,21 @@ const requests = [
     method: "DELETE",
     url: "/branches/:branchId/staff/:staffId",
   }),
+  req({
+    folder: "Branch Staff",
+    name: "Get Staff Permissions",
+    method: "GET",
+    url: "/branches/:branchId/staff/:staffId/permissions",
+  }),
+  req({
+    folder: "Branch Staff",
+    name: "Update Staff Permissions",
+    method: "PATCH",
+    url: "/branches/:branchId/staff/:staffId/permissions",
+    body: rawJson({
+      permissions: ["appointments:confirm", "appointments:payment", "appointments:complete", "appointments:cancel"],
+    }),
+  }),
 
   // ── Doctors, Invites & Assignments ──────────────────────────────────────
   req({

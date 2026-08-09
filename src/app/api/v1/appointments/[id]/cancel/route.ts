@@ -6,6 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { conflict } from "@/lib/errors";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
 import { createNotification, notifyBranchStaff } from "@/lib/notifications";
+import { assertBranchStaffPermission } from "@/lib/permissions";
 
 const schema = z.object({
   reason: z.string().trim().max(500).optional().nullable(),
@@ -17,6 +18,10 @@ export const PATCH = api(undefined, async (ctx) => {
 
   await withTransaction(async (conn) => {
     const appt = await getAppointmentInScope(conn, ctx.params.id, auth);
+
+    if (auth.role === "branch_staff") {
+      await assertBranchStaffPermission(conn, auth, appt.branch_id, "appointments:cancel");
+    }
 
     if (auth.role === "patient") {
       if (appt.status === "paid") {

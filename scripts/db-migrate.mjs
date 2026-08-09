@@ -40,6 +40,17 @@ try {
     console.log('Applied migration: doctors.photo_url');
   }
 
+  const [staffPermCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'branch_staff' AND COLUMN_NAME = 'permissions_json'`,
+  );
+  if (Number(staffPermCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE branch_staff ADD COLUMN permissions_json JSON NULL AFTER added_by`,
+    );
+    console.log('Applied migration: branch_staff.permissions_json');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();

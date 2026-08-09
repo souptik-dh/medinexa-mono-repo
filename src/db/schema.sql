@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS branch_staff (
   branch_id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
   added_by CHAR(36) NOT NULL,
+  permissions_json JSON NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uniq_staff_branch_user (branch_id, user_id),

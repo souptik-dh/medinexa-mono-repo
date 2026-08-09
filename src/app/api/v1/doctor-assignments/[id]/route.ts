@@ -5,6 +5,7 @@ import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { forbidden, notFound, conflict } from "@/lib/errors";
 import { newId } from "@/lib/ids";
+import { assertBranchStaffPermission } from "@/lib/permissions";
 
 const slotTemplateSchema = z
   .object({
@@ -41,7 +42,7 @@ async function loadAssignment(assignmentId: string) {
 }
 
 export const PATCH = api(undefined, async (ctx) => {
-  const auth = requireRoles(ctx.auth, ["clinic_owner", "doctor"]);
+  const auth = requireRoles(ctx.auth, ["clinic_owner", "doctor", "branch_staff"]);
   const assignment = await loadAssignment(ctx.params.id);
   const body = parseBody(patchSchema, await readJson(ctx.request));
 
@@ -50,6 +51,9 @@ export const PATCH = api(undefined, async (ctx) => {
     if (assignment.owner_user_id !== auth.userId) {
       throw notFound("ASSIGNMENT_NOT_FOUND", "Doctor assignment not found.");
     }
+    isOwner = true;
+  } else if (auth.role === "branch_staff") {
+    await assertBranchStaffPermission(pool, auth, assignment.branch_id, "doctors:manage");
     isOwner = true;
   } else if (auth.role === "doctor") {
     if (assignment.doctor_id !== auth.doctorId) {
@@ -114,10 +118,14 @@ export const PATCH = api(undefined, async (ctx) => {
 });
 
 export const DELETE = api(undefined, async (ctx) => {
-  const auth = requireRoles(ctx.auth, ["clinic_owner"]);
+  const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const assignment = await loadAssignment(ctx.params.id);
-  if (assignment.owner_user_id !== auth.userId) {
-    throw notFound("ASSIGNMENT_NOT_FOUND", "Doctor assignment not found.");
+  if (auth.role === "clinic_owner") {
+    if (assignment.owner_user_id !== auth.userId) {
+      throw notFound("ASSIGNMENT_NOT_FOUND", "Doctor assignment not found.");
+    }
+  } else {
+    await assertBranchStaffPermission(pool, auth, assignment.branch_id, "doctors:manage");
   }
 
   const [active] = await pool.query<Row[]>(

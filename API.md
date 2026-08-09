@@ -606,6 +606,21 @@ Auth: `clinic_owner`, must own the branch. Persists the branch photo after a dir
 
 ## Branch staff
 
+Branch staff have **fine-grained permissions** scoped to their branch. Permissions are stored per staff membership (a JSON array on the `branch_staff` row) and enforced server-side on the actions they gate.
+
+Permission keys:
+
+| Key | Gates |
+|---|---|
+| `appointments:confirm` | `PATCH /appointments/:id/confirm` |
+| `appointments:payment` | `PATCH /appointments/:id/payment` |
+| `appointments:complete` | `PATCH /appointments/:id/complete` |
+| `appointments:cancel` | `PATCH /appointments/:id/cancel` |
+| `staff:manage` | Add/remove staff + read/update permissions |
+| `doctors:manage` | Invite/revoke doctors, update/remove assignments, doctor photos |
+
+New staff default to `["appointments:confirm", "appointments:payment", "appointments:complete", "appointments:cancel"]`. The `clinic_owner` is always allowed and is unaffected. A `branch_staff` calling a gated action without the required permission gets `403 PERMISSION_DENIED`.
+
 ### GET /branches/:id/staff
 
 Auth: `clinic_owner` (owns branch) or `branch_staff` (own branch only).
@@ -621,6 +636,7 @@ Auth: `clinic_owner` (owns branch) or `branch_staff` (own branch only).
       "name": "Rohit Sharma",
       "email": "staff@clinic.com",
       "added_by": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+      "permissions": ["appointments:confirm", "appointments:payment", "appointments:complete", "appointments:cancel"],
       "created_at": "2026-08-03T10:00:00Z"
     }
   ]
@@ -631,13 +647,19 @@ Auth: `clinic_owner` (owns branch) or `branch_staff` (own branch only).
 
 ### POST /branches/:id/staff
 
-Auth: `clinic_owner`. Creates the staff user and sends a login instruction email.
+Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. Creates the staff user and sends a login instruction email.
 
 **Request body**
 
 ```json
 { "name": "Rohit Sharma", "email": "staff@clinic.com" }
 ```
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | required |
+| `email` | string | required |
+| `permissions` | string[]? | optional, any subset of the keys above; defaults to the four appointment permissions |
 
 **Response `201`**
 
@@ -648,15 +670,46 @@ Auth: `clinic_owner`. Creates the staff user and sends a login instruction email
   "name": "Rohit Sharma",
   "email": "staff@clinic.com",
   "added_by": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "permissions": ["appointments:confirm", "appointments:payment", "appointments:complete", "appointments:cancel"],
   "created_at": "2026-08-09T10:00:00.000Z"
 }
 ```
 
 **Errors:** `409 STAFF_ALREADY_EXISTS_FOR_BRANCH`.
 
+### GET /branches/:id/staff/:staffId/permissions
+
+Auth: `clinic_owner` (owns branch) or the `branch_staff` viewing their own row.
+
+**Response `200`**
+
+```json
+{
+  "staff_id": "1a2b3c4d-5e6f-7890-abcd-ef1234567890",
+  "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+  "permissions": ["appointments:confirm", "appointments:payment", "appointments:complete", "appointments:cancel"]
+}
+```
+
+**Errors:** `404 STAFF_NOT_FOUND`, `403 PERMISSION_DENIED`.
+
+### PATCH /branches/:id/staff/:staffId/permissions
+
+Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. Full replace — send the complete desired set.
+
+**Request body**
+
+```json
+{ "permissions": ["appointments:confirm", "staff:manage", "doctors:manage"] }
+```
+
+**Response `200`** — same shape as GET, with the updated `permissions`.
+
+**Errors:** `404 STAFF_NOT_FOUND`, `400 VALIDATION_ERROR` (unknown key).
+
 ### DELETE /branches/:id/staff/:staffId
 
-Auth: `clinic_owner`. Hard-deletes the staff membership row.
+Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. Hard-deletes the staff membership row.
 
 **Response `204 No Content`**
 
@@ -666,7 +719,7 @@ Auth: `clinic_owner`. Hard-deletes the staff membership row.
 
 ### POST /branches/:id/doctor-invites
 
-Auth: `clinic_owner`, must own the branch. Emails a single-use invite code (the code is **never** returned in the response).
+Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:manage`. Emails a single-use invite code (the code is **never** returned in the response).
 
 **Request body**
 
@@ -727,7 +780,7 @@ Auth: `clinic_owner`, must own the branch. Emails a single-use invite code (the 
 
 ### GET /branches/:id/doctor-invites
 
-Auth: `clinic_owner`.
+Auth: `clinic_owner` **or** `branch_staff` with `doctors:manage`.
 
 **Response `200`**
 
@@ -750,7 +803,7 @@ Auth: `clinic_owner`.
 
 ### DELETE /doctor-invites/:id
 
-Auth: `clinic_owner`. Revokes a pending invite.
+Auth: `clinic_owner` **or** `branch_staff` with `doctors:manage`. Revokes a pending invite.
 
 **Response `204 No Content`**
 
@@ -784,7 +837,7 @@ Public. Returns only **accepted** doctors assigned to the branch.
 
 ### POST /branches/:id/doctors/:doctorId/photo/signature
 
-Auth: `clinic_owner`, must own the branch. Returns a Cloudinary upload grant for a doctor assigned to the branch.
+Auth: `clinic_owner`, must own the branch **or** `branch_staff` with `doctors:manage`. Returns a Cloudinary upload grant for a doctor assigned to the branch.
 
 **Response `200`** — same shape as `POST /doctors/me/photo/signature`, with a `public_id` under the `doctors/` folder.
 
@@ -792,7 +845,7 @@ Auth: `clinic_owner`, must own the branch. Returns a Cloudinary upload grant for
 
 ### POST /branches/:id/doctors/:doctorId/photo
 
-Auth: `clinic_owner`, must own the branch. Persists the doctor's profile photo (visible on all branches) after a direct Cloudinary upload.
+Auth: `clinic_owner`, must own the branch **or** `branch_staff` with `doctors:manage`. Persists the doctor's profile photo (visible on all branches) after a direct Cloudinary upload.
 
 **Request body**
 
@@ -812,7 +865,7 @@ Auth: `clinic_owner`, must own the branch. Persists the doctor's profile photo (
 
 ### PATCH /doctor-assignments/:id
 
-Auth: `clinic_owner` (branch scope) **or** `doctor` (self). Doctors may only update `slot_template`/`certificate`; attempting to set `fee_amount` as a doctor returns `403 FEE_OWNER_CONTROLLED`.
+Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff` with `doctors:manage`. Doctors may only update `slot_template`/`certificate`; attempting to set `fee_amount` as a doctor returns `403 FEE_OWNER_CONTROLLED`.
 
 **Request body** (partial)
 
@@ -841,7 +894,7 @@ Auth: `clinic_owner` (branch scope) **or** `doctor` (self). Doctors may only upd
 
 ### DELETE /doctor-assignments/:id
 
-Auth: `clinic_owner`. Deactivates the assignment (soft-removes the doctor from the branch; does not delete the doctor's account).
+Auth: `clinic_owner` **or** `branch_staff` with `doctors:manage`. Deactivates the assignment (soft-removes the doctor from the branch; does not delete the doctor's account).
 
 **Response `204 No Content`**
 
@@ -1049,7 +1102,7 @@ Auth: any authenticated role, scope as above.
 
 ### PATCH /appointments/:id/confirm
 
-Auth: `branch_staff` (own branch) or `clinic_owner`. Requires current status `pending`. No body.
+Auth: `branch_staff` (own branch, requires `appointments:confirm`) or `clinic_owner`. Requires current status `pending`. No body.
 
 **Response `200`** — Appointment object (`status: "confirmed"`).
 
@@ -1057,7 +1110,7 @@ Auth: `branch_staff` (own branch) or `clinic_owner`. Requires current status `pe
 
 ### PATCH /appointments/:id/payment
 
-Auth: `branch_staff` or `clinic_owner`. Header `Idempotency-Key` **required**. Requires current status `confirmed`. Records a `Payment` and marks the appointment `paid`.
+Auth: `branch_staff` (own branch, requires `appointments:payment`) or `clinic_owner`. Header `Idempotency-Key` **required**. Requires current status `confirmed`. Records a `Payment` and marks the appointment `paid`.
 
 **Request body**
 
@@ -1081,7 +1134,7 @@ Auth: `branch_staff` or `clinic_owner`. Header `Idempotency-Key` **required**. R
 
 ### PATCH /appointments/:id/complete
 
-Auth: `branch_staff` or `clinic_owner`. Requires current status `paid`. No body.
+Auth: `branch_staff` (own branch, requires `appointments:complete`) or `clinic_owner`. Requires current status `paid`. No body.
 
 **Response `200`** — Appointment object (`status: "completed"`).
 
@@ -1089,7 +1142,7 @@ Auth: `branch_staff` or `clinic_owner`. Requires current status `paid`. No body.
 
 ### PATCH /appointments/:id/cancel
 
-Auth: `patient` (own, from `pending`/`confirmed`) or `branch_staff`/`clinic_owner` (from `pending`/`confirmed`/`paid`).
+Auth: `patient` (own, from `pending`/`confirmed`) or `branch_staff` (own branch, requires `appointments:cancel`) or `clinic_owner` (from `pending`/`confirmed`/`paid`).
 
 **Request body**
 
@@ -1372,6 +1425,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `INVALID_OTP` / `OTP_MAX_ATTEMPTS` | 401 | OTP failure |
 | `REFRESH_TOKEN_INVALID` | 401 | Refresh token invalid/expired/revoked |
 | `INSUFFICIENT_ROLE` | 403 | Authenticated but wrong role |
+| `PERMISSION_DENIED` | 403 | `branch_staff` lacks the required branch permission for the action |
 | `NOT_CLINIC_OWNER` | 403 | Not the owner of the clinic/branch |
 | `NOT_ASSIGNED_DOCTOR` | 403 | Doctor is not assigned to this appointment |
 | `NO_APPOINTMENT_RELATIONSHIP` | 403 | No appointment link with the patient |
