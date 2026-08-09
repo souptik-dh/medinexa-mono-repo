@@ -1,0 +1,69 @@
+import { z } from "zod";
+import { api, json, readJson } from "@/lib/http";
+import { pool, type Row } from "@/lib/db";
+import { parseBody } from "@/lib/validators";
+import { requireRoles } from "@/lib/auth";
+import { notFound } from "@/lib/errors";
+
+export const GET = api(undefined, async (ctx) => {
+  const auth = requireRoles(ctx.auth, ["doctor"]);
+  const [rows] = await pool.query<Row[]>(
+    `SELECT id, name, specialization, reg_no, phone, certificate_url, bio
+       FROM doctors WHERE id = ? AND deleted_at IS NULL`,
+    [auth.doctorId],
+  );
+  const doc = rows[0];
+  if (!doc) throw notFound("DOCTOR_NOT_FOUND", "Doctor profile not found.");
+  return json({
+    id: doc.id,
+    name: doc.name,
+    specialization: doc.specialization,
+    reg_no: doc.reg_no,
+    phone: doc.phone,
+    certificate_url: doc.certificate_url,
+    bio: doc.bio,
+  });
+});
+
+const patchSchema = z.object({
+  name: z.string().trim().min(1).max(255).optional(),
+  reg_no: z.string().trim().max(64).nullable().optional(),
+  phone: z.string().trim().max(32).nullable().optional(),
+  bio: z.string().trim().max(2000).nullable().optional(),
+});
+
+export const PATCH = api(undefined, async (ctx) => {
+  const auth = requireRoles(ctx.auth, ["doctor"]);
+  const [rows] = await pool.query<Row[]>(
+    `SELECT id FROM doctors WHERE id = ? AND deleted_at IS NULL`,
+    [auth.doctorId],
+  );
+  if (!rows[0]) throw notFound("DOCTOR_NOT_FOUND", "Doctor profile not found.");
+  const body = parseBody(patchSchema, await readJson(ctx.request));
+
+  const fields: string[] = [];
+  const params: unknown[] = [];
+  if (body.name !== undefined) { fields.push("name = ?"); params.push(body.name); }
+  if (body.reg_no !== undefined) { fields.push("reg_no = ?"); params.push(body.reg_no); }
+  if (body.phone !== undefined) { fields.push("phone = ?"); params.push(body.phone); }
+  if (body.bio !== undefined) { fields.push("bio = ?"); params.push(body.bio); }
+  if (fields.length > 0) {
+    await pool.query(`UPDATE doctors SET ${fields.join(", ")} WHERE id = ?`, [...params, auth.doctorId]);
+  }
+
+  const [updated] = await pool.query<Row[]>(
+    `SELECT id, name, specialization, reg_no, phone, certificate_url, bio
+       FROM doctors WHERE id = ? AND deleted_at IS NULL`,
+    [auth.doctorId],
+  );
+  const doc = updated[0];
+  return json({
+    id: doc.id,
+    name: doc.name,
+    specialization: doc.specialization,
+    reg_no: doc.reg_no,
+    phone: doc.phone,
+    certificate_url: doc.certificate_url,
+    bio: doc.bio,
+  });
+});
