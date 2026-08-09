@@ -28,6 +28,18 @@ try {
     console.log('Applied migration: doctors.reg_no');
   }
 
+  const [photoCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctors' AND COLUMN_NAME = 'photo_url'`,
+  );
+  if (Number(photoCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE doctors
+         ADD COLUMN photo_url VARCHAR(500) NULL AFTER certificate_url`,
+    );
+    console.log('Applied migration: doctors.photo_url');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();
