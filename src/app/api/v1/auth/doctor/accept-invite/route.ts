@@ -111,6 +111,7 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
       specialization: invite.specialization ?? null,
       phone: invite.phone ?? null,
       certificate_url: invite.certificate_url ?? null,
+      photo_url: null,
       bio: null,
     },
   });

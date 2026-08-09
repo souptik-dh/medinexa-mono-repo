@@ -20,7 +20,7 @@ export const GET = api(undefined, async (ctx) => {
   const tz = branch.timezone as string;
 
   const [rows] = await pool.query<Row[]>(
-    `SELECT d.id, d.name, d.specialization, d.phone, d.certificate_url,
+    `SELECT d.id, d.name, d.specialization, d.phone, d.certificate_url, d.photo_url,
             dba.id AS assignment_id, dba.fee_amount, dba.currency, dba.branch_id
        FROM doctor_branch_assignments dba
        JOIN doctors d ON d.id = dba.doctor_id AND d.deleted_at IS NULL
@@ -38,6 +38,7 @@ export const GET = api(undefined, async (ctx) => {
       specialization: r.specialization,
       phone: r.phone,
       certificate_url: r.certificate_url,
+      photo_url: r.photo_url,
       fee_amount: Number(r.fee_amount),
       currency: r.currency,
       branch_id: r.branch_id,

@@ -8,7 +8,7 @@ import { notFound } from "@/lib/errors";
 export const GET = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["doctor"]);
   const [rows] = await pool.query<Row[]>(
-    `SELECT id, name, specialization, reg_no, phone, certificate_url, bio
+    `SELECT id, name, specialization, reg_no, phone, certificate_url, photo_url, bio
        FROM doctors WHERE id = ? AND deleted_at IS NULL`,
     [auth.doctorId],
   );
@@ -21,6 +21,7 @@ export const GET = api(undefined, async (ctx) => {
     reg_no: doc.reg_no,
     phone: doc.phone,
     certificate_url: doc.certificate_url,
+    photo_url: doc.photo_url,
     bio: doc.bio,
   });
 });
@@ -52,7 +53,7 @@ export const PATCH = api(undefined, async (ctx) => {
   }
 
   const [updated] = await pool.query<Row[]>(
-    `SELECT id, name, specialization, reg_no, phone, certificate_url, bio
+    `SELECT id, name, specialization, reg_no, phone, certificate_url, photo_url, bio
        FROM doctors WHERE id = ? AND deleted_at IS NULL`,
     [auth.doctorId],
   );
@@ -64,6 +65,7 @@ export const PATCH = api(undefined, async (ctx) => {
     reg_no: doc.reg_no,
     phone: doc.phone,
     certificate_url: doc.certificate_url,
+    photo_url: doc.photo_url,
     bio: doc.bio,
   });
 });

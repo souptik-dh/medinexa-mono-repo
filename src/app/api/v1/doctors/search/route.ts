@@ -21,7 +21,7 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
   const prefix = `${escapeLike(q)}%`;
 
   const [rows] = await pool.query<Row[]>(
-    `SELECT d.id, d.name, d.specialization, d.reg_no, d.phone,
+    `SELECT d.id, d.name, d.specialization, d.reg_no, d.phone, d.photo_url,
             (SELECT COUNT(DISTINCT b.clinic_id)
                FROM doctor_branch_assignments dba
                JOIN branches b ON b.id = dba.branch_id AND b.deleted_at IS NULL
@@ -41,6 +41,7 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
       specialization: r.specialization,
       reg_no: r.reg_no,
       phone: r.phone,
+      photo_url: r.photo_url,
       clinic_count: Number(r.clinic_count),
     })),
   });
