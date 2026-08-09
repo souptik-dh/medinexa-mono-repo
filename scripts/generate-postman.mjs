@@ -250,6 +250,34 @@ const requests = [
     body: rawJson({ public_id: "{{publicId}}" }),
     test: ['const j = pm.response.json();', 'if (j.photo_url) pm.collectionVariables.set("fileUrl", j.photo_url);'],
   }),
+  req({
+    folder: "Branches",
+    name: "Branch Gallery Signature",
+    method: "POST",
+    url: "/branches/:branchId/gallery/signature",
+    test: ['const j = pm.response.json();', 'if (j.public_id) pm.collectionVariables.set("publicId", j.public_id);'],
+  }),
+  req({
+    folder: "Branches",
+    name: "Add Gallery Image",
+    method: "POST",
+    url: "/branches/:branchId/gallery",
+    body: rawJson({ public_id: "{{publicId}}" }),
+    test: ['const j = pm.response.json();', 'if (j.id) pm.collectionVariables.set("galleryImageId", j.id);'],
+  }),
+  req({
+    folder: "Branches",
+    name: "List Gallery Images",
+    method: "GET",
+    url: "/branches/:branchId/gallery",
+    auth: false,
+  }),
+  req({
+    folder: "Branches",
+    name: "Remove Gallery Image",
+    method: "DELETE",
+    url: "/branches/:branchId/gallery/:galleryImageId",
+  }),
 
   // ── Branch Staff ────────────────────────────────────────────────────────
   req({
@@ -592,6 +620,7 @@ const variables = [
   { key: "notificationId", value: "" },
   { key: "publicId", value: "" },
   { key: "fileUrl", value: "" },
+  { key: "galleryImageId", value: "" },
 ].map((v) => ({ ...v, type: "string" }));
 
 const folders = [...new Set(requests.map((r) => r.folder))];

@@ -4,6 +4,7 @@ import { parseBody, emailSchema } from "@/lib/validators";
 import { pool, type Row } from "@/lib/db";
 import { hashToken, issueTokens } from "@/lib/auth";
 import { loadRoleBindings } from "@/lib/auth-flows";
+import { loadStaffPermissions } from "@/lib/permissions";
 import { ApiError, forbidden, unauthorized } from "@/lib/errors";
 
 const MAX_ATTEMPTS = 5;
@@ -52,6 +53,9 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
   if (!user) throw forbidden("ACCOUNT_DISABLED", "This staff account is no longer active.");
 
   const { branchId, doctorId } = await loadRoleBindings(user.id, "branch_staff");
+  const permissions = branchId
+    ? await loadStaffPermissions(pool, branchId, user.id)
+    : [];
   const { access_token, refresh_token } = await issueTokens({
     id: user.id,
     role: "branch_staff",
@@ -67,6 +71,7 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
       email: user.email,
       role: user.role,
       branch_id: branchId,
+      permissions,
     },
   });
 });

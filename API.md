@@ -81,7 +81,7 @@ Default `100 req/min` per token. Auth endpoints `10 req/min` per IP. Overrides:
 
 Two upload models are used:
 
-**Photos (doctor & branch)** — uploaded directly to Cloudinary from the client, in two steps:
+**Photos (doctor, branch, branch gallery)** — uploaded directly to Cloudinary from the client, in two steps:
 
 1. `POST <resource>/photo/signature` (auth required) returns a short-lived signed upload grant. The client **must** upload to the exact `public_id` it was issued.
 2. The client uploads the file directly to the returned `upload_url` (Cloudinary), sending `file` + `public_id` + `timestamp` + `api_key` + `cloud_name` + `allowed_formats` + `signature` as `multipart/form-data`.
@@ -601,6 +601,70 @@ Auth: `clinic_owner`, must own the branch. Persists the branch photo after a dir
 ```
 
 **Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 INVALID_PUBLIC_ID`, `400 VALIDATION_ERROR`.
+
+### POST /branches/:id/gallery/signature
+
+Auth: `clinic_owner`, must own the branch. Returns a Cloudinary upload grant for a **gallery** image. Same two-step flow as the branch photo; the `public_id` is under the `branches/gallery/` folder.
+
+**Response `200`** — same shape as `POST /branches/:id/photo/signature`, with `public_id: "branches/gallery/<uuid>"`.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`.
+
+### POST /branches/:id/gallery
+
+Auth: `clinic_owner`, must own the branch. Persists one gallery image after a direct Cloudinary upload. Repeat per image to build the gallery.
+
+**Request body**
+
+```json
+{ "public_id": "branches/gallery/3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d" }
+```
+
+**Response `201`**
+
+```json
+{
+  "id": "7c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f",
+  "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+  "image_url": "https://res.cloudinary.com/p274ocjz/image/upload/branches/gallery/3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "position": 0,
+  "created_at": "2026-08-09T12:00:00.000Z"
+}
+```
+
+Images are ordered by `position` (assigned sequentially on upload).
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 INVALID_PUBLIC_ID`, `400 VALIDATION_ERROR`.
+
+### GET /branches/:id/gallery
+
+Public.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "7c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f",
+      "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+      "image_url": "https://res.cloudinary.com/p274ocjz/image/upload/branches/gallery/3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+      "position": 0,
+      "created_at": "2026-08-09T12:00:00Z"
+    }
+  ]
+}
+```
+
+**Errors:** `404 BRANCH_NOT_FOUND`.
+
+### DELETE /branches/:id/gallery/:imageId
+
+Auth: `clinic_owner`, must own the branch. Removes an image from the gallery.
+
+**Response `204 No Content`**
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `404 IMAGE_NOT_FOUND`.
 
 ---
 
@@ -1431,7 +1495,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `NO_APPOINTMENT_RELATIONSHIP` | 403 | No appointment link with the patient |
 | `FEE_OWNER_CONTROLLED` | 403 | Doctor tried to change the fee |
 | `INVALID_SIGNED_URL` | 403 | Bad/expired file URL signature |
-| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
+| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
 | `INVITE_EXPIRED` / `OTP_EXPIRED` | 410 | Expired one-time code |
 | `FILE_TOO_LARGE` | 413 | Upload exceeds size limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Upload has a disallowed MIME type |

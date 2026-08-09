@@ -98,6 +98,19 @@ CREATE TABLE IF NOT EXISTS branch_staff (
   CONSTRAINT fk_staff_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS branch_gallery_images (
+  id CHAR(36) NOT NULL,
+  branch_id CHAR(36) NOT NULL,
+  public_id VARCHAR(255) NOT NULL,
+  image_url VARCHAR(500) NOT NULL,
+  position INT NOT NULL DEFAULT 0,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_gallery_public_id (branch_id, public_id),
+  KEY idx_gallery_branch (branch_id, position),
+  CONSTRAINT fk_gallery_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS doctor_invites (
   id CHAR(36) NOT NULL,
   branch_id CHAR(36) NOT NULL,
