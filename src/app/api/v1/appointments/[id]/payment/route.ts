@@ -8,6 +8,7 @@ import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/a
 import { createNotification } from "@/lib/notifications";
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
+import { assertBranchStaffPermission } from "@/lib/permissions";
 
 const schema = z.object({
   fee_amount: z.coerce.number().positive().max(1_000_000),
@@ -38,6 +39,7 @@ export const PATCH = api({ rateLimit: 20 }, async (ctx) => {
     const paymentId = newId();
     await withTransaction(async (conn) => {
       const appt = await getAppointmentInScope(conn, ctx.params.id, auth);
+      await assertBranchStaffPermission(conn, auth, appt.branch_id, "appointments:payment");
       await transition(conn, appt, "paid", auth.userId, ["confirmed"]);
       await conn.query(
         `INSERT INTO payments (id, appointment_id, amount, currency, method, collected_by, reference_no)

@@ -3,11 +3,11 @@ import { api, json, readJson } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
 import { parseBody, emailSchema } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
-import { getOwnedBranch } from "@/lib/scope";
-import { conflict, isUniqueViolation } from "@/lib/errors";
+import { conflict, isUniqueViolation, notFound } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { generateInviteCode, hashToken } from "@/lib/auth";
 import { sendEmail } from "@/lib/notifications";
+import { requireBranchAccess } from "@/lib/permissions";
 
 const slotTemplateSchema = z
   .object({
@@ -35,9 +35,15 @@ const createSchema = z.object({
 });
 
 export const POST = api(undefined, async (ctx) => {
-  const auth = requireRoles(ctx.auth, ["clinic_owner"]);
+  const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const branchId = ctx.params.id;
-  const branch = await getOwnedBranch(pool, branchId, auth.userId);
+  await requireBranchAccess(pool, auth, branchId, "doctors:manage");
+  const [branchRows] = await pool.query<Row[]>(
+    `SELECT * FROM branches WHERE id = ? AND deleted_at IS NULL`,
+    [branchId],
+  );
+  const branch = branchRows[0];
+  if (!branch) throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
   const body = parseBody(createSchema, await readJson(ctx.request));
 
   const [existing] = await pool.query<Row[]>(
@@ -120,9 +126,9 @@ export const POST = api(undefined, async (ctx) => {
 });
 
 export const GET = api(undefined, async (ctx) => {
-  const auth = requireRoles(ctx.auth, ["clinic_owner"]);
+  const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const branchId = ctx.params.id;
-  await getOwnedBranch(pool, branchId, auth.userId);
+  await requireBranchAccess(pool, auth, branchId, "doctors:manage");
 
   const [rows] = await pool.query<Row[]>(
     `SELECT id, name, email, status, expires_at, created_at

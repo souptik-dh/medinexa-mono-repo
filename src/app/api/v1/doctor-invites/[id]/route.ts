@@ -2,9 +2,10 @@ import { api, noContent } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { conflict, notFound } from "@/lib/errors";
+import { assertBranchStaffPermission } from "@/lib/permissions";
 
 export const DELETE = api(undefined, async (ctx) => {
-  const auth = requireRoles(ctx.auth, ["clinic_owner"]);
+  const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const inviteId = ctx.params.id;
 
   const [rows] = await pool.query<Row[]>(
@@ -16,8 +17,13 @@ export const DELETE = api(undefined, async (ctx) => {
     [inviteId],
   );
   const invite = rows[0];
-  if (!invite || invite.owner_user_id !== auth.userId) {
-    throw notFound("INVITE_NOT_FOUND", "Invite not found.");
+  if (!invite) throw notFound("INVITE_NOT_FOUND", "Invite not found.");
+  if (auth.role === "clinic_owner") {
+    if (invite.owner_user_id !== auth.userId) {
+      throw notFound("INVITE_NOT_FOUND", "Invite not found.");
+    }
+  } else {
+    await assertBranchStaffPermission(pool, auth, invite.branch_id, "doctors:manage");
   }
   if (invite.status === "accepted") {
     throw conflict(

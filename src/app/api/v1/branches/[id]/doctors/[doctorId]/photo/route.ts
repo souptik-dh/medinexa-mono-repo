@@ -2,18 +2,18 @@ import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
-import { getOwnedBranch } from "@/lib/scope";
 import { notFound } from "@/lib/errors";
 import { parseBody } from "@/lib/validators";
 import { assertPublicId, cloudinaryImageUrl, getCloudinary } from "@/lib/cloudinary";
+import { requireBranchAccess } from "@/lib/permissions";
 
 const schema = z.object({
   public_id: z.string().trim().min(1).max(255),
 });
 
 export const POST = api(undefined, async (ctx) => {
-  const auth = requireRoles(ctx.auth, ["clinic_owner"]);
-  await getOwnedBranch(pool, ctx.params.id, auth.userId);
+  const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
+  await requireBranchAccess(pool, auth, ctx.params.id, "doctors:manage");
 
   const [rows] = await pool.query<Row[]>(
     `SELECT d.id

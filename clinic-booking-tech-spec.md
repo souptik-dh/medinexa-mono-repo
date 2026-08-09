@@ -129,16 +129,28 @@ Auth: `clinic_owner`. `multipart/form-data`, field `file` (image, ≤10MB). → 
 
 ### 3.4 Branch Staff
 
+Branch staff hold **fine-grained permissions** on their branch (stored as a JSON array on `branch_staff.permissions_json`), enforced server-side:
+
+`appointments:confirm` · `appointments:payment` · `appointments:complete` · `appointments:cancel` · `staff:manage` · `doctors:manage`
+
+New staff default to the four `appointments:*` permissions. The `clinic_owner` is always allowed; a `branch_staff` calling a gated action without the permission gets `403 PERMISSION_DENIED`.
+
 #### `GET /branches/:id/staff`
 Auth: `clinic_owner` (owns branch) or `branch_staff` (self branch only, read-only). → `200 { items: BranchStaff[] }`.
-`BranchStaff = { id, branch_id, name, email, added_by, created_at }`
+`BranchStaff = { id, branch_id, name, email, added_by, permissions, created_at }`
 
 #### `POST /branches/:id/staff`
-Auth: `clinic_owner`. Body: `{ name, email }` → `201 BranchStaff`. Triggers `POST /notifications` internal event `staff_invited` (email with login instructions — passwordless OTP, no invite-accept step needed since staff aren't handling licensed clinical work).
+Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. Body: `{ name, email, permissions? }` → `201 BranchStaff`. Triggers `POST /notifications` internal event `staff_invited` (email with login instructions — passwordless OTP, no invite-accept step needed since staff aren't handling licensed clinical work).
 Errors: `409 STAFF_ALREADY_EXISTS_FOR_BRANCH`.
 
+#### `GET /branches/:id/staff/:staffId/permissions`
+Auth: `clinic_owner` or the staff member themselves. → `200 { staff_id, branch_id, permissions }`.
+
+#### `PATCH /branches/:id/staff/:staffId/permissions`
+Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. Body: `{ permissions: [...] }` (full replace). → `200 { staff_id, branch_id, permissions }`.
+
 #### `DELETE /branches/:id/staff/:staffId`
-Auth: `clinic_owner`. → `204`.
+Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. → `204`.
 
 ---
 
@@ -356,7 +368,7 @@ The tables below exist to satisfy the resource contracts in §3 — if a field i
 `users(id, email, phone, password_hash, role, status, created_at, updated_at)`
 `clinics(id, name, description, owner_user_id, created_at, updated_at, deleted_at)`
 `branches(id, clinic_id, name, address, phone, lat, lng, timezone, photo_url, created_at, updated_at, deleted_at)`
-`branch_staff(id, branch_id, user_id, added_by, created_at)`
+`branch_staff(id, branch_id, user_id, added_by, permissions_json, created_at)`
 `doctor_invites(id, branch_id, email, invite_code_hash, status, invited_by, expires_at, created_at)`
 `doctors(id, user_id, name, specialization, phone, certificate_url, bio, created_at, deleted_at)`
 `doctor_branch_assignments(id, doctor_id, branch_id, fee_amount, currency, is_active)`
