@@ -237,10 +237,17 @@ const requests = [
   }),
   req({
     folder: "Branches",
-    name: "Upload Branch Photo",
+    name: "Branch Photo Signature",
+    method: "POST",
+    url: "/branches/:branchId/photo/signature",
+    test: ['const j = pm.response.json();', 'if (j.public_id) pm.collectionVariables.set("publicId", j.public_id);'],
+  }),
+  req({
+    folder: "Branches",
+    name: "Set Branch Photo",
     method: "POST",
     url: "/branches/:branchId/photo",
-    body: formData(),
+    body: rawJson({ public_id: "{{publicId}}" }),
     test: ['const j = pm.response.json();', 'if (j.photo_url) pm.collectionVariables.set("fileUrl", j.photo_url);'],
   }),
 
@@ -334,6 +341,36 @@ const requests = [
     method: "PATCH",
     url: "/doctors/me",
     body: rawJson({ name: "Dr. John Smith", reg_no: "MC-654321", phone: "+919900000002", bio: "MBBS, MD (Cardiology)" }),
+  }),
+  req({
+    folder: "Doctors, Invites & Assignments",
+    name: "My Doctor Photo Signature",
+    method: "POST",
+    url: "/doctors/me/photo/signature",
+    test: ['const j = pm.response.json();', 'if (j.public_id) pm.collectionVariables.set("publicId", j.public_id);'],
+  }),
+  req({
+    folder: "Doctors, Invites & Assignments",
+    name: "Set My Doctor Photo",
+    method: "POST",
+    url: "/doctors/me/photo",
+    body: rawJson({ public_id: "{{publicId}}" }),
+    test: ['const j = pm.response.json();', 'if (j.photo_url) pm.collectionVariables.set("fileUrl", j.photo_url);'],
+  }),
+  req({
+    folder: "Doctors, Invites & Assignments",
+    name: "Branch Doctor Photo Signature",
+    method: "POST",
+    url: "/branches/:branchId/doctors/:doctorId/photo/signature",
+    test: ['const j = pm.response.json();', 'if (j.public_id) pm.collectionVariables.set("publicId", j.public_id);'],
+  }),
+  req({
+    folder: "Doctors, Invites & Assignments",
+    name: "Set Branch Doctor Photo",
+    method: "POST",
+    url: "/branches/:branchId/doctors/:doctorId/photo",
+    body: rawJson({ public_id: "{{publicId}}" }),
+    test: ['const j = pm.response.json();', 'if (j.photo_url) pm.collectionVariables.set("fileUrl", j.photo_url);'],
   }),
   req({
     folder: "Doctors, Invites & Assignments",
@@ -538,6 +575,7 @@ const variables = [
   { key: "jobId", value: "" },
   { key: "medicalDocumentId", value: "" },
   { key: "notificationId", value: "" },
+  { key: "publicId", value: "" },
   { key: "fileUrl", value: "" },
 ].map((v) => ({ ...v, type: "string" }));
 

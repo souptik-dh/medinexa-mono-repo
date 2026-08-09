@@ -11,8 +11,6 @@ const SIGNING_SECRET =
 export const SIGNED_URL_TTL_SECONDS = 15 * 60;
 
 export type UploadKind =
-  | "branch-photo"
-  | "doctor-photo"
   | "doctor-certificate"
   | "prescription-scan"
   | "medical-doc";
