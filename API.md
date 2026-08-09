@@ -3,7 +3,7 @@
 Live implementation reference for the MediBook API. Every endpoint below documents the **actual request/response payloads** produced by the code in `src/app/api/v1`, with JSON examples.
 
 - **Base URL:** `http://localhost:3000/api/v1` (dev) or `https://api.medibook.app/api/v1` (prod)
-- **Format:** JSON only (`Content-Type: application/json`), except upload endpoints which use `multipart/form-data`.
+- **Format:** JSON only (`Content-Type: application/json`), except legacy upload endpoints (certificates, prescription scans, medical documents) which use `multipart/form-data`, and photo uploads which use a two-step Cloudinary flow (see [File uploads](#file-uploads)).
 - **Auth:** `Authorization: Bearer <access_token>` (JWT, 15 min TTL). Refresh via `POST /auth/refresh`.
 - **IDs:** all resource IDs are UUIDs (v4), generated server-side.
 
@@ -79,9 +79,19 @@ Default `100 req/min` per token. Auth endpoints `10 req/min` per IP. Overrides:
 
 ### File uploads
 
-- `multipart/form-data`, single field named `file`.
-- The API returns a **signed, time-limited URL** (15 min expiry) — never a permanent public link.
-- Standard errors: `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`, `400 FILE_REQUIRED`, `400 FILE_EMPTY`.
+Two upload models are used:
+
+**Photos (doctor & branch)** — uploaded directly to Cloudinary from the client, in two steps:
+
+1. `POST <resource>/photo/signature` (auth required) returns a short-lived signed upload grant. The client **must** upload to the exact `public_id` it was issued.
+2. The client uploads the file directly to the returned `upload_url` (Cloudinary), sending `file` + `public_id` + `timestamp` + `api_key` + `cloud_name` + `allowed_formats` + `signature` as `multipart/form-data`.
+3. `POST <resource>/photo` (auth required) persists the result — body `{ "public_id": "<issued id>" }`. The API validates the id and stores a Cloudinary delivery URL.
+
+Allowed formats: `jpg`, `png`, `webp`, `gif`. Size limits are enforced by the Cloudinary account settings.
+
+**Legacy server-stored uploads (certificates, prescription scans, medical documents)** — `multipart/form-data`, single field named `file`. The API returns a **signed, time-limited URL** (15 min expiry) — never a permanent public link.
+
+Common upload errors: `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`, `400 FILE_REQUIRED`, `400 FILE_EMPTY`. Photo persist endpoints return `400 INVALID_PUBLIC_ID` when the `public_id` was not issued by a signature endpoint.
 
 ### Partial updates
 
@@ -546,20 +556,51 @@ Auth: `clinic_owner`. Soft-delete. `?force=true` cancels active appointments fir
 
 **Errors:** `409 CLINIC_HAS_ACTIVE_APPOINTMENTS`.
 
-### POST /branches/:id/photo
+### POST /branches/:id/photo/signature
 
-Auth: `clinic_owner`. `multipart/form-data`, field `file`.
-Allowed: `image/jpeg`, `image/png`, `image/webp`, `image/gif`, ≤ 10MB.
+Auth: `clinic_owner`, must own the branch. Returns a Cloudinary upload grant for the branch photo.
 
 **Response `200`**
 
 ```json
 {
-  "photo_url": "https://api.medibook.app/api/v1/files/branch-photo-3f9d6b5e.jpg?expires=1786255200&sig=9d3c1f0a..."
+  "upload_url": "https://api.cloudinary.com/v1_1/p274ocjz/image/upload",
+  "cloud_name": "p274ocjz",
+  "api_key": "181659462436854",
+  "timestamp": 1754700000,
+  "public_id": "branches/3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "allowed_formats": ["jpg", "png", "webp", "gif"],
+  "signature": "9d3c1f0a..."
 }
 ```
 
-**Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`.
+The `public_id` is server-generated and bound to the signature. Upload the file directly to `upload_url` as `multipart/form-data` with fields `file`, `public_id`, `timestamp`, `api_key`, `cloud_name`, `allowed_formats`, `signature`, then call `POST /branches/:id/photo` to persist.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`.
+
+### POST /branches/:id/photo
+
+Auth: `clinic_owner`, must own the branch. Persists the branch photo after a direct Cloudinary upload.
+
+**Request body**
+
+```json
+{ "public_id": "branches/3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `public_id` | string | required, must be one issued by `POST /branches/:id/photo/signature` |
+
+**Response `200`**
+
+```json
+{
+  "photo_url": "https://res.cloudinary.com/p274ocjz/image/upload/branches/3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d"
+}
+```
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 INVALID_PUBLIC_ID`, `400 VALIDATION_ERROR`.
 
 ---
 
@@ -741,6 +782,34 @@ Public. Returns only **accepted** doctors assigned to the branch.
 
 `next_available_slot` is a localized `YYYY-MM-DDTHH:MM:00` string or `null`.
 
+### POST /branches/:id/doctors/:doctorId/photo/signature
+
+Auth: `clinic_owner`, must own the branch. Returns a Cloudinary upload grant for a doctor assigned to the branch.
+
+**Response `200`** — same shape as `POST /doctors/me/photo/signature`, with a `public_id` under the `doctors/` folder.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `404 DOCTOR_NOT_FOUND` (doctor not assigned to the branch).
+
+### POST /branches/:id/doctors/:doctorId/photo
+
+Auth: `clinic_owner`, must own the branch. Persists the doctor's profile photo (visible on all branches) after a direct Cloudinary upload.
+
+**Request body**
+
+```json
+{ "public_id": "doctors/3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d" }
+```
+
+**Response `200`**
+
+```json
+{
+  "photo_url": "https://res.cloudinary.com/p274ocjz/image/upload/doctors/3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d"
+}
+```
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `404 DOCTOR_NOT_FOUND`, `400 INVALID_PUBLIC_ID`, `400 VALIDATION_ERROR`.
+
 ### PATCH /doctor-assignments/:id
 
 Auth: `clinic_owner` (branch scope) **or** `doctor` (self). Doctors may only update `slot_template`/`certificate`; attempting to set `fee_amount` as a doctor returns `403 FEE_OWNER_CONTROLLED`.
@@ -809,6 +878,50 @@ Auth: `doctor`.
 **Response `200`** — updated doctor object (same shape as GET).
 
 **Errors:** `409` on duplicate `reg_no`, `404 DOCTOR_NOT_FOUND`.
+
+### POST /doctors/me/photo/signature
+
+Auth: `doctor`. Returns a Cloudinary upload grant for the doctor's profile photo.
+
+**Response `200`**
+
+```json
+{
+  "upload_url": "https://api.cloudinary.com/v1_1/p274ocjz/image/upload",
+  "cloud_name": "p274ocjz",
+  "api_key": "181659462436854",
+  "timestamp": 1754700000,
+  "public_id": "doctors/3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "allowed_formats": ["jpg", "png", "webp", "gif"],
+  "signature": "9d3c1f0a..."
+}
+```
+
+**Errors:** `404 DOCTOR_NOT_FOUND`.
+
+### POST /doctors/me/photo
+
+Auth: `doctor`. Persists the doctor's profile photo after a direct Cloudinary upload.
+
+**Request body**
+
+```json
+{ "public_id": "doctors/3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `public_id` | string | required, must be one issued by `POST /doctors/me/photo/signature` |
+
+**Response `200`**
+
+```json
+{
+  "photo_url": "https://res.cloudinary.com/p274ocjz/image/upload/doctors/3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d"
+}
+```
+
+**Errors:** `404 DOCTOR_NOT_FOUND`, `400 INVALID_PUBLIC_ID`, `400 VALIDATION_ERROR`.
 
 ### GET /doctors/search
 
@@ -1252,6 +1365,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `INVALID_JSON` | 400 | Body is not a valid JSON object |
 | `IDEMPOTENCY_KEY_REQUIRED` | 400 | Missing `Idempotency-Key` header |
 | `FILE_REQUIRED` / `FILE_EMPTY` | 400 | Missing or empty upload field |
+| `INVALID_PUBLIC_ID` | 400 | Photo `public_id` was not issued by a signature endpoint |
 | `UNAUTHORIZED` | 401 | No/invalid token |
 | `INVALID_CREDENTIALS` | 401 | Wrong email/password |
 | `ACCOUNT_DISABLED` | 401/403 | Account not `active` |

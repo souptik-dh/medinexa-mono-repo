@@ -1,11 +1,14 @@
-import { api, json } from "@/lib/http";
+import { z } from "zod";
+import { api, json, readJson } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
-import { saveUpload, signFileUrl } from "@/lib/upload";
+import { parseBody } from "@/lib/validators";
+import { assertPublicId, cloudinaryImageUrl, getCloudinary } from "@/lib/cloudinary";
 
-const IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
-const MAX_BYTES = 10 * 1024 * 1024;
+const schema = z.object({
+  public_id: z.string().trim().min(1).max(255),
+});
 
 export const POST = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["doctor"]);
@@ -15,10 +18,9 @@ export const POST = api(undefined, async (ctx) => {
   );
   if (!rows[0]) throw notFound("DOCTOR_NOT_FOUND", "Doctor profile not found.");
 
-  const form = await ctx.request.formData();
-  const file = form.get("file");
-  const saved = await saveUpload(file, "doctor-photo", MAX_BYTES, IMAGE_MIMES);
-  const photoUrl = signFileUrl(saved.fileName);
+  const body = parseBody(schema, await readJson(ctx.request));
+  const publicId = assertPublicId(body.public_id, "doctors");
+  const photoUrl = cloudinaryImageUrl(getCloudinary().cloudName, publicId);
 
   await pool.query(`UPDATE doctors SET photo_url = ? WHERE id = ?`, [photoUrl, auth.doctorId]);
   return json({ photo_url: photoUrl });
