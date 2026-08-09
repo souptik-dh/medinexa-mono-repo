@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "7d25d436-914a-45a7-b988-46617dd0bd41",
+    "_postman_id": "77c5903a-0bd7-4682-b623-32c373d491e0",
     "name": "MediBook API",
     "description": "Generated from API.md. Base URL is configurable via the `baseUrl` collection variable.\n\nLogin/register requests auto-save `access_token`, `refresh_token`, and resource IDs (`clinicId`, `branchId`, `doctorId`, `appointmentId`, ...) into collection variables, which the downstream requests reference via `{{...}}` placeholders. Run the auth requests first, then the resource requests in order.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -88,6 +88,11 @@
     },
     {
       "key": "fileUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "galleryImageId",
       "value": "",
       "type": "string"
     }
@@ -1032,6 +1037,171 @@
               }
             }
           ]
+        },
+        {
+          "name": "Branch Gallery Signature",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/branches/{{branchId}}/gallery/signature",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "branches",
+                "{{branchId}}",
+                "gallery",
+                "signature"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "if (j.public_id) pm.collectionVariables.set(\"publicId\", j.public_id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Add Gallery Image",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/branches/{{branchId}}/gallery",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "branches",
+                "{{branchId}}",
+                "gallery"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"public_id\": \"{{publicId}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "if (j.id) pm.collectionVariables.set(\"galleryImageId\", j.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Gallery Images",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/branches/{{branchId}}/gallery",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "branches",
+                "{{branchId}}",
+                "gallery"
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Remove Gallery Image",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/branches/{{branchId}}/gallery/{{galleryImageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "branches",
+                "{{branchId}}",
+                "gallery",
+                "{{galleryImageId}}"
+              ]
+            },
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
         }
       ]
     },

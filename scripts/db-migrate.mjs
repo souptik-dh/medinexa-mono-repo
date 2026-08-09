@@ -51,6 +51,28 @@ try {
     console.log('Applied migration: branch_staff.permissions_json');
   }
 
+  const [galleryTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'branch_gallery_images'`,
+  );
+  if (Number(galleryTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE branch_gallery_images (
+        id CHAR(36) NOT NULL,
+        branch_id CHAR(36) NOT NULL,
+        public_id VARCHAR(255) NOT NULL,
+        image_url VARCHAR(500) NOT NULL,
+        position INT NOT NULL DEFAULT 0,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_gallery_public_id (branch_id, public_id),
+        KEY idx_gallery_branch (branch_id, position),
+        CONSTRAINT fk_gallery_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: branch_gallery_images table');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();

@@ -125,6 +125,16 @@ Auth: `clinic_owner`. Soft-delete, same active-appointment guard as clinics. →
 #### `POST /branches/:id/photo`
 Auth: `clinic_owner`. `multipart/form-data`, field `file` (image, ≤10MB). → `200 { photo_url }`. Errors: `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`.
 
+#### Branch gallery
+Multiple images per branch (`branch_gallery_images`, ordered by `position`). Same two-step Cloudinary flow as the branch photo.
+
+- `POST /branches/:id/gallery/signature` — Auth: `clinic_owner`. → Cloudinary grant (`public_id` under `branches/gallery/`).
+- `POST /branches/:id/gallery` — Auth: `clinic_owner`. Body: `{ public_id }` → `201 { id, branch_id, image_url, position, created_at }`.
+- `GET /branches/:id/gallery` — Public. → `200 { items: GalleryImage[] }`.
+- `DELETE /branches/:id/gallery/:imageId` — Auth: `clinic_owner`. → `204`.
+
+`GalleryImage = { id, branch_id, image_url, position, created_at }`
+
 ---
 
 ### 3.4 Branch Staff
@@ -368,6 +378,7 @@ The tables below exist to satisfy the resource contracts in §3 — if a field i
 `users(id, email, phone, password_hash, role, status, created_at, updated_at)`
 `clinics(id, name, description, owner_user_id, created_at, updated_at, deleted_at)`
 `branches(id, clinic_id, name, address, phone, lat, lng, timezone, photo_url, created_at, updated_at, deleted_at)`
+`branch_gallery_images(id, branch_id, public_id, image_url, position, created_at)`
 `branch_staff(id, branch_id, user_id, added_by, permissions_json, created_at)`
 `doctor_invites(id, branch_id, email, invite_code_hash, status, invited_by, expires_at, created_at)`
 `doctors(id, user_id, name, specialization, phone, certificate_url, bio, created_at, deleted_at)`
