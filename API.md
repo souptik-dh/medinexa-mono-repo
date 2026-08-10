@@ -405,7 +405,13 @@ Auth: `clinic_owner`.
 ```json
 {
   "name": "Sunrise Multispeciality",
-  "description": "General & cardiac care"
+  "description": "General & cardiac care",
+  "nearby_location": "Near SV Road Bridge",
+  "city": "Mumbai",
+  "district": "Mumbai Suburban",
+  "pin_code": "400058",
+  "state": "Maharashtra",
+  "post_office": "Andheri West GPO"
 }
 ```
 
@@ -416,6 +422,12 @@ Auth: `clinic_owner`.
   "id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
   "name": "Sunrise Multispeciality",
   "description": "General & cardiac care",
+  "nearby_location": null,
+  "city": null,
+  "district": null,
+  "pin_code": null,
+  "state": null,
+  "post_office": null,
   "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
   "created_at": "2026-08-09T10:00:00.000Z"
 }
@@ -446,7 +458,7 @@ Auth: `clinic_owner`, must own the clinic.
 **Request body** (partial)
 
 ```json
-{ "name": "Sunrise Heart & Care", "description": null }
+{ "name": "Sunrise Heart & Care", "description": null, "nearby_location": "Opposite City Mall", "city": "Mumbai", "district": "Mumbai Suburban", "pin_code": "400058", "state": "Maharashtra", "post_office": "Andheri West GPO" }
 ```
 
 **Response `200`**
@@ -456,6 +468,12 @@ Auth: `clinic_owner`, must own the clinic.
   "id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
   "name": "Sunrise Heart & Care",
   "description": null,
+  "nearby_location": "Opposite City Mall",
+  "city": "Mumbai",
+  "district": "Mumbai Suburban",
+  "pin_code": "400058",
+  "state": "Maharashtra",
+  "post_office": "Andheri West GPO",
   "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
   "created_at": "2026-08-01T09:30:00Z"
 }
@@ -491,6 +509,12 @@ Public.
       "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
       "name": "Sunrise — Andheri",
       "address": "12, SV Road, Andheri West, Mumbai 400058",
+      "nearby_location": null,
+      "city": "Mumbai",
+      "district": "Mumbai Suburban",
+      "pin_code": "400058",
+      "state": "Maharashtra",
+      "post_office": null,
       "phone": "+912240010010",
       "lat": 19.1195670,
       "lng": 72.8470000,
@@ -514,6 +538,11 @@ Auth: `clinic_owner`, must own the clinic.
 {
   "name": "Sunrise — Andheri",
   "address": "12, SV Road, Andheri West, Mumbai 400058",
+  "nearby_location": "Near SV Road Bridge",
+  "city": "Mumbai",
+  "district": "Mumbai Suburban",
+  "pin_code": "400058",
+  "state": "Maharashtra",
   "phone": "+912240010010",
   "lat": 19.119567,
   "lng": 72.847,
@@ -525,6 +554,12 @@ Auth: `clinic_owner`, must own the clinic.
 |---|---|---|
 | `name` | string | required, 1–255 |
 | `address` | string | required, 1–500 |
+| `nearby_location` | string? | optional, helpful landmark or nearby place, max 500 |
+| `city` | string? | optional, max 255 |
+| `district` | string? | optional, max 255 |
+| `pin_code` | string? | optional, postal code, max 20 |
+| `state` | string? | optional, max 255 |
+| `post_office` | string? | optional, post office name, max 255 |
 | `phone` | string | required, 1–32 |
 | `lat` | number? | -90…90 |
 | `lng` | number? | -180…180 |
@@ -538,7 +573,7 @@ Auth: `clinic_owner`, must own the clinic.
 
 Auth: `clinic_owner`, must own the parent clinic.
 
-**Request body** (partial) — any subset of `name, address, phone, lat, lng, timezone`.
+**Request body** (partial) — any subset of `name, address, nearby_location, city, district, pin_code, state, phone, lat, lng, timezone`.
 
 ```json
 { "phone": "+912240010011" }

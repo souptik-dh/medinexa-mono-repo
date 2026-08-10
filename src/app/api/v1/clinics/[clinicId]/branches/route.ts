@@ -19,6 +19,12 @@ function isTimezone(tz: string): boolean {
 const createSchema = z.object({
   name: z.string().trim().min(1).max(255),
   address: z.string().trim().min(1).max(500),
+  nearby_location: z.string().trim().max(500).optional().nullable(),
+  city: z.string().trim().max(255).optional().nullable(),
+  district: z.string().trim().max(255).optional().nullable(),
+  pin_code: z.string().trim().max(20).optional().nullable(),
+  state: z.string().trim().max(255).optional().nullable(),
+  post_office: z.string().trim().max(255).optional().nullable(),
   phone: z.string().trim().min(1).max(32),
   lat: z.coerce.number().min(-90).max(90).optional().nullable(),
   lng: z.coerce.number().min(-180).max(180).optional().nullable(),
@@ -39,7 +45,7 @@ export const GET = api(undefined, async (ctx) => {
   if (!clinics[0]) throw notFound("CLINIC_NOT_FOUND", "Clinic not found.");
 
   const [branches] = await pool.query<Row[]>(
-    `SELECT id, clinic_id, name, address, phone, lat, lng, timezone, photo_url, created_at
+    `SELECT id, clinic_id, name, address, nearby_location, city, district, pin_code, state, post_office, phone, lat, lng, timezone, photo_url, created_at
        FROM branches WHERE clinic_id = ? AND deleted_at IS NULL ORDER BY created_at ASC`,
     [clinicId],
   );
@@ -49,6 +55,12 @@ export const GET = api(undefined, async (ctx) => {
       clinic_id: b.clinic_id,
       name: b.name,
       address: b.address,
+      nearby_location: b.nearby_location ?? null,
+      city: b.city ?? null,
+      district: b.district ?? null,
+      pin_code: b.pin_code ?? null,
+      state: b.state ?? null,
+      post_office: b.post_office ?? null,
       phone: b.phone,
       lat: b.lat != null ? Number(b.lat) : null,
       lng: b.lng != null ? Number(b.lng) : null,
@@ -67,9 +79,24 @@ export const POST = api(undefined, async (ctx) => {
 
   const id = newId();
   await pool.query(
-    `INSERT INTO branches (id, clinic_id, name, address, phone, lat, lng, timezone)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id, clinicId, body.name, body.address, body.phone, body.lat ?? null, body.lng ?? null, body.timezone],
+    `INSERT INTO branches (id, clinic_id, name, address, nearby_location, city, district, pin_code, state, post_office, phone, lat, lng, timezone)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      clinicId,
+      body.name,
+      body.address,
+      body.nearby_location ?? null,
+      body.city ?? null,
+      body.district ?? null,
+      body.pin_code ?? null,
+      body.state ?? null,
+      body.post_office ?? null,
+      body.phone,
+      body.lat ?? null,
+      body.lng ?? null,
+      body.timezone,
+    ],
   );
 
   return json(
@@ -78,6 +105,11 @@ export const POST = api(undefined, async (ctx) => {
       clinic_id: clinicId,
       name: body.name,
       address: body.address,
+      nearby_location: body.nearby_location ?? null,
+      city: body.city ?? null,
+      district: body.district ?? null,
+      pin_code: body.pin_code ?? null,
+      state: body.state ?? null,
       phone: body.phone,
       lat: body.lat ?? null,
       lng: body.lng ?? null,

@@ -43,6 +43,12 @@ export const GET = api(undefined, async (ctx) => {
 const createSchema = z.object({
   name: z.string().trim().min(1).max(255),
   description: z.string().trim().max(2000).optional().nullable(),
+  nearby_location: z.string().trim().max(500).optional().nullable(),
+  city: z.string().trim().max(255).optional().nullable(),
+  district: z.string().trim().max(255).optional().nullable(),
+  pin_code: z.string().trim().max(20).optional().nullable(),
+  state: z.string().trim().max(255).optional().nullable(),
+  post_office: z.string().trim().max(255).optional().nullable(),
 });
 
 export const POST = api(undefined, async (ctx) => {
@@ -51,8 +57,19 @@ export const POST = api(undefined, async (ctx) => {
 
   const id = newId();
   await pool.query(
-    `INSERT INTO clinics (id, name, description, owner_user_id) VALUES (?, ?, ?, ?)`,
-    [id, body.name, body.description ?? null, auth.userId],
+    `INSERT INTO clinics (id, name, description, nearby_location, city, district, pin_code, state, post_office, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      id,
+      body.name,
+      body.description ?? null,
+      body.nearby_location ?? null,
+      body.city ?? null,
+      body.district ?? null,
+      body.pin_code ?? null,
+      body.state ?? null,
+      body.post_office ?? null,
+      auth.userId,
+    ],
   );
 
   return json(
@@ -60,6 +77,12 @@ export const POST = api(undefined, async (ctx) => {
       id,
       name: body.name,
       description: body.description ?? null,
+      nearby_location: body.nearby_location ?? null,
+      city: body.city ?? null,
+      district: body.district ?? null,
+      pin_code: body.pin_code ?? null,
+      state: body.state ?? null,
+      post_office: body.post_office ?? null,
       owner_id: auth.userId,
       created_at: new Date().toISOString(),
     },

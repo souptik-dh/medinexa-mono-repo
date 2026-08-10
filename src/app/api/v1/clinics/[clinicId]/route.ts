@@ -28,6 +28,12 @@ export const GET = api(undefined, async (ctx) => {
 const patchSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   description: z.string().trim().max(2000).nullable().optional(),
+  nearby_location: z.string().trim().max(500).nullable().optional(),
+  city: z.string().trim().max(255).nullable().optional(),
+  district: z.string().trim().max(255).nullable().optional(),
+  pin_code: z.string().trim().max(20).nullable().optional(),
+  state: z.string().trim().max(255).nullable().optional(),
+  post_office: z.string().trim().max(255).nullable().optional(),
 });
 
 export const PATCH = api(undefined, async (ctx) => {
@@ -45,6 +51,13 @@ export const PATCH = api(undefined, async (ctx) => {
     fields.push("description = ?");
     params.push(body.description);
   }
+  if (body.nearby_location !== undefined) { fields.push("nearby_location = ?"); params.push(body.nearby_location); }
+  if (body.city !== undefined) { fields.push("city = ?"); params.push(body.city); }
+  if (body.district !== undefined) { fields.push("district = ?"); params.push(body.district); }
+  if (body.pin_code !== undefined) { fields.push("pin_code = ?"); params.push(body.pin_code); }
+  if (body.state !== undefined) { fields.push("state = ?"); params.push(body.state); }
+  if (body.post_office !== undefined) { fields.push("post_office = ?"); params.push(body.post_office); }
+
   if (fields.length > 0) {
     await pool.query(`UPDATE clinics SET ${fields.join(", ")} WHERE id = ?`, [...params, clinic.id]);
   }
@@ -58,6 +71,12 @@ export const PATCH = api(undefined, async (ctx) => {
     id: updated.id,
     name: updated.name,
     description: updated.description,
+    nearby_location: updated.nearby_location,
+    city: updated.city,
+    district: updated.district,
+    pin_code: updated.pin_code,
+    state: updated.state,
+    post_office: updated.post_office,
     owner_id: updated.owner_user_id,
     created_at: updated.created_at,
   });
