@@ -29,31 +29,8 @@ async function sendVerificationEmail(userId: string, email: string, name: string
   await sendEmail(
     email,
     "Welcome to MediNexa — verify your email",
-    verificationEmailHtml(link, name),
+    `Hi ${name},\n\nWelcome to MediNexa! Please verify your email address to activate your clinic account and log in:\n\n${link}\n\nThis link expires in 24 hours. If you didn't create this account, you can safely ignore this email.`,
   );
-}
-
-function verificationEmailHtml(link: string, name: string): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Verify Your Email</title>
-</head>
-<body style="font-family: Arial, sans-serif; background-color: #f4f7f6; margin: 0; padding: 20px;">
-  <div style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-    <h2 style="color: #2c3e50; margin-top: 0;">Verify Your Email Address</h2>
-    <p style="color: #555555; line-height: 1.5;">Hi ${name},  Thanks for signing up! Please confirm your email address by clicking the button below.</p>
-    <div style="text-align: center; margin: 30px 0;">
-      <a href="${link}" style="background-color: #007bff; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 5px; font-weight: bold; display: inline-block;">Verify Email Address</a>
-    </div>
-    <p style="color: #777777; font-size: 13px; line-height: 1.5;">If you did not create an account, no further action is required.</p>
-    <hr style="border: none; border-top: 1px solid #eeeeee; margin: 20px 0;">
-    <p style="color: #999999; font-size: 12px; margin-bottom: 0;">If you're having trouble clicking the button, copy and paste the URL below into your browser:<br><a href="${link}" style="color: #007bff;">${link}</a></p>
-  </div>
-</body>
-</html>`;
 }
 
 export interface PublicUser {
@@ -74,6 +51,7 @@ export interface PublicClinic {
 
 interface RegisterInput {
   name: string;
+  clinicName?: string;
   email: string;
   phone?: string | null;
   password: string;
@@ -93,15 +71,19 @@ export async function registerUser(input: RegisterInput) {
         [id, input.name, input.email, input.phone ?? null, passwordHash, input.role, status],
       );
       if (input.role === "clinic_owner") {
+        if (!input.clinicName) {
+          throw new Error("clinicName is required to register a clinic owner.");
+        }
         const clinicId = newId();
+        const clinicName = input.clinicName;
         await conn.query(
           `INSERT INTO clinics (id, name, description, owner_user_id)
            VALUES (?, ?, NULL, ?)`,
-          [clinicId, input.name, id],
+          [clinicId, clinicName, id],
         );
         clinic = {
           id: clinicId,
-          name: input.name,
+          name: clinicName,
           description: null,
           owner_id: id,
           created_at: new Date().toISOString(),

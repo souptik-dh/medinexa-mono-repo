@@ -5,6 +5,7 @@ import { registerUser } from "@/lib/auth-flows";
 
 const schema = z.object({
   name: z.string().trim().min(1).max(255),
+  clinicName: z.string().trim().min(1, "Clinic name is required.").max(255),
   email: emailSchema,
   phone: z.string().trim().max(32).optional().nullable(),
   password: passwordSchema,
@@ -14,6 +15,7 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
   const body = parseBody(schema, await readJson(ctx.request));
   const result = await registerUser({
     name: body.name,
+    clinicName: body.clinicName,
     email: body.email,
     phone: body.phone,
     password: body.password,
