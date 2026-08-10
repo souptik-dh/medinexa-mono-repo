@@ -17,6 +17,9 @@ export const GET = api(undefined, async (ctx) => {
   );
   const clinic = rows[0];
   if (!clinic) throw notFound("CLINIC_NOT_FOUND", "Clinic not found.");
+  if (ctx.auth?.role === "clinic_owner" && clinic.owner_user_id !== ctx.auth.userId) {
+    throw notFound("CLINIC_NOT_FOUND", "Clinic not found.");
+  }
   return json({
     id: clinic.id,
     name: clinic.name,

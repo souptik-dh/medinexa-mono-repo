@@ -11,10 +11,17 @@ export const GET = api(undefined, async (ctx) => {
   const { limit, cursor } = parsePagination(ctx.request.nextUrl.searchParams);
   const search = ctx.request.nextUrl.searchParams.get("search")?.trim() ?? "";
 
-  const where = search
-    ? "c.deleted_at IS NULL AND c.name LIKE ?"
-    : "c.deleted_at IS NULL";
-  const params: unknown[] = search ? [`%${search}%`] : [];
+  const conditions = ["c.deleted_at IS NULL"];
+  const params: unknown[] = [];
+  if (search) {
+    conditions.push("c.name LIKE ?");
+    params.push(`%${search}%`);
+  }
+  if (ctx.auth?.role === "clinic_owner") {
+    conditions.push("c.owner_user_id = ?");
+    params.push(ctx.auth.userId);
+  }
+  const where = conditions.join(" AND ");
 
   const { rows, nextCursor } = await fetchPage({
     db: pool,

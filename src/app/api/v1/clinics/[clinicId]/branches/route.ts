@@ -43,10 +43,13 @@ const createSchema = z.object({
 export const GET = api(undefined, async (ctx) => {
   const { clinicId } = ctx.params;
   const [clinics] = await pool.query<Row[]>(
-    `SELECT id FROM clinics WHERE id = ? AND deleted_at IS NULL`,
+    `SELECT id, owner_user_id FROM clinics WHERE id = ? AND deleted_at IS NULL`,
     [clinicId],
   );
   if (!clinics[0]) throw notFound("CLINIC_NOT_FOUND", "Clinic not found.");
+  if (ctx.auth?.role === "clinic_owner" && clinics[0].owner_user_id !== ctx.auth.userId) {
+    throw notFound("CLINIC_NOT_FOUND", "Clinic not found.");
+  }
 
   const [branches] = await pool.query<Row[]>(
     `SELECT * FROM branches WHERE clinic_id = ? AND deleted_at IS NULL ORDER BY created_at ASC`,

@@ -57,6 +57,19 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   CONSTRAINT fk_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS email_verification_tokens (
+  id CHAR(36) NOT NULL,
+  user_id CHAR(36) NOT NULL,
+  token_hash CHAR(64) NOT NULL,
+  expires_at DATETIME(3) NOT NULL,
+  used_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_verify_token_hash (token_hash),
+  KEY idx_verify_user (user_id),
+  CONSTRAINT fk_verify_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   scope VARCHAR(255) NOT NULL,
   `key` VARCHAR(255) NOT NULL,
