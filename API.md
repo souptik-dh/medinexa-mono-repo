@@ -3,7 +3,7 @@
 Live implementation reference for the MediBook API. Every endpoint below documents the **actual request/response payloads** produced by the code in `src/app/api/v1`, with JSON examples.
 
 - **Base URL:** `http://localhost:3000/api/v1` (dev) or `https://api.medibook.app/api/v1` (prod)
-- **Format:** JSON only (`Content-Type: application/json`), except legacy upload endpoints (certificates, prescription scans, medical documents, clinic/branch licenses) which use `multipart/form-data`, and photo uploads which use a two-step Cloudinary flow (see [File uploads](#file-uploads)).
+- **Format:** JSON only (`Content-Type: application/json`), except legacy upload endpoints (certificates, prescription scans, medical documents) and clinic/branch license uploads which use `multipart/form-data`, and photo uploads which use a two-step Cloudinary flow (see [File uploads](#file-uploads)).
 - **Auth:** `Authorization: Bearer <access_token>` (JWT, 15 min TTL). Refresh via `POST /auth/refresh`.
 - **IDs:** all resource IDs are UUIDs (v4), generated server-side.
 
@@ -19,13 +19,15 @@ Live implementation reference for the MediBook API. Every endpoint below documen
 6. [Clinic & branch licenses](#clinic--branch-licenses)
 7. [Branch staff](#branch-staff)
 8. [Doctors, invites & assignments](#doctors-invites--assignments)
-9. [Appointments](#appointments)
-10. [Prescriptions](#prescriptions)
-11. [Medical documents](#medical-documents)
-12. [Notifications](#notifications)
-13. [Files (signed URLs)](#files-signed-urls)
-14. [Error codes](#error-codes)
-15. [Status transition table](#status-transition-table)
+9. [Patients](#patients)
+10. [Appointments](#appointments)
+11. [Payment ledger](#payment-ledger)
+12. [Prescriptions](#prescriptions)
+13. [Medical documents](#medical-documents)
+14. [Notifications](#notifications)
+15. [Files (signed URLs)](#files-signed-urls)
+16. [Error codes](#error-codes)
+17. [Status transition table](#status-transition-table)
 
 ---
 
@@ -53,7 +55,8 @@ Every non-2xx response uses the same envelope:
 Cursor-based. `?limit=<1..100>&cursor=<opaque>`. Paginated list responses include a `next_cursor` field (`null` when there are no more pages). Cursor is opaque — treat it as an opaque string.
 
 List endpoints that **are** paginated: `GET /clinics`, `GET /appointments`, `GET /notifications`.
-List endpoints that are **not** paginated (return `{ items }` only): branches, staff, doctor-invites, branch doctors, doctor search, medical documents, status history.
+List endpoints that are **not** paginated (return `{ items }` only): branches, staff, doctor-invites, branch doctors, doctor search, medical documents, status history, payment ledger.
+`GET /branches/:id/patients` uses a separate `limit`/`offset` + `has_more` scheme instead of the cursor above — see [Patients](#patients).
 
 ### Idempotency
 
@@ -90,7 +93,9 @@ Two upload models are used:
 
 Allowed formats: `jpg`, `png`, `webp`, `gif`. Size limits are enforced by the Cloudinary account settings.
 
-**Legacy server-stored uploads (certificates, prescription scans, medical documents, clinic/branch licenses)** — `multipart/form-data`, single field named `file`. The API returns a **signed, time-limited URL** (15 min expiry) — never a permanent public link.
+**Clinic/branch license documents** — `multipart/form-data`, single field named `file`, sent straight to the endpoint (no signature step). The server itself performs a signed upload to Cloudinary (`resource_type=auto`, so PDFs and images both work) and returns a **permanent** `secure_url`, which is stored directly on the clinic/branch's `*_url` column. Allowed: `image/jpeg`, `image/png`, `image/webp`, `application/pdf`, up to 10MB.
+
+**Legacy server-stored uploads (certificates, prescription scans, medical documents)** — `multipart/form-data`, single field named `file`. The API returns a **signed, time-limited URL** (15 min expiry) — never a permanent public link.
 
 Common upload errors: `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`, `400 FILE_REQUIRED`, `400 FILE_EMPTY`. Photo persist endpoints return `400 INVALID_PUBLIC_ID` when the `public_id` was not issued by a signature endpoint.
 
@@ -252,6 +257,8 @@ Same shape as patient login; requires `role = clinic_owner`.
 
 Public, but requires possession of a valid invite code. Rate limited 10/min per IP.
 This is the **only** endpoint that activates a doctor account.
+
+On success, an in-app `doctor_invite_accepted` notification is created for whoever sent the invite **and** for the clinic owner (deduped if they're the same person), and the clinic owner is emailed that the doctor has joined.
 
 **Request body**
 
@@ -472,7 +479,7 @@ Public.
   "post_office": null,
   "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
   "trade_license_number": "TL-2026-004521",
-  "trade_license_url": "https://.../api/v1/files/clinic-license-....pdf?expires=...&sig=...",
+  "trade_license_url": "https://res.cloudinary.com/p274ocjz/image/upload/v1754700900/clinics/licenses/3f9d6b5e-....pdf",
   "drug_license_number": "DL-MH-2026-1187",
   "drug_license_url": null,
   "clinical_establishment_reg_number": "CER-MH-2026-0932",
@@ -510,7 +517,7 @@ Auth: `clinic_owner`, must own the clinic.
   "post_office": "Andheri West GPO",
   "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
   "trade_license_number": "TL-2026-004521",
-  "trade_license_url": "https://.../api/v1/files/clinic-license-....pdf?expires=...&sig=...",
+  "trade_license_url": "https://res.cloudinary.com/p274ocjz/image/upload/v1754700900/clinics/licenses/3f9d6b5e-....pdf",
   "drug_license_number": null,
   "drug_license_url": null,
   "clinical_establishment_reg_number": "CER-MH-2026-0932",
@@ -767,14 +774,14 @@ Both clinics and branches carry three license fields — a **Trade License** fro
 
 ### POST /clinics/:clinicId/licenses/:type
 
-Auth: `clinic_owner`, must own the clinic. `multipart/form-data`, single field named `file` (same convention as [legacy server-stored uploads](#file-uploads)). Allowed types: `image/jpeg`, `image/png`, `image/webp`, `application/pdf`, up to 10MB.
+Auth: `clinic_owner`, must own the clinic. `multipart/form-data`, single field named `file`. The server uploads the file to Cloudinary (`resource_type=auto`) and stores the resulting permanent `secure_url` — see [File uploads](#file-uploads). Allowed types: `image/jpeg`, `image/png`, `image/webp`, `application/pdf`, up to 10MB.
 
 **Response `200`**
 
 ```json
 {
   "type": "trade-license",
-  "url": "https://.../api/v1/files/clinic-license-3f9d6b5e-....pdf?expires=1754700900&sig=9d3c1f0a..."
+  "url": "https://res.cloudinary.com/p274ocjz/image/upload/v1754700900/clinics/licenses/3f9d6b5e-....pdf"
 }
 ```
 
@@ -782,14 +789,14 @@ Auth: `clinic_owner`, must own the clinic. `multipart/form-data`, single field n
 
 ### POST /branches/:id/licenses/:type
 
-Auth: `clinic_owner`, must own the parent clinic. Same request/response shape and `:type` values as the clinic endpoint above, but persists onto the branch.
+Auth: `clinic_owner`, must own the parent clinic. Same request/response shape, `:type` values, and Cloudinary storage as the clinic endpoint above, but persists onto the branch.
 
 **Response `200`**
 
 ```json
 {
   "type": "drug-license",
-  "url": "https://.../api/v1/files/branch-license-3f9d6b5e-....pdf?expires=1754700900&sig=9d3c1f0a..."
+  "url": "https://res.cloudinary.com/p274ocjz/image/upload/v1754700900/branches/licenses/3f9d6b5e-....pdf"
 }
 ```
 
@@ -811,6 +818,7 @@ Permission keys:
 | `appointments:cancel` | `PATCH /appointments/:id/cancel` |
 | `staff:manage` | Add/remove staff + read/update permissions |
 | `doctors:manage` | Invite/revoke doctors, update/remove assignments, doctor photos |
+| `patients:view` | `GET /branches/:id/patients` |
 
 New staff default to `["appointments:confirm", "appointments:payment", "appointments:complete", "appointments:cancel"]`. The `clinic_owner` is always allowed and is unaffected. A `branch_staff` calling a gated action without the required permission gets `403 PERMISSION_DENIED`.
 
@@ -1220,6 +1228,45 @@ Public.
 
 ---
 
+## Patients
+
+Patients are `users` rows with `role = 'patient'` — there is no separate `patients` table. This section lists patients who have booked at least one (non-cancelled) appointment at a given branch.
+
+### GET /branches/:id/patients
+
+Auth: `clinic_owner` (owns branch) **or** `branch_staff` with `patients:view`. **Not** cursor-paginated — uses `limit`/`offset`.
+
+**Query:** `?search=&type=new|old&limit=<1..100>&offset=`
+
+- `search` matches patient name, email, or phone (contains).
+- `type=new` returns patients with exactly one non-cancelled appointment at this branch; `type=old` returns patients with more than one (returning patients). Omit for both.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+      "name": "Aisha Verma",
+      "email": "aisha@example.com",
+      "phone": "+919876543210",
+      "address": "12, SV Road, Andheri West, Mumbai 400058",
+      "photo_url": null,
+      "visit_count": 3,
+      "is_new_patient": false,
+      "first_visit_date": "2026-05-01",
+      "last_visit_date": "2026-08-09"
+    }
+  ],
+  "has_more": false
+}
+```
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `403 PERMISSION_DENIED`.
+
+---
+
 ## Appointments
 
 `Appointment` object:
@@ -1245,9 +1292,16 @@ Public.
 
 `status` ∈ `pending | confirmed | paid | completed | cancelled | no_show`
 
+List and detail responses enrich this base object:
+
+- `GET /appointments` items additionally include `doctor_name` and `branch_name`.
+- `GET /appointments/:id` additionally includes `doctor_name`, `branch_name`, and a nested `patient` object: `{ id, name, email, phone, address, photo_url }`.
+
 ### POST /appointments
 
 Auth: `patient`. Header `Idempotency-Key` **required**.
+
+On success, an in-app notification (`new_booking`) is created for every branch staff member **and** the clinic owner, and each of them is emailed the patient's name/email/phone and the doctor's name.
 
 **Request body**
 
@@ -1298,6 +1352,8 @@ Auth: any authenticated role, scope as above.
 
 Auth: `branch_staff` (own branch, requires `appointments:confirm`) or `clinic_owner`. Requires current status `pending`. No body.
 
+On success, the patient receives an in-app `booking_confirmed` notification and a confirmation email (doctor, branch, date, time).
+
 **Response `200`** — Appointment object (`status: "confirmed"`).
 
 **Errors:** `409 INVALID_STATUS_TRANSITION`.
@@ -1305,6 +1361,8 @@ Auth: `branch_staff` (own branch, requires `appointments:confirm`) or `clinic_ow
 ### PATCH /appointments/:id/payment
 
 Auth: `branch_staff` (own branch, requires `appointments:payment`) or `clinic_owner`. Header `Idempotency-Key` **required**. Requires current status `confirmed`. Records a `Payment` and marks the appointment `paid`.
+
+On success: the patient gets an in-app `payment_received` notification; the clinic owner gets an in-app `payment_received` notification **and** an email naming the patient and the payment method (`cash`/`upi`); and the payment amount is added to that clinic/branch's monthly total in `clinic_payment_ledger` — see [Payment ledger](#payment-ledger).
 
 **Request body**
 
@@ -1374,6 +1432,39 @@ Auth: any authenticated role, scope as `GET /appointments/:id`.
   ]
 }
 ```
+
+---
+
+## Payment ledger
+
+Every successful `PATCH /appointments/:id/payment` accumulates into a per-clinic, per-branch, per-month running total (`clinic_payment_ledger`), keyed on `(clinic_id, branch_id, period_month, currency)`.
+
+### GET /clinics/:clinicId/ledger
+
+Auth: `clinic_owner`, must own the clinic. **Not** paginated.
+
+**Query:** `?month=YYYY-MM` (optional — omit for all months, newest first)
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "9c1d2b7a-5e4f-8c1d-3f9d-6b5e8f6b4e3a",
+      "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+      "branch_name": "Sunrise — Andheri",
+      "period_month": "2026-08",
+      "currency": "INR",
+      "total_amount": 12500,
+      "payment_count": 25,
+      "updated_at": "2026-08-09T12:30:00.000Z"
+    }
+  ]
+}
+```
+
+**Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 VALIDATION_ERROR` (bad `month`).
 
 ---
 

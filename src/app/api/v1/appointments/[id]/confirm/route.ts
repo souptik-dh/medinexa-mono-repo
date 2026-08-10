@@ -2,7 +2,7 @@ import { api, json } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createNotification } from "@/lib/notifications";
+import { createNotification, sendEmail } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 
 export const PATCH = api(undefined, async (ctx) => {
@@ -20,5 +20,25 @@ export const PATCH = api(undefined, async (ctx) => {
   });
 
   const [rows] = await pool.query<Row[]>(`SELECT * FROM appointments WHERE id = ?`, [ctx.params.id]);
-  return json(serializeAppointment(rows[0]));
+  const appointment = rows[0];
+
+  const [details] = await pool.query<Row[]>(
+    `SELECT u.name AS patient_name, u.email AS patient_email, d.name AS doctor_name, b.name AS branch_name
+       FROM appointments a
+       JOIN users u ON u.id = a.patient_id
+       JOIN doctors d ON d.id = a.doctor_id
+       JOIN branches b ON b.id = a.branch_id
+      WHERE a.id = ?`,
+    [ctx.params.id],
+  );
+  const info = details[0];
+  if (info?.patient_email) {
+    await sendEmail(
+      info.patient_email,
+      "Your appointment is confirmed",
+      `Hi ${info.patient_name ?? "there"},\n\nYour appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`,
+    );
+  }
+
+  return json(serializeAppointment(appointment));
 });

@@ -5,7 +5,7 @@ import { pool, withTransaction, type Row } from "@/lib/db";
 import { hashPassword, hashToken, issueTokens } from "@/lib/auth";
 import { newId } from "@/lib/ids";
 import { ApiError, conflict, notFound, isUniqueViolation } from "@/lib/errors";
-import { createNotification } from "@/lib/notifications";
+import { createNotification, sendEmail } from "@/lib/notifications";
 import type { ResultSetHeader } from "mysql2/promise";
 
 const schema = z.object({
@@ -36,6 +36,16 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
   const assignmentId = newId();
   const passwordHash = await hashPassword(body.password);
   const slotTemplates = invite.slot_template as Array<Record<string, unknown>>;
+
+  const [ownerRows] = await pool.query<Row[]>(
+    `SELECT c.owner_user_id, co.email AS owner_email
+       FROM branches b
+       JOIN clinics c ON c.id = b.clinic_id
+       JOIN users co ON co.id = c.owner_user_id
+      WHERE b.id = ?`,
+    [invite.branch_id],
+  );
+  const owner = ownerRows[0];
 
   await withTransaction(async (conn) => {
     const [claim] = await conn.query<ResultSetHeader>(
@@ -84,6 +94,13 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
       branch_id: invite.branch_id,
       email: body.email,
     });
+    if (owner && owner.owner_user_id !== invite.invited_by) {
+      await createNotification(conn, owner.owner_user_id, "doctor_invite_accepted", {
+        doctor_id: doctorId,
+        branch_id: invite.branch_id,
+        email: body.email,
+      });
+    }
   }).catch((err) => {
     if (isUniqueViolation(err)) {
       const msg = String((err as { message?: string }).message ?? "");
@@ -94,6 +111,14 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
     }
     throw err;
   });
+
+  if (owner) {
+    await sendEmail(
+      owner.owner_email,
+      "Doctor invite accepted",
+      `Dr. ${invite.name} (${body.email}) has accepted your invitation and joined your branch.`,
+    );
+  }
 
   const { access_token, refresh_token } = await issueTokens({
     id: userId,
