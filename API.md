@@ -1013,6 +1013,7 @@ Public. Returns only **accepted** doctors assigned to the branch.
   "items": [
     {
       "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+      "assignment_id": "e4f5a6b7-8c9d-0e1f-2a3b-4c5d6e7f8a9b",
       "name": "Dr. Smith",
       "specialization": "Cardiologist",
       "phone": "+919900000001",
@@ -1026,7 +1027,7 @@ Public. Returns only **accepted** doctors assigned to the branch.
 }
 ```
 
-`next_available_slot` is a localized `YYYY-MM-DDTHH:MM:00` string or `null`.
+`id` is the doctor's own id. `assignment_id` is the id of this doctor's assignment to the branch — use it for `PATCH /doctor-assignments/:id` and `DELETE /doctor-assignments/:id`, not `id`. `next_available_slot` is a localized `YYYY-MM-DDTHH:MM:00` string or `null`.
 
 ### POST /branches/:id/doctors/:doctorId/photo/signature
 
