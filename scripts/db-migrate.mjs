@@ -107,6 +107,19 @@ try {
     console.log('Applied migration: branches licenses');
   }
 
+  const [userAddressCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'address'`,
+  );
+  if (Number(userAddressCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE users
+         ADD COLUMN address VARCHAR(500) NULL AFTER phone,
+         ADD COLUMN photo_url VARCHAR(500) NULL AFTER address`,
+    );
+    console.log('Applied migration: users address/photo_url');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();

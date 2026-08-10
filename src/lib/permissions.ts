@@ -13,6 +13,7 @@ export const BRANCH_STAFF_PERMISSIONS = [
   "appointments:cancel",
   "staff:manage",
   "doctors:manage",
+  "patients:view",
   "clinics:manage",
   "clinic:create",
   "clinic:delete",

@@ -34,6 +34,7 @@ export const GET = api(undefined, async (ctx) => {
     const next_available_slot = await nextAvailableSlot(pool, r.assignment_id, tz);
     items.push({
       id: r.id,
+      assignment_id: r.assignment_id,
       name: r.name,
       specialization: r.specialization,
       phone: r.phone,

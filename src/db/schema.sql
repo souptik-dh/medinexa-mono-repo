@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS users (
   name VARCHAR(255) NULL,
   email VARCHAR(255) NOT NULL,
   phone VARCHAR(32) NULL,
+  address VARCHAR(500) NULL,
+  photo_url VARCHAR(500) NULL,
   password_hash VARCHAR(255) NULL,
   role ENUM('patient','clinic_owner','branch_staff','doctor','sys_admin') NOT NULL,
   status ENUM('active','pending','disabled') NOT NULL DEFAULT 'active',
