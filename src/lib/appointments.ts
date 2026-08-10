@@ -19,7 +19,7 @@ export type ApptStatus = (typeof APPT_STATUSES)[number];
 export const NON_TERMINAL = ["pending", "confirmed", "paid"];
 
 export function serializeAppointment(r: Row) {
-  return {
+  const base = {
     id: r.id,
     patient_id: r.patient_id,
     clinic_id: r.clinic_id,
@@ -34,6 +34,24 @@ export function serializeAppointment(r: Row) {
     payment_method: r.payment_method,
     created_at: r.created_at,
     updated_at: r.updated_at,
+  };
+  if (r.doctor_name === undefined && r.branch_name === undefined) return base;
+  return {
+    ...base,
+    doctor_name: r.doctor_name ?? null,
+    branch_name: r.branch_name ?? null,
+    ...(r.patient_name !== undefined
+      ? {
+          patient: {
+            id: r.patient_id,
+            name: r.patient_name ?? null,
+            email: r.patient_email ?? null,
+            phone: r.patient_phone ?? null,
+            address: r.patient_address ?? null,
+            photo_url: r.patient_photo_url ?? null,
+          },
+        }
+      : {}),
   };
 }
 

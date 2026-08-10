@@ -7,7 +7,7 @@ import { badRequest, conflict, notFound, unprocessable, isUniqueViolation } from
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { scopeWhere, serializeAppointment, APPT_STATUSES } from "@/lib/appointments";
-import { notifyBranchStaff } from "@/lib/notifications";
+import { notifyBranchStaff, createNotification, branchContactEmails, sendEmail } from "@/lib/notifications";
 import { todayInTz, weekdayInTz, toMinutes, fmtMinutes } from "@/lib/availability";
 import { fetchPage } from "@/lib/pagination";
 
@@ -47,7 +47,9 @@ export const GET = api(undefined, async (ctx) => {
 
   const { rows, nextCursor } = await fetchPage({
     db: pool,
-    select: "SELECT a.*",
+    select: `SELECT a.*,
+                    (SELECT d.name FROM doctors d WHERE d.id = a.doctor_id) AS doctor_name,
+                    (SELECT b.name FROM branches b WHERE b.id = a.branch_id) AS branch_name`,
     from: "FROM appointments a",
     where: whereParts.join(" AND "),
     params,
@@ -89,8 +91,10 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
 
   const result = await runIdempotent("appointments:create", idemKey, rawBody, async () => {
     const [branches] = await pool.query<Row[]>(
-      `SELECT b.id, b.timezone, b.clinic_id FROM branches b
-        WHERE b.id = ? AND b.deleted_at IS NULL`,
+      `SELECT b.id, b.timezone, b.clinic_id, c.owner_user_id
+         FROM branches b
+         JOIN clinics c ON c.id = b.clinic_id
+        WHERE b.id = ? AND b.deleted_at IS NULL AND c.deleted_at IS NULL`,
       [body.branch_id],
     );
     const branch = branches[0];
@@ -178,13 +182,15 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
             assignment.currency,
           ],
         );
-        await notifyBranchStaff(conn, body.branch_id, "new_booking", {
+        const payload = {
           appointment_id: id,
           doctor_id: body.doctor_id,
           patient_id: auth.userId,
           date: body.date,
           time: body.time,
-        });
+        };
+        await notifyBranchStaff(conn, body.branch_id, "new_booking", payload);
+        await createNotification(conn, branch.owner_user_id, "new_booking", payload, body.branch_id);
       });
     } catch (err) {
       if (isUniqueViolation(err)) {
@@ -197,6 +203,33 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
     }
 
     const [rows] = await pool.query<Row[]>(`SELECT * FROM appointments WHERE id = ?`, [id]);
+
+    const [details] = await pool.query<Row[]>(
+      `SELECT u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
+              d.name AS doctor_name, b.name AS branch_name
+         FROM appointments a
+         JOIN users u ON u.id = a.patient_id
+         JOIN doctors d ON d.id = a.doctor_id
+         JOIN branches b ON b.id = a.branch_id
+        WHERE a.id = ?`,
+      [id],
+    );
+    const info = details[0];
+    if (info) {
+      const recipients = await branchContactEmails(pool, body.branch_id);
+      const subject = `New appointment booked — ${info.patient_name ?? "Patient"} with Dr. ${info.doctor_name}`;
+      const emailBody = [
+        `A new appointment has been booked at ${info.branch_name}.`,
+        "",
+        `Patient: ${info.patient_name ?? "-"}`,
+        `Email: ${info.patient_email ?? "-"}`,
+        `Phone: ${info.patient_phone ?? "-"}`,
+        `Doctor: Dr. ${info.doctor_name}`,
+        `Date: ${body.date} at ${body.time}`,
+      ].join("\n");
+      await Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody)));
+    }
+
     return { status: 201, body: serializeAppointment(rows[0]) };
   });
 

@@ -120,6 +120,32 @@ try {
     console.log('Applied migration: users address/photo_url');
   }
 
+  const [ledgerTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clinic_payment_ledger'`,
+  );
+  if (Number(ledgerTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE clinic_payment_ledger (
+        id CHAR(36) NOT NULL,
+        clinic_id CHAR(36) NOT NULL,
+        branch_id CHAR(36) NOT NULL,
+        period_month CHAR(7) NOT NULL,
+        currency CHAR(3) NOT NULL,
+        total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        payment_count INT NOT NULL DEFAULT 0,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_ledger_period (clinic_id, branch_id, period_month, currency),
+        KEY idx_ledger_clinic_period (clinic_id, period_month),
+        CONSTRAINT fk_ledger_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
+        CONSTRAINT fk_ledger_branch FOREIGN KEY (branch_id) REFERENCES branches(id)
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: clinic_payment_ledger table');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();

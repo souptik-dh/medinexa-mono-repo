@@ -40,6 +40,37 @@ export async function notifyBranchStaff(
   }
 }
 
+/**
+ * Emails for everyone tied to a branch: its staff and the owning clinic's
+ * owner. The UNION dedupes in case the same address appears in both roles.
+ */
+export async function branchContactEmails(
+  db: Pick<PoolConnection, "query">,
+  branchId: string,
+): Promise<string[]> {
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT u.email FROM branch_staff bs JOIN users u ON u.id = bs.user_id WHERE bs.branch_id = ?
+     UNION
+     SELECT co.email FROM branches b JOIN clinics c ON c.id = b.clinic_id JOIN users co ON co.id = c.owner_user_id WHERE b.id = ?`,
+    [branchId, branchId],
+  );
+  return rows.map((r) => r.email as string);
+}
+
+export async function clinicOwnerContact(
+  db: Pick<PoolConnection, "query">,
+  clinicId: string,
+): Promise<{ userId: string; email: string } | null> {
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT co.id AS user_id, co.email
+       FROM clinics c JOIN users co ON co.id = c.owner_user_id
+      WHERE c.id = ?`,
+    [clinicId],
+  );
+  const row = rows[0];
+  return row ? { userId: row.user_id as string, email: row.email as string } : null;
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
