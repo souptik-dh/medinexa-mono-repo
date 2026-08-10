@@ -73,6 +73,40 @@ try {
     console.log('Applied migration: branch_gallery_images table');
   }
 
+  const [clinicLicenseCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clinics' AND COLUMN_NAME = 'trade_license_number'`,
+  );
+  if (Number(clinicLicenseCols[0].cnt) === 0) {
+    await conn.query(`
+      ALTER TABLE clinics
+        ADD COLUMN trade_license_number VARCHAR(100) NULL AFTER owner_user_id,
+        ADD COLUMN trade_license_url VARCHAR(500) NULL AFTER trade_license_number,
+        ADD COLUMN drug_license_number VARCHAR(100) NULL AFTER trade_license_url,
+        ADD COLUMN drug_license_url VARCHAR(500) NULL AFTER drug_license_number,
+        ADD COLUMN clinical_establishment_reg_number VARCHAR(100) NULL AFTER drug_license_url,
+        ADD COLUMN clinical_establishment_reg_url VARCHAR(500) NULL AFTER clinical_establishment_reg_number
+    `);
+    console.log('Applied migration: clinics licenses');
+  }
+
+  const [branchLicenseCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'branches' AND COLUMN_NAME = 'trade_license_number'`,
+  );
+  if (Number(branchLicenseCols[0].cnt) === 0) {
+    await conn.query(`
+      ALTER TABLE branches
+        ADD COLUMN trade_license_number VARCHAR(100) NULL AFTER photo_url,
+        ADD COLUMN trade_license_url VARCHAR(500) NULL AFTER trade_license_number,
+        ADD COLUMN drug_license_number VARCHAR(100) NULL AFTER trade_license_url,
+        ADD COLUMN drug_license_url VARCHAR(500) NULL AFTER drug_license_number,
+        ADD COLUMN clinical_establishment_reg_number VARCHAR(100) NULL AFTER drug_license_url,
+        ADD COLUMN clinical_establishment_reg_url VARCHAR(500) NULL AFTER clinical_establishment_reg_number
+    `);
+    console.log('Applied migration: branches licenses');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();

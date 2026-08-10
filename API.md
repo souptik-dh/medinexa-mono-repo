@@ -3,7 +3,7 @@
 Live implementation reference for the MediBook API. Every endpoint below documents the **actual request/response payloads** produced by the code in `src/app/api/v1`, with JSON examples.
 
 - **Base URL:** `http://localhost:3000/api/v1` (dev) or `https://api.medibook.app/api/v1` (prod)
-- **Format:** JSON only (`Content-Type: application/json`), except legacy upload endpoints (certificates, prescription scans, medical documents) which use `multipart/form-data`, and photo uploads which use a two-step Cloudinary flow (see [File uploads](#file-uploads)).
+- **Format:** JSON only (`Content-Type: application/json`), except legacy upload endpoints (certificates, prescription scans, medical documents, clinic/branch licenses) which use `multipart/form-data`, and photo uploads which use a two-step Cloudinary flow (see [File uploads](#file-uploads)).
 - **Auth:** `Authorization: Bearer <access_token>` (JWT, 15 min TTL). Refresh via `POST /auth/refresh`.
 - **IDs:** all resource IDs are UUIDs (v4), generated server-side.
 
@@ -16,15 +16,16 @@ Live implementation reference for the MediBook API. Every endpoint below documen
 3. [Authentication](#authentication)
 4. [Clinics](#clinics)
 5. [Branches](#branches)
-6. [Branch staff](#branch-staff)
-7. [Doctors, invites & assignments](#doctors-invites--assignments)
-8. [Appointments](#appointments)
-9. [Prescriptions](#prescriptions)
-10. [Medical documents](#medical-documents)
-11. [Notifications](#notifications)
-12. [Files (signed URLs)](#files-signed-urls)
-13. [Error codes](#error-codes)
-14. [Status transition table](#status-transition-table)
+6. [Clinic & branch licenses](#clinic--branch-licenses)
+7. [Branch staff](#branch-staff)
+8. [Doctors, invites & assignments](#doctors-invites--assignments)
+9. [Appointments](#appointments)
+10. [Prescriptions](#prescriptions)
+11. [Medical documents](#medical-documents)
+12. [Notifications](#notifications)
+13. [Files (signed URLs)](#files-signed-urls)
+14. [Error codes](#error-codes)
+15. [Status transition table](#status-transition-table)
 
 ---
 
@@ -89,7 +90,7 @@ Two upload models are used:
 
 Allowed formats: `jpg`, `png`, `webp`, `gif`. Size limits are enforced by the Cloudinary account settings.
 
-**Legacy server-stored uploads (certificates, prescription scans, medical documents)** — `multipart/form-data`, single field named `file`. The API returns a **signed, time-limited URL** (15 min expiry) — never a permanent public link.
+**Legacy server-stored uploads (certificates, prescription scans, medical documents, clinic/branch licenses)** — `multipart/form-data`, single field named `file`. The API returns a **signed, time-limited URL** (15 min expiry) — never a permanent public link.
 
 Common upload errors: `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`, `400 FILE_REQUIRED`, `400 FILE_EMPTY`. Photo persist endpoints return `400 INVALID_PUBLIC_ID` when the `public_id` was not issued by a signature endpoint.
 
@@ -411,9 +412,18 @@ Auth: `clinic_owner`.
   "district": "Mumbai Suburban",
   "pin_code": "400058",
   "state": "Maharashtra",
-  "post_office": "Andheri West GPO"
+  "post_office": "Andheri West GPO",
+  "trade_license_number": "TL-2026-004521",
+  "drug_license_number": "DL-MH-2026-1187",
+  "clinical_establishment_reg_number": "CER-MH-2026-0932"
 }
 ```
+
+| Field | Type | Notes |
+|---|---|---|
+| `trade_license_number` | string | **required**, issued by the local municipality, 1–100 |
+| `drug_license_number` | string? | optional — only if selling/stocking medicines, max 100 |
+| `clinical_establishment_reg_number` | string? | optional — Clinical Establishment Registration, max 100 |
 
 **Response `201`**
 
@@ -429,9 +439,19 @@ Auth: `clinic_owner`.
   "state": null,
   "post_office": null,
   "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "trade_license_number": "TL-2026-004521",
+  "trade_license_url": null,
+  "drug_license_number": "DL-MH-2026-1187",
+  "drug_license_url": null,
+  "clinical_establishment_reg_number": "CER-MH-2026-0932",
+  "clinical_establishment_reg_url": null,
   "created_at": "2026-08-09T10:00:00.000Z"
 }
 ```
+
+License document URLs are `null` until uploaded via `POST /clinics/:clinicId/licenses/:type` (see [Clinic & branch licenses](#clinic--branch-licenses)).
+
+**Errors:** `400 VALIDATION_ERROR` (missing `trade_license_number`).
 
 ### GET /clinics/:clinicId
 
@@ -444,8 +464,22 @@ Public.
   "id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
   "name": "Sunrise Multispeciality",
   "description": "General & cardiac care",
+  "nearby_location": null,
+  "city": null,
+  "district": null,
+  "pin_code": null,
+  "state": null,
+  "post_office": null,
+  "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "trade_license_number": "TL-2026-004521",
+  "trade_license_url": "https://.../api/v1/files/clinic-license-....pdf?expires=...&sig=...",
+  "drug_license_number": "DL-MH-2026-1187",
+  "drug_license_url": null,
+  "clinical_establishment_reg_number": "CER-MH-2026-0932",
+  "clinical_establishment_reg_url": null,
   "branch_count": 2,
-  "created_at": "2026-08-01T09:30:00Z"
+  "created_at": "2026-08-01T09:30:00Z",
+  "updated_at": "2026-08-01T09:30:00Z"
 }
 ```
 
@@ -455,10 +489,10 @@ Public.
 
 Auth: `clinic_owner`, must own the clinic.
 
-**Request body** (partial)
+**Request body** (partial) — any subset of `name, description, nearby_location, city, district, pin_code, state, post_office, trade_license_number, drug_license_number, clinical_establishment_reg_number`. `trade_license_number` cannot be cleared to `null`; `drug_license_number` and `clinical_establishment_reg_number` can.
 
 ```json
-{ "name": "Sunrise Heart & Care", "description": null, "nearby_location": "Opposite City Mall", "city": "Mumbai", "district": "Mumbai Suburban", "pin_code": "400058", "state": "Maharashtra", "post_office": "Andheri West GPO" }
+{ "name": "Sunrise Heart & Care", "description": null, "nearby_location": "Opposite City Mall", "city": "Mumbai", "district": "Mumbai Suburban", "pin_code": "400058", "state": "Maharashtra", "post_office": "Andheri West GPO", "drug_license_number": null }
 ```
 
 **Response `200`**
@@ -475,6 +509,12 @@ Auth: `clinic_owner`, must own the clinic.
   "state": "Maharashtra",
   "post_office": "Andheri West GPO",
   "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "trade_license_number": "TL-2026-004521",
+  "trade_license_url": "https://.../api/v1/files/clinic-license-....pdf?expires=...&sig=...",
+  "drug_license_number": null,
+  "drug_license_url": null,
+  "clinical_establishment_reg_number": "CER-MH-2026-0932",
+  "clinical_establishment_reg_url": null,
   "created_at": "2026-08-01T09:30:00Z"
 }
 ```
@@ -520,6 +560,12 @@ Public.
       "lng": 72.8470000,
       "timezone": "Asia/Kolkata",
       "photo_url": null,
+      "trade_license_number": "TL-2026-009812",
+      "trade_license_url": null,
+      "drug_license_number": null,
+      "drug_license_url": null,
+      "clinical_establishment_reg_number": null,
+      "clinical_establishment_reg_url": null,
       "created_at": "2026-08-02T11:00:00Z"
     }
   ]
@@ -546,7 +592,10 @@ Auth: `clinic_owner`, must own the clinic.
   "phone": "+912240010010",
   "lat": 19.119567,
   "lng": 72.847,
-  "timezone": "Asia/Kolkata"
+  "timezone": "Asia/Kolkata",
+  "trade_license_number": "TL-2026-009812",
+  "drug_license_number": null,
+  "clinical_establishment_reg_number": null
 }
 ```
 
@@ -564,16 +613,19 @@ Auth: `clinic_owner`, must own the clinic.
 | `lat` | number? | -90…90 |
 | `lng` | number? | -180…180 |
 | `timezone` | string | required, valid IANA timezone |
+| `trade_license_number` | string | **required**, issued by the local municipality, 1–100 |
+| `drug_license_number` | string? | optional — only if selling/stocking medicines, max 100 |
+| `clinical_establishment_reg_number` | string? | optional — Clinical Establishment Registration, max 100 |
 
-**Response `201`** — full Branch object (same shape as the list item above).
+**Response `201`** — full Branch object (same shape as the list item above), with license URLs `null` until uploaded via `POST /branches/:id/licenses/:type` (see [Clinic & branch licenses](#clinic--branch-licenses)).
 
-**Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 VALIDATION_ERROR` (invalid timezone).
+**Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 VALIDATION_ERROR` (invalid timezone or missing `trade_license_number`).
 
 ### PATCH /branches/:id
 
 Auth: `clinic_owner`, must own the parent clinic.
 
-**Request body** (partial) — any subset of `name, address, nearby_location, city, district, pin_code, state, phone, lat, lng, timezone`.
+**Request body** (partial) — any subset of `name, address, nearby_location, city, district, pin_code, state, phone, lat, lng, timezone, trade_license_number, drug_license_number, clinical_establishment_reg_number`. `trade_license_number` cannot be cleared to `null`; `drug_license_number` and `clinical_establishment_reg_number` can.
 
 ```json
 { "phone": "+912240010011" }
@@ -700,6 +752,48 @@ Auth: `clinic_owner`, must own the branch. Removes an image from the gallery.
 **Response `204 No Content`**
 
 **Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `404 IMAGE_NOT_FOUND`.
+
+---
+
+## Clinic & branch licenses
+
+Both clinics and branches carry three license fields — a **Trade License** from the local municipality (required), a **Drug License** (optional, only needed if the clinic/branch sells or stocks medicines), and a **Clinical Establishment Registration** (optional, for healthcare operations). The `*_number` fields are set via `POST /clinics`, `POST /clinics/:clinicId/branches`, `PATCH /clinics/:clinicId`, or `PATCH /branches/:id`. The corresponding document is uploaded separately with the endpoints below, which persist a `*_url` field on the clinic/branch.
+
+| `:type` value | Sets | Required |
+|---|---|---|
+| `trade-license` | `trade_license_number` / `trade_license_url` | Yes |
+| `drug-license` | `drug_license_number` / `drug_license_url` | No |
+| `clinical-establishment-registration` | `clinical_establishment_reg_number` / `clinical_establishment_reg_url` | No |
+
+### POST /clinics/:clinicId/licenses/:type
+
+Auth: `clinic_owner`, must own the clinic. `multipart/form-data`, single field named `file` (same convention as [legacy server-stored uploads](#file-uploads)). Allowed types: `image/jpeg`, `image/png`, `image/webp`, `application/pdf`, up to 10MB.
+
+**Response `200`**
+
+```json
+{
+  "type": "trade-license",
+  "url": "https://.../api/v1/files/clinic-license-3f9d6b5e-....pdf?expires=1754700900&sig=9d3c1f0a..."
+}
+```
+
+**Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 INVALID_LICENSE_TYPE`, `400 FILE_REQUIRED` / `FILE_EMPTY`, `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`.
+
+### POST /branches/:id/licenses/:type
+
+Auth: `clinic_owner`, must own the parent clinic. Same request/response shape and `:type` values as the clinic endpoint above, but persists onto the branch.
+
+**Response `200`**
+
+```json
+{
+  "type": "drug-license",
+  "url": "https://.../api/v1/files/branch-license-3f9d6b5e-....pdf?expires=1754700900&sig=9d3c1f0a..."
+}
+```
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 INVALID_LICENSE_TYPE`, `400 FILE_REQUIRED` / `FILE_EMPTY`, `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`.
 
 ---
 
@@ -1518,6 +1612,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `IDEMPOTENCY_KEY_REQUIRED` | 400 | Missing `Idempotency-Key` header |
 | `FILE_REQUIRED` / `FILE_EMPTY` | 400 | Missing or empty upload field |
 | `INVALID_PUBLIC_ID` | 400 | Photo `public_id` was not issued by a signature endpoint |
+| `INVALID_LICENSE_TYPE` | 400 | License upload `:type` is not one of `trade-license`, `drug-license`, `clinical-establishment-registration` |
 | `UNAUTHORIZED` | 401 | No/invalid token |
 | `INVALID_CREDENTIALS` | 401 | Wrong email/password |
 | `ACCOUNT_DISABLED` | 401/403 | Account not `active` |
@@ -1574,8 +1669,8 @@ Any other transition returns `409 INVALID_STATUS_TRANSITION`.
 
 ```
 POST /auth/clinic-owner/register
-POST /clinics                       {name}
-POST /clinics/:clinicId/branches    {name, address, phone, timezone}
+POST /clinics                       {name, trade_license_number}
+POST /clinics/:clinicId/branches    {name, address, phone, timezone, trade_license_number}
 POST /branches/:id/doctor-invites   {name, specialization, email, fee_amount, currency, slot_template}
   → invite code emailed to the doctor
 POST /auth/doctor/accept-invite     {email, invite_code, password, reg_no}

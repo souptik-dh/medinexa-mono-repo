@@ -5,6 +5,7 @@ import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { getOwnedBranch } from "@/lib/scope";
 import { conflict } from "@/lib/errors";
+import { licenseFields } from "@/lib/licenses";
 
 function isTimezone(tz: string): boolean {
   try {
@@ -34,6 +35,9 @@ const patchSchema = z.object({
     .max(64)
     .refine(isTimezone, "Invalid IANA timezone.")
     .optional(),
+  trade_license_number: z.string().trim().min(1).max(100).optional(),
+  drug_license_number: z.string().trim().max(100).nullable().optional(),
+  clinical_establishment_reg_number: z.string().trim().max(100).nullable().optional(),
 });
 
 export const PATCH = api(undefined, async (ctx) => {
@@ -55,14 +59,19 @@ export const PATCH = api(undefined, async (ctx) => {
   if (body.lat !== undefined) { fields.push("lat = ?"); params.push(body.lat); }
   if (body.lng !== undefined) { fields.push("lng = ?"); params.push(body.lng); }
   if (body.timezone !== undefined) { fields.push("timezone = ?"); params.push(body.timezone); }
+  if (body.trade_license_number !== undefined) { fields.push("trade_license_number = ?"); params.push(body.trade_license_number); }
+  if (body.drug_license_number !== undefined) { fields.push("drug_license_number = ?"); params.push(body.drug_license_number); }
+  if (body.clinical_establishment_reg_number !== undefined) {
+    fields.push("clinical_establishment_reg_number = ?");
+    params.push(body.clinical_establishment_reg_number);
+  }
 
   if (fields.length > 0) {
     await pool.query(`UPDATE branches SET ${fields.join(", ")} WHERE id = ?`, [...params, branch.id]);
   }
 
   const [rows] = await pool.query<Row[]>(
-    `SELECT id, clinic_id, name, address, nearby_location, city, district, pin_code, state, post_office, phone, lat, lng, timezone, photo_url, created_at
-       FROM branches WHERE id = ? AND deleted_at IS NULL`,
+    `SELECT * FROM branches WHERE id = ? AND deleted_at IS NULL`,
     [branch.id],
   );
   const b = rows[0];
@@ -82,6 +91,7 @@ export const PATCH = api(undefined, async (ctx) => {
     lng: b.lng != null ? Number(b.lng) : null,
     timezone: b.timezone,
     photo_url: b.photo_url,
+    ...licenseFields(b),
     created_at: b.created_at,
   });
 });

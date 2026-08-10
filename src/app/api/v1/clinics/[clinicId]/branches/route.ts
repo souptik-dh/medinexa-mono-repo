@@ -6,6 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { getOwnedClinic } from "@/lib/scope";
 import { notFound } from "@/lib/errors";
 import { newId } from "@/lib/ids";
+import { licenseFields } from "@/lib/licenses";
 
 function isTimezone(tz: string): boolean {
   try {
@@ -34,6 +35,9 @@ const createSchema = z.object({
     .min(1)
     .max(64)
     .refine(isTimezone, "Invalid IANA timezone."),
+  trade_license_number: z.string().trim().min(1).max(100),
+  drug_license_number: z.string().trim().max(100).optional().nullable(),
+  clinical_establishment_reg_number: z.string().trim().max(100).optional().nullable(),
 });
 
 export const GET = api(undefined, async (ctx) => {
@@ -45,8 +49,7 @@ export const GET = api(undefined, async (ctx) => {
   if (!clinics[0]) throw notFound("CLINIC_NOT_FOUND", "Clinic not found.");
 
   const [branches] = await pool.query<Row[]>(
-    `SELECT id, clinic_id, name, address, nearby_location, city, district, pin_code, state, post_office, phone, lat, lng, timezone, photo_url, created_at
-       FROM branches WHERE clinic_id = ? AND deleted_at IS NULL ORDER BY created_at ASC`,
+    `SELECT * FROM branches WHERE clinic_id = ? AND deleted_at IS NULL ORDER BY created_at ASC`,
     [clinicId],
   );
   return json({
@@ -66,6 +69,7 @@ export const GET = api(undefined, async (ctx) => {
       lng: b.lng != null ? Number(b.lng) : null,
       timezone: b.timezone,
       photo_url: b.photo_url,
+      ...licenseFields(b),
       created_at: b.created_at,
     })),
   });
@@ -79,8 +83,8 @@ export const POST = api(undefined, async (ctx) => {
 
   const id = newId();
   await pool.query(
-    `INSERT INTO branches (id, clinic_id, name, address, nearby_location, city, district, pin_code, state, post_office, phone, lat, lng, timezone)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO branches (id, clinic_id, name, address, nearby_location, city, district, pin_code, state, post_office, phone, lat, lng, timezone, trade_license_number, drug_license_number, clinical_establishment_reg_number)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       clinicId,
@@ -96,6 +100,9 @@ export const POST = api(undefined, async (ctx) => {
       body.lat ?? null,
       body.lng ?? null,
       body.timezone,
+      body.trade_license_number,
+      body.drug_license_number ?? null,
+      body.clinical_establishment_reg_number ?? null,
     ],
   );
 
@@ -115,6 +122,12 @@ export const POST = api(undefined, async (ctx) => {
       lng: body.lng ?? null,
       timezone: body.timezone,
       photo_url: null,
+      trade_license_number: body.trade_license_number,
+      trade_license_url: null,
+      drug_license_number: body.drug_license_number ?? null,
+      drug_license_url: null,
+      clinical_establishment_reg_number: body.clinical_establishment_reg_number ?? null,
+      clinical_establishment_reg_url: null,
       created_at: new Date().toISOString(),
     },
     201,
