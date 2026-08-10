@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { badRequest } from "@/lib/errors";
+import { badRequest, tooLarge, unsupported } from "@/lib/errors";
 
 const CLOUDINARY_URL = process.env.CLOUDINARY_URL;
 
@@ -69,4 +69,58 @@ export function assertPublicId(publicId: string, folder: string): string {
     );
   }
   return publicId;
+}
+
+export interface DocumentUploadResult {
+  url: string;
+  publicId: string;
+  size: number;
+  mime: string;
+}
+
+export async function uploadDocumentToCloudinary(
+  file: unknown,
+  folder: string,
+  maxBytes: number,
+  allowedMimes: string[],
+): Promise<DocumentUploadResult> {
+  if (!(file instanceof File)) throw badRequest("FILE_REQUIRED", "A file is required in the `file` field.");
+  if (file.size <= 0) throw badRequest("FILE_EMPTY", "The uploaded file is empty.");
+  if (file.size > maxBytes) {
+    throw tooLarge(
+      "FILE_TOO_LARGE",
+      `File exceeds the ${Math.round(maxBytes / 1_000_000)}MB limit.`,
+    );
+  }
+  if (!allowedMimes.includes(file.type)) {
+    throw unsupported(
+      "UNSUPPORTED_MEDIA_TYPE",
+      `Unsupported media type: ${file.type || "unknown"}. Allowed: ${allowedMimes.join(", ")}.`,
+    );
+  }
+
+  const { cloudName, apiKey, apiSecret } = getCloudinary();
+  const publicId = `${folder}/${randomUUID()}`;
+  const timestamp = Math.floor(Date.now() / 1000);
+  const toSign = `folder=${folder}&public_id=${publicId}&timestamp=${timestamp}`;
+  const signature = createHash("sha1").update(`${toSign}${apiSecret}`).digest("hex");
+
+  const body = new FormData();
+  body.append("file", file);
+  body.append("api_key", apiKey);
+  body.append("timestamp", String(timestamp));
+  body.append("folder", folder);
+  body.append("public_id", publicId);
+  body.append("signature", signature);
+
+  const res = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, {
+    method: "POST",
+    body,
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(`Cloudinary upload failed: ${data?.error?.message ?? res.statusText}`);
+  }
+
+  return { url: data.secure_url, publicId: data.public_id, size: file.size, mime: file.type };
 }
