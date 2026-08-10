@@ -120,6 +120,28 @@ try {
     console.log('Applied migration: users address/photo_url');
   }
 
+  const [resetTokenTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'password_reset_tokens'`,
+  );
+  if (Number(resetTokenTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE password_reset_tokens (
+        id CHAR(36) NOT NULL,
+        user_id CHAR(36) NOT NULL,
+        token_hash CHAR(64) NOT NULL,
+        expires_at DATETIME(3) NOT NULL,
+        used_at DATETIME(3) NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_reset_token_hash (token_hash),
+        KEY idx_reset_user (user_id),
+        CONSTRAINT fk_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: password_reset_tokens table');
+  }
+
   const [ledgerTables] = await conn.query(
     `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clinic_payment_ledger'`,

@@ -146,6 +146,22 @@ const requests = [
   }),
   req({
     folder: "Auth",
+    name: "Forgot Password",
+    method: "POST",
+    url: "/auth/forgot-password",
+    auth: false,
+    body: rawJson({ email: "aisha@example.com" }),
+  }),
+  req({
+    folder: "Auth",
+    name: "Reset Password",
+    method: "POST",
+    url: "/auth/reset-password",
+    auth: false,
+    body: rawJson({ token: "{{reset_token}}", new_password: "newpassword123", confirm_password: "newpassword123" }),
+  }),
+  req({
+    folder: "Auth",
     name: "Refresh Tokens",
     method: "POST",
     url: "/auth/refresh",
@@ -621,6 +637,7 @@ const variables = [
   { key: "publicId", value: "" },
   { key: "fileUrl", value: "" },
   { key: "galleryImageId", value: "" },
+  { key: "reset_token", value: "" },
 ].map((v) => ({ ...v, type: "string" }));
 
 const folders = [...new Set(requests.map((r) => r.folder))];
