@@ -13,6 +13,18 @@ export const BRANCH_STAFF_PERMISSIONS = [
   "appointments:cancel",
   "staff:manage",
   "doctors:manage",
+  "clinics:manage",
+  "clinic:create",
+  "clinic:delete",
+  "clinic:update",
+  "clinic:reports",
+  "clinic:analytics",
+  "branch:settings",
+  "branch:reports",
+  "branch:analytics",
+  "branch:delete",
+  "branch:create",
+  "branch:update",
 ] as const;
 
 export type BranchStaffPermission = (typeof BRANCH_STAFF_PERMISSIONS)[number];
