@@ -49,6 +49,9 @@ const createSchema = z.object({
   pin_code: z.string().trim().max(20).optional().nullable(),
   state: z.string().trim().max(255).optional().nullable(),
   post_office: z.string().trim().max(255).optional().nullable(),
+  trade_license_number: z.string().trim().min(1).max(100),
+  drug_license_number: z.string().trim().max(100).optional().nullable(),
+  clinical_establishment_reg_number: z.string().trim().max(100).optional().nullable(),
 });
 
 export const POST = api(undefined, async (ctx) => {
@@ -57,7 +60,8 @@ export const POST = api(undefined, async (ctx) => {
 
   const id = newId();
   await pool.query(
-    `INSERT INTO clinics (id, name, description, nearby_location, city, district, pin_code, state, post_office, owner_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO clinics (id, name, description, nearby_location, city, district, pin_code, state, post_office, owner_user_id, trade_license_number, drug_license_number, clinical_establishment_reg_number)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       body.name,
@@ -69,6 +73,9 @@ export const POST = api(undefined, async (ctx) => {
       body.state ?? null,
       body.post_office ?? null,
       auth.userId,
+      body.trade_license_number,
+      body.drug_license_number ?? null,
+      body.clinical_establishment_reg_number ?? null,
     ],
   );
 
@@ -84,6 +91,12 @@ export const POST = api(undefined, async (ctx) => {
       state: body.state ?? null,
       post_office: body.post_office ?? null,
       owner_id: auth.userId,
+      trade_license_number: body.trade_license_number,
+      trade_license_url: null,
+      drug_license_number: body.drug_license_number ?? null,
+      drug_license_url: null,
+      clinical_establishment_reg_number: body.clinical_establishment_reg_number ?? null,
+      clinical_establishment_reg_url: null,
       created_at: new Date().toISOString(),
     },
     201,

@@ -5,6 +5,7 @@ import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { getOwnedClinic } from "@/lib/scope";
 import { notFound, conflict } from "@/lib/errors";
+import { licenseFields } from "@/lib/licenses";
 
 export const GET = api(undefined, async (ctx) => {
   const { clinicId } = ctx.params;
@@ -20,8 +21,17 @@ export const GET = api(undefined, async (ctx) => {
     id: clinic.id,
     name: clinic.name,
     description: clinic.description,
+    nearby_location: clinic.nearby_location,
+    city: clinic.city,
+    district: clinic.district,
+    pin_code: clinic.pin_code,
+    state: clinic.state,
+    post_office: clinic.post_office,
+    owner_id: clinic.owner_user_id,
+    ...licenseFields(clinic),
     branch_count: Number(clinic.branch_count),
     created_at: clinic.created_at,
+    updated_at: clinic.updated_at,
   });
 });
 
@@ -34,6 +44,9 @@ const patchSchema = z.object({
   pin_code: z.string().trim().max(20).nullable().optional(),
   state: z.string().trim().max(255).nullable().optional(),
   post_office: z.string().trim().max(255).nullable().optional(),
+  trade_license_number: z.string().trim().min(1).max(100).optional(),
+  drug_license_number: z.string().trim().max(100).nullable().optional(),
+  clinical_establishment_reg_number: z.string().trim().max(100).nullable().optional(),
 });
 
 export const PATCH = api(undefined, async (ctx) => {
@@ -57,6 +70,12 @@ export const PATCH = api(undefined, async (ctx) => {
   if (body.pin_code !== undefined) { fields.push("pin_code = ?"); params.push(body.pin_code); }
   if (body.state !== undefined) { fields.push("state = ?"); params.push(body.state); }
   if (body.post_office !== undefined) { fields.push("post_office = ?"); params.push(body.post_office); }
+  if (body.trade_license_number !== undefined) { fields.push("trade_license_number = ?"); params.push(body.trade_license_number); }
+  if (body.drug_license_number !== undefined) { fields.push("drug_license_number = ?"); params.push(body.drug_license_number); }
+  if (body.clinical_establishment_reg_number !== undefined) {
+    fields.push("clinical_establishment_reg_number = ?");
+    params.push(body.clinical_establishment_reg_number);
+  }
 
   if (fields.length > 0) {
     await pool.query(`UPDATE clinics SET ${fields.join(", ")} WHERE id = ?`, [...params, clinic.id]);
@@ -78,6 +97,7 @@ export const PATCH = api(undefined, async (ctx) => {
     state: updated.state,
     post_office: updated.post_office,
     owner_id: updated.owner_user_id,
+    ...licenseFields(updated),
     created_at: updated.created_at,
   });
 });

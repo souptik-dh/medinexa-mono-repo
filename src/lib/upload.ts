@@ -13,7 +13,9 @@ export const SIGNED_URL_TTL_SECONDS = 15 * 60;
 export type UploadKind =
   | "doctor-certificate"
   | "prescription-scan"
-  | "medical-doc";
+  | "medical-doc"
+  | "clinic-license"
+  | "branch-license";
 
 const MIME_EXT: Record<string, string> = {
   "image/jpeg": ".jpg",
