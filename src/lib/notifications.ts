@@ -88,7 +88,12 @@ function textToHtml(text: string): string {
  * a console log in local dev when BREVO_API_KEY is not configured. Never logs
  * the API key.
  */
-export async function sendEmail(to: string, subject: string, body: string): Promise<void> {
+export async function sendEmail(
+  to: string,
+  subject: string,
+  body: string,
+  html?: string,
+): Promise<void> {
   const apiKey = process.env.BREVO_API_KEY;
   if (!apiKey) {
     console.log(`[email:stub] to=${to} subject=${subject}\n${body}`);
@@ -97,7 +102,7 @@ export async function sendEmail(to: string, subject: string, body: string): Prom
 
   const senderEmail = process.env.BREVO_SENDER_EMAIL ?? "noreply@medibook.app";
   const senderName = process.env.BREVO_SENDER_NAME ?? "MediBook";
-  const htmlContent = textToHtml(body);
+  const htmlContent = html ?? textToHtml(body);
 
   try {
     const res = await fetch("https://api.brevo.com/v3/smtp/email", {
