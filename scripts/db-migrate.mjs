@@ -142,6 +142,28 @@ try {
     console.log('Applied migration: password_reset_tokens table');
   }
 
+  const [verifyTokenTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'email_verification_tokens'`,
+  );
+  if (Number(verifyTokenTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE email_verification_tokens (
+        id CHAR(36) NOT NULL,
+        user_id CHAR(36) NOT NULL,
+        token_hash CHAR(64) NOT NULL,
+        expires_at DATETIME(3) NOT NULL,
+        used_at DATETIME(3) NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_verify_token_hash (token_hash),
+        KEY idx_verify_user (user_id),
+        CONSTRAINT fk_verify_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: email_verification_tokens table');
+  }
+
   const [ledgerTables] = await conn.query(
     `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clinic_payment_ledger'`,

@@ -25,6 +25,7 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
       access_token: result.access_token,
       refresh_token: result.refresh_token,
       clinic: result.clinic,
+      message: result.message,
     },
     201,
   );

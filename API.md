@@ -163,6 +163,8 @@ Public. Rate limited 10/min per IP.
 
 Public. Rate limited 10/min per IP. In addition to creating the `clinic_owner` user, it auto-creates an initial clinic (named after the owner) in the same transaction.
 
+The account is created with `status = 'pending'`. No usable `access_token`/`refresh_token` is issued — a welcome email with a verification link is sent instead, and the account cannot log in until the link is followed (see [`POST /auth/verify-email`](#post-authverify-email)).
+
 **Request body**
 
 ```json
@@ -180,15 +182,16 @@ Public. Rate limited 10/min per IP. In addition to creating the `clinic_owner` u
     "phone": "+919876543211",
     "role": "clinic_owner"
   },
-  "access_token": "<jwt>",
-  "refresh_token": "<opaque>",
+  "access_token": null,
+  "refresh_token": null,
   "clinic": {
     "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
     "name": "Suresh Nair",
     "description": null,
     "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
     "created_at": "2026-08-09T12:00:00.000Z"
-  }
+  },
+  "message": "Registration successful. Check your email to verify your account before logging in."
 }
 ```
 
@@ -225,6 +228,30 @@ Public. Rate limited 10/min per IP.
 ### POST /auth/clinic-owner/login
 
 Same shape as patient login; requires `role = clinic_owner`.
+
+**Errors:** `401 INVALID_CREDENTIALS`, `403 EMAIL_NOT_VERIFIED` (registered but the verification link hasn't been followed yet), `401 ACCOUNT_DISABLED`.
+
+### POST /auth/verify-email
+
+Public. Rate limited 10/min per IP. Activates a `clinic_owner` account (`status: 'pending'` → `'active'`) using the token from the welcome email sent by `POST /auth/clinic-owner/register`. The token is single-use and expires after 24 hours.
+
+The verification link is emailed as `{VERIFY_EMAIL_URL}/verify_email?token={VERIFICATION_TOKEN}` — `VERIFY_EMAIL_URL` defaults to `https://medinexa-clinic.onrender.com`.
+
+**Request body**
+
+```json
+{ "token": "<verification_token>" }
+```
+
+**Response `200`**
+
+```json
+{
+  "message": "Your email has been verified. You can now log in."
+}
+```
+
+**Errors:** `400 VALIDATION_ERROR`, `400 VERIFICATION_TOKEN_INVALID`, `410 VERIFICATION_TOKEN_EXPIRED`.
 
 ### POST /auth/doctor/login
 
@@ -431,7 +458,7 @@ Auth required. Revokes the given refresh token.
 
 ### GET /clinics
 
-Public. Paginated.
+Public. Paginated. If the request is authenticated as a `clinic_owner`, results are silently scoped to clinics owned by that caller (isolation, not an opt-in filter — a clinic owner can never see another owner's clinics through this endpoint). Unauthenticated callers and any other role see the full public directory.
 
 **Query:** `?search=&limit=&cursor=`
 
@@ -451,6 +478,67 @@ Public. Paginated.
   "next_cursor": null
 }
 ```
+
+### GET /clinics/mine
+
+Auth: `clinic_owner`. Returns every clinic owned by the caller, each with its full details and nested `branches` (also with full details). Not paginated — a clinic owner is expected to have few clinics.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+      "name": "Sunrise Multispeciality",
+      "description": "General & cardiac care",
+      "nearby_location": null,
+      "city": null,
+      "district": null,
+      "pin_code": null,
+      "state": null,
+      "post_office": null,
+      "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+      "trade_license_number": "TL-2026-004521",
+      "trade_license_url": null,
+      "drug_license_number": "DL-MH-2026-1187",
+      "drug_license_url": null,
+      "clinical_establishment_reg_number": "CER-MH-2026-0932",
+      "clinical_establishment_reg_url": null,
+      "created_at": "2026-08-01T09:30:00Z",
+      "updated_at": "2026-08-01T09:30:00Z",
+      "branches": [
+        {
+          "id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+          "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+          "name": "Sunrise — Andheri",
+          "address": "12, SV Road, Andheri West, Mumbai 400058",
+          "nearby_location": null,
+          "city": "Mumbai",
+          "district": "Mumbai Suburban",
+          "pin_code": "400058",
+          "state": "Maharashtra",
+          "post_office": null,
+          "phone": "+912240010010",
+          "lat": 19.1195670,
+          "lng": 72.8470000,
+          "timezone": "Asia/Kolkata",
+          "photo_url": null,
+          "trade_license_number": "TL-2026-009812",
+          "trade_license_url": null,
+          "drug_license_number": null,
+          "drug_license_url": null,
+          "clinical_establishment_reg_number": null,
+          "clinical_establishment_reg_url": null,
+          "created_at": "2026-08-02T11:00:00Z"
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Errors:** `401 UNAUTHORIZED`, `403 INSUFFICIENT_ROLE` (role other than `clinic_owner`).
 
 ### POST /clinics
 
@@ -510,7 +598,7 @@ License document URLs are `null` until uploaded via `POST /clinics/:clinicId/lic
 
 ### GET /clinics/:clinicId
 
-Public.
+Public. If the request is authenticated as a `clinic_owner` who does not own this clinic, responds `404 CLINIC_NOT_FOUND` instead of the clinic's data — this prevents a clinic owner from viewing another owner's clinic by guessing/changing the ID. Unauthenticated callers and any other role see it normally.
 
 **Response `200`**
 
@@ -592,7 +680,7 @@ Auth: `clinic_owner`, must own the clinic. Soft-delete.
 
 ### GET /clinics/:clinicId/branches
 
-Public.
+Public. Same clinic-owner isolation as `GET /clinics/:clinicId`: a `clinic_owner` who does not own the parent clinic gets `404 CLINIC_NOT_FOUND`, not the branch list.
 
 **Response `200`**
 
