@@ -23,6 +23,7 @@ const patchSchema = z.object({
   district: z.string().trim().max(255).nullable().optional(),
   pin_code: z.string().trim().max(20).nullable().optional(),
   state: z.string().trim().max(255).nullable().optional(),
+  post_office: z.string().trim().max(255).nullable().optional(),
   phone: z.string().trim().min(1).max(32).optional(),
   lat: z.coerce.number().min(-90).max(90).nullable().optional(),
   lng: z.coerce.number().min(-180).max(180).nullable().optional(),
