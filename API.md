@@ -344,6 +344,54 @@ Verifies the OTP and issues tokens. Rate limited 10/min per IP. Max 5 attempts p
 
 **Errors:** `401 INVALID_OTP`, `401 OTP_MAX_ATTEMPTS`, `410 OTP_EXPIRED`, `403 ACCOUNT_DISABLED`.
 
+### POST /auth/forgot-password
+
+Public. Rate limited 10/min per IP. Requests a password reset link for the given email. Always returns the same message (does not reveal whether the email exists). A reset token is only issued when the email belongs to an **active** account with a password (`patient`, `clinic_owner`, or `doctor`); passwordless `branch_staff` accounts are skipped.
+
+The reset link is emailed as `{RESET_PASSWORD_URL}/new_password?token={RESET_TOKEN}` — `RESET_PASSWORD_URL` defaults to `https://medinexa-clinic.onrender.com`. Tokens are single-use and expire after 1 hour.
+
+**Request body**
+
+```json
+{ "email": "aisha@example.com" }
+```
+
+**Response `200`**
+
+```json
+{
+  "message": "If an account exists for this email, a password reset link has been sent."
+}
+```
+
+**Errors:** `400 VALIDATION_ERROR`.
+
+### POST /auth/reset-password
+
+Public. Rate limited 10/min per IP. Sets a new password using a valid, unexpired reset token. The token is invalidated (single-use) once the password is successfully updated.
+
+**Request body**
+
+```json
+{ "token": "<reset_token>", "new_password": "newpassword123", "confirm_password": "newpassword123" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `token` | string | required, the token from the reset email link |
+| `new_password` | string | required, 8–128 chars |
+| `confirm_password` | string | required, must match `new_password` |
+
+**Response `200`**
+
+```json
+{
+  "message": "Your password has been updated. You can now log in with your new password."
+}
+```
+
+**Errors:** `400 VALIDATION_ERROR` (including password mismatch), `400 RESET_TOKEN_INVALID`, `410 RESET_TOKEN_EXPIRED`.
+
 ### POST /auth/refresh
 
 Rotates the refresh token (both old and new are returned; the old is revoked).
@@ -1709,6 +1757,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `INVALID_CREDENTIALS` | 401 | Wrong email/password |
 | `ACCOUNT_DISABLED` | 401/403 | Account not `active` |
 | `INVALID_OTP` / `OTP_MAX_ATTEMPTS` | 401 | OTP failure |
+| `RESET_TOKEN_INVALID` | 400 | Reset token missing, already used, or unknown |
 | `REFRESH_TOKEN_INVALID` | 401 | Refresh token invalid/expired/revoked |
 | `INSUFFICIENT_ROLE` | 403 | Authenticated but wrong role |
 | `PERMISSION_DENIED` | 403 | `branch_staff` lacks the required branch permission for the action |
@@ -1718,7 +1767,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `FEE_OWNER_CONTROLLED` | 403 | Doctor tried to change the fee |
 | `INVALID_SIGNED_URL` | 403 | Bad/expired file URL signature |
 | `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
-| `INVITE_EXPIRED` / `OTP_EXPIRED` | 410 | Expired one-time code |
+| `INVITE_EXPIRED` / `OTP_EXPIRED` / `RESET_TOKEN_EXPIRED` | 410 | Expired one-time code |
 | `FILE_TOO_LARGE` | 413 | Upload exceeds size limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Upload has a disallowed MIME type |
 | `RATE_LIMITED` | 429 | Too many requests |

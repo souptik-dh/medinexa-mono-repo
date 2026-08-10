@@ -50,6 +50,11 @@ export function generateRefreshToken(): { raw: string; hash: string } {
   return { raw, hash: hashToken(raw) };
 }
 
+export function generateResetToken(): { raw: string; hash: string } {
+  const raw = randomBytes(32).toString("base64url");
+  return { raw, hash: hashToken(raw) };
+}
+
 interface TokenUser {
   id: string;
   role: Role;
