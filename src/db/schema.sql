@@ -364,3 +364,95 @@ CREATE TABLE IF NOT EXISTS notifications (
   KEY idx_notif_branch (branch_id),
   CONSTRAINT fk_notif_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS doctor_time_offs (
+  id CHAR(36) NOT NULL,
+  doctor_id CHAR(36) NOT NULL,
+  branch_id CHAR(36) NOT NULL,
+  reason VARCHAR(255) NULL,
+  starts_at DATETIME(3) NOT NULL,
+  ends_at DATETIME(3) NOT NULL,
+  created_by CHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY idx_timeoff_doctor (doctor_id, starts_at),
+  KEY idx_timeoff_branch (branch_id),
+  CONSTRAINT fk_timeoff_doctor FOREIGN KEY (doctor_id) REFERENCES doctors(id) ON DELETE CASCADE,
+  CONSTRAINT fk_timeoff_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+  CONSTRAINT fk_timeoff_created_by FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS appointment_waitlist (
+  id CHAR(36) NOT NULL,
+  patient_id CHAR(36) NOT NULL,
+  doctor_id CHAR(36) NOT NULL,
+  branch_id CHAR(36) NOT NULL,
+  scheduled_date DATE NOT NULL,
+  preferred_time VARCHAR(5) NULL,
+  status ENUM('waiting','notified','booked','cancelled','expired') NOT NULL DEFAULT 'waiting',
+  notified_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_waitlist_pending (patient_id, doctor_id, scheduled_date, status),
+  KEY idx_waitlist_doctor_date (doctor_id, scheduled_date),
+  KEY idx_waitlist_branch (branch_id),
+  CONSTRAINT fk_waitlist_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_waitlist_doctor FOREIGN KEY (doctor_id) REFERENCES doctors(id) ON DELETE CASCADE,
+  CONSTRAINT fk_waitlist_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS refunds (
+  id CHAR(36) NOT NULL,
+  appointment_id CHAR(36) NOT NULL,
+  payment_id CHAR(36) NOT NULL,
+  amount DECIMAL(10,2) NOT NULL,
+  currency CHAR(3) NOT NULL DEFAULT 'INR',
+  reason VARCHAR(500) NULL,
+  status ENUM('pending','processed','failed') NOT NULL DEFAULT 'pending',
+  processed_by CHAR(36) NULL,
+  processed_at DATETIME(3) NULL,
+  reference_no VARCHAR(255) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY idx_refund_appt (appointment_id),
+  KEY idx_refund_payment (payment_id),
+  CONSTRAINT fk_refund_appt FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+  CONSTRAINT fk_refund_payment FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE,
+  CONSTRAINT fk_refund_processed_by FOREIGN KEY (processed_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS reviews (
+  id CHAR(36) NOT NULL,
+  patient_id CHAR(36) NOT NULL,
+  doctor_id CHAR(36) NOT NULL,
+  branch_id CHAR(36) NOT NULL,
+  appointment_id CHAR(36) NULL,
+  rating TINYINT NOT NULL,
+  comment TEXT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_review_patient_doctor (patient_id, doctor_id),
+  KEY idx_review_doctor (doctor_id),
+  KEY idx_review_branch (branch_id),
+  CONSTRAINT fk_review_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_review_doctor FOREIGN KEY (doctor_id) REFERENCES doctors(id) ON DELETE CASCADE,
+  CONSTRAINT fk_review_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+  CONSTRAINT fk_review_appt FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE SET NULL,
+  CONSTRAINT chk_review_rating CHECK (rating BETWEEN 1 AND 5)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id CHAR(36) NOT NULL,
+  actor_user_id CHAR(36) NULL,
+  action VARCHAR(100) NOT NULL,
+  resource_type VARCHAR(50) NOT NULL,
+  resource_id CHAR(36) NULL,
+  changes_json JSON NULL,
+  ip_address VARCHAR(45) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY idx_audit_actor (actor_user_id, created_at),
+  KEY idx_audit_resource (resource_type, resource_id),
+  CONSTRAINT fk_audit_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
