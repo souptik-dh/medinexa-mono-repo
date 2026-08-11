@@ -38,6 +38,13 @@ export interface PublicUser {
   name: string | null;
   email: string;
   phone: string | null;
+  address?: string | null;
+  nearby_location?: string | null;
+  city?: string | null;
+  district?: string | null;
+  pin_code?: string | null;
+  state?: string | null;
+  post_office?: string | null;
   role: Role;
 }
 
@@ -54,6 +61,13 @@ interface RegisterInput {
   clinicName?: string;
   email: string;
   phone?: string | null;
+  address?: string | null;
+  nearby_location?: string | null;
+  city?: string | null;
+  district?: string | null;
+  pin_code?: string | null;
+  state?: string | null;
+  post_office?: string | null;
   password: string;
   role: "patient" | "clinic_owner";
 }
@@ -66,9 +80,24 @@ export async function registerUser(input: RegisterInput) {
   try {
     await withTransaction(async (conn) => {
       await conn.query(
-        `INSERT INTO users (id, name, email, phone, password_hash, role, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [id, input.name, input.email, input.phone ?? null, passwordHash, input.role, status],
+        `INSERT INTO users (id, name, email, phone, address, nearby_location, city, district, pin_code, state, post_office, password_hash, role, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          input.name,
+          input.email,
+          input.phone ?? null,
+          input.address ?? null,
+          input.nearby_location ?? null,
+          input.city ?? null,
+          input.district ?? null,
+          input.pin_code ?? null,
+          input.state ?? null,
+          input.post_office ?? null,
+          passwordHash,
+          input.role,
+          status,
+        ],
       );
       if (input.role === "clinic_owner") {
         if (!input.clinicName) {
@@ -101,6 +130,13 @@ export async function registerUser(input: RegisterInput) {
     name: input.name,
     email: input.email,
     phone: input.phone ?? null,
+    address: input.address ?? null,
+    nearby_location: input.nearby_location ?? null,
+    city: input.city ?? null,
+    district: input.district ?? null,
+    pin_code: input.pin_code ?? null,
+    state: input.state ?? null,
+    post_office: input.post_office ?? null,
     role: input.role,
   };
 

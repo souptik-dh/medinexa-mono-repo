@@ -12,22 +12,23 @@ Live implementation reference for the MediBook API. Every endpoint below documen
 ## Table of contents
 
 1. [Conventions](#conventions)
-2. [Roles & scope](#roles--scope)
-3. [Authentication](#authentication)
-4. [Clinics](#clinics)
-5. [Branches](#branches)
-6. [Clinic & branch licenses](#clinic--branch-licenses)
-7. [Branch staff](#branch-staff)
-8. [Doctors, invites & assignments](#doctors-invites--assignments)
-9. [Patients](#patients)
-10. [Appointments](#appointments)
-11. [Payment ledger](#payment-ledger)
-12. [Prescriptions](#prescriptions)
-13. [Medical documents](#medical-documents)
-14. [Notifications](#notifications)
-15. [Files (signed URLs)](#files-signed-urls)
-16. [Error codes](#error-codes)
-17. [Status transition table](#status-transition-table)
+2. [Health](#health)
+3. [Roles & scope](#roles--scope)
+4. [Authentication](#authentication)
+5. [Clinics](#clinics)
+6. [Branches](#branches)
+7. [Clinic & branch licenses](#clinic--branch-licenses)
+8. [Branch staff](#branch-staff)
+9. [Doctors, invites & assignments](#doctors-invites--assignments)
+10. [Patients](#patients)
+11. [Appointments](#appointments)
+12. [Payment ledger](#payment-ledger)
+13. [Prescriptions](#prescriptions)
+14. [Medical documents](#medical-documents)
+15. [Notifications](#notifications)
+16. [Files (signed URLs)](#files-signed-urls)
+17. [Error codes](#error-codes)
+18. [Status transition table](#status-transition-table)
 
 ---
 
@@ -85,7 +86,7 @@ Default `100 req/min` per token. Auth endpoints `10 req/min` per IP. Overrides:
 
 Two upload models are used:
 
-**Photos (doctor, branch, branch gallery)** — uploaded directly to Cloudinary from the client, in two steps:
+**Photos (patient, doctor, branch, branch gallery)** — uploaded directly to Cloudinary from the client, in two steps:
 
 1. `POST <resource>/photo/signature` (auth required) returns a short-lived signed upload grant. The client **must** upload to the exact `public_id` it was issued.
 2. The client uploads the file directly to the returned `upload_url` (Cloudinary), sending `file` + `public_id` + `timestamp` + `api_key` + `cloud_name` + `allowed_formats` + `signature` as `multipart/form-data`.
@@ -102,6 +103,26 @@ Common upload errors: `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`, `400 F
 ### Partial updates
 
 `PATCH` bodies are partial — omitted fields are unchanged, `null` explicitly clears a nullable field.
+
+---
+
+## Health
+
+### GET /health
+
+Auth: none. Unauthenticated liveness/readiness check — pings the database and reports its status. Rate-limited at 60 requests/min per IP.
+
+**Response `200`**
+
+```json
+{ "status": "ok", "db": "up" }
+```
+
+**Response `503`** (database unreachable)
+
+```json
+{ "status": "error", "db": "down" }
+```
 
 ---
 
@@ -130,6 +151,13 @@ Public. Rate limited 10/min per IP.
   "name": "Aisha Verma",
   "email": "aisha@example.com",
   "phone": "+919876543210",
+  "address": "123 Link Road, Andheri West",
+  "nearby_location": "Near Andheri Station",
+  "city": "Mumbai",
+  "district": "Mumbai Suburban",
+  "pin_code": "400058",
+  "state": "Maharashtra",
+  "post_office": "Andheri West HO",
   "password": "password123"
 }
 ```
@@ -139,6 +167,13 @@ Public. Rate limited 10/min per IP.
 | `name` | string | required, 1–255 chars |
 | `email` | string | required, lowercase, must be valid |
 | `phone` | string? | optional, max 32 |
+| `address` | string | required, 1–500 chars |
+| `nearby_location` | string? | optional, max 500 |
+| `city` | string? | optional, max 255 |
+| `district` | string? | optional, max 255 |
+| `pin_code` | string? | optional, max 20 |
+| `state` | string? | optional, max 255 |
+| `post_office` | string? | optional, max 255 |
 | `password` | string | required, 8–128 chars |
 
 **Response `201`**
@@ -150,6 +185,13 @@ Public. Rate limited 10/min per IP.
     "name": "Aisha Verma",
     "email": "aisha@example.com",
     "phone": "+919876543210",
+    "address": "123 Link Road, Andheri West",
+    "nearby_location": "Near Andheri Station",
+    "city": "Mumbai",
+    "district": "Mumbai Suburban",
+    "pin_code": "400058",
+    "state": "Maharashtra",
+    "post_office": "Andheri West HO",
     "role": "patient"
   },
   "access_token": "<jwt>",
@@ -488,6 +530,37 @@ Public. Paginated. If the request is authenticated as a `clinic_owner`, results 
 }
 ```
 
+### GET /clinics/nearby
+
+Auth: `patient`. Paginated. Matches clinics against the caller's own saved `city`/`district`/`pin_code`/`state`/`post_office` (set at [`POST /auth/patient/register`](#post-authpatientregister) or via profile update) — a clinic is returned if **any** one of those fields matches (OR, not AND). Fields the patient hasn't set are skipped.
+
+**Query:** `?limit=&cursor=`
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+      "name": "Sunrise Multispeciality",
+      "description": "General & cardiac care",
+      "nearby_location": null,
+      "city": "Mumbai",
+      "district": "Mumbai Suburban",
+      "pin_code": "400058",
+      "state": "Maharashtra",
+      "post_office": null,
+      "branch_count": 2,
+      "created_at": "2026-08-01T09:30:00Z"
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+**Errors:** `400 ADDRESS_NOT_SET` if the caller has none of `city`/`district`/`pin_code`/`state`/`post_office` set on their profile.
+
 ### GET /clinics/mine
 
 Auth: `clinic_owner`. Returns every clinic owned by the caller, each with its full details and nested `branches` (also with full details). Not paginated — a clinic owner is expected to have few clinics.
@@ -725,6 +798,48 @@ Public. Same clinic-owner isolation as `GET /clinics/:clinicId`: a `clinic_owner
 ```
 
 **Errors:** `404 CLINIC_NOT_FOUND`.
+
+### GET /branches/nearby
+
+Auth: `patient`. Paginated. Same OR-match as [`GET /clinics/nearby`](#get-clinicsnearby), but against branches across all clinics — matches if any one of the caller's saved `city`/`district`/`pin_code`/`state`/`post_office` equals the branch's corresponding field.
+
+**Query:** `?limit=&cursor=`
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+      "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+      "name": "Sunrise — Andheri",
+      "address": "12, SV Road, Andheri West, Mumbai 400058",
+      "nearby_location": null,
+      "city": "Mumbai",
+      "district": "Mumbai Suburban",
+      "pin_code": "400058",
+      "state": "Maharashtra",
+      "post_office": null,
+      "phone": "+912240010010",
+      "lat": 19.1195670,
+      "lng": 72.8470000,
+      "timezone": "Asia/Kolkata",
+      "photo_url": null,
+      "trade_license_number": "TL-2026-009812",
+      "trade_license_url": null,
+      "drug_license_number": null,
+      "drug_license_url": null,
+      "clinical_establishment_reg_number": null,
+      "clinical_establishment_reg_url": null,
+      "created_at": "2026-08-02T11:00:00Z"
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+**Errors:** `400 ADDRESS_NOT_SET` if the caller has none of `city`/`district`/`pin_code`/`state`/`post_office` set on their profile.
 
 ### POST /clinics/:clinicId/branches
 
@@ -1419,6 +1534,93 @@ Public.
 ## Patients
 
 Patients are `users` rows with `role = 'patient'` — there is no separate `patients` table. This section lists patients who have booked at least one (non-cancelled) appointment at a given branch.
+
+### GET /patients/me
+
+Auth: `patient`. Returns the caller's own profile.
+
+**Response `200`**
+
+```json
+{
+  "id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "name": "Aisha Verma",
+  "email": "aisha@example.com",
+  "phone": "+919876543210",
+  "address": "123 Link Road, Andheri West",
+  "nearby_location": "Near Andheri Station",
+  "city": "Mumbai",
+  "district": "Mumbai Suburban",
+  "pin_code": "400058",
+  "state": "Maharashtra",
+  "post_office": "Andheri West HO",
+  "photo_url": null,
+  "created_at": "2026-08-01T09:30:00Z",
+  "updated_at": "2026-08-01T09:30:00Z"
+}
+```
+
+### PATCH /patients/me
+
+Auth: `patient`. Partial update of the caller's own profile — see [Partial updates](#partial-updates). `name` and `address` cannot be cleared to empty/`null` (both are required at registration); the remaining location fields accept `null` to clear them.
+
+**Request body** (any subset)
+
+```json
+{ "phone": "+919876543211", "city": "Pune", "pin_code": "411001" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string? | 1–255 chars |
+| `phone` | string?\|null | max 32 |
+| `address` | string? | 1–500 chars |
+| `nearby_location` | string?\|null | max 500 |
+| `city` | string?\|null | max 255 |
+| `district` | string?\|null | max 255 |
+| `pin_code` | string?\|null | max 20 |
+| `state` | string?\|null | max 255 |
+| `post_office` | string?\|null | max 255 |
+
+**Response `200`**: same shape as `GET /patients/me`.
+
+**Errors:** `400 VALIDATION_ERROR`.
+
+### POST /patients/me/photo/signature
+
+Auth: `patient`. Issues a signed Cloudinary upload grant for the caller's own profile photo — same two-step flow as [File uploads](#file-uploads) (folder `patients`).
+
+**Response `200`**
+
+```json
+{
+  "upload_url": "https://api.cloudinary.com/v1_1/<cloud_name>/image/upload",
+  "cloud_name": "<cloud_name>",
+  "api_key": "<api_key>",
+  "timestamp": 1770000000,
+  "public_id": "patients/3c2f6a1b-9e8d-4c7a-b5f0-1a2b3c4d5e6f",
+  "allowed_formats": ["jpg", "png", "webp", "gif"],
+  "signature": "<sha1>"
+}
+```
+
+### POST /patients/me/photo
+
+Auth: `patient`. Persists the photo uploaded to the `public_id` issued above.
+
+**Request body**
+
+```json
+{ "public_id": "patients/3c2f6a1b-9e8d-4c7a-b5f0-1a2b3c4d5e6f" }
+```
+
+**Response `200`**
+
+```json
+{ "photo_url": "https://res.cloudinary.com/<cloud_name>/image/upload/patients/3c2f6a1b-9e8d-4c7a-b5f0-1a2b3c4d5e6f" }
+```
+
+**Errors:** `400 INVALID_PUBLIC_ID`.
 
 ### GET /branches/:id/patients
 

@@ -157,6 +157,23 @@ try {
     console.log('Applied migration: users address/photo_url');
   }
 
+  const [userLocationCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'nearby_location'`,
+  );
+  if (Number(userLocationCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE users
+         ADD COLUMN nearby_location VARCHAR(500) NULL AFTER address,
+         ADD COLUMN city VARCHAR(255) NULL AFTER nearby_location,
+         ADD COLUMN district VARCHAR(255) NULL AFTER city,
+         ADD COLUMN pin_code VARCHAR(20) NULL AFTER district,
+         ADD COLUMN state VARCHAR(255) NULL AFTER pin_code,
+         ADD COLUMN post_office VARCHAR(255) NULL AFTER state`,
+    );
+    console.log('Applied migration: users nearby_location/city/district/pin_code/state/post_office');
+  }
+
   const [resetTokenTables] = await conn.query(
     `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'password_reset_tokens'`,

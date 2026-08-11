@@ -79,7 +79,19 @@ const requests = [
     method: "POST",
     url: "/auth/patient/register",
     auth: false,
-    body: rawJson({ name: "Aisha Verma", email: "aisha@example.com", phone: "+919876543210", password: "password123" }),
+    body: rawJson({
+      name: "Aisha Verma",
+      email: "aisha@example.com",
+      phone: "+919876543210",
+      address: "123 Link Road, Andheri West",
+      nearby_location: "Near Andheri Station",
+      city: "Mumbai",
+      district: "Mumbai Suburban",
+      pin_code: "400058",
+      state: "Maharashtra",
+      post_office: "Andheri West HO",
+      password: "password123",
+    }),
     test: [...SET_TOKENS, 'pm.collectionVariables.set("userId", j.user.id);'],
   }),
   req({
@@ -188,6 +200,13 @@ const requests = [
   }),
   req({
     folder: "Clinics",
+    name: "Nearby Clinics",
+    method: "GET",
+    url: "/clinics/nearby",
+    query: [{ key: "limit", value: "20" }, { key: "cursor", value: "" }],
+  }),
+  req({
+    folder: "Clinics",
     name: "Create Clinic",
     method: "POST",
     url: "/clinics",
@@ -222,6 +241,13 @@ const requests = [
     method: "GET",
     url: "/clinics/:clinicId/branches",
     auth: false,
+  }),
+  req({
+    folder: "Branches",
+    name: "Nearby Branches",
+    method: "GET",
+    url: "/branches/nearby",
+    query: [{ key: "limit", value: "20" }, { key: "cursor", value: "" }],
   }),
   req({
     folder: "Branches",
@@ -553,6 +579,36 @@ const requests = [
     name: "Email Prescription",
     method: "POST",
     url: "/appointments/:appointmentId/prescription/email",
+  }),
+
+  // ── Patients ─────────────────────────────────────────────────────────────
+  req({
+    folder: "Patients",
+    name: "Get My Patient Profile",
+    method: "GET",
+    url: "/patients/me",
+  }),
+  req({
+    folder: "Patients",
+    name: "Update My Patient Profile",
+    method: "PATCH",
+    url: "/patients/me",
+    body: rawJson({ phone: "+919876543211", city: "Pune", pin_code: "411001" }),
+  }),
+  req({
+    folder: "Patients",
+    name: "My Patient Photo Signature",
+    method: "POST",
+    url: "/patients/me/photo/signature",
+    test: ['const j = pm.response.json();', 'if (j.public_id) pm.collectionVariables.set("publicId", j.public_id);'],
+  }),
+  req({
+    folder: "Patients",
+    name: "Set My Patient Photo",
+    method: "POST",
+    url: "/patients/me/photo",
+    body: rawJson({ public_id: "{{publicId}}" }),
+    test: ['const j = pm.response.json();', 'if (j.photo_url) pm.collectionVariables.set("fileUrl", j.photo_url);'],
   }),
 
   // ── Medical Documents ───────────────────────────────────────────────────
