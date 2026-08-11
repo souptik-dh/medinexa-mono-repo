@@ -111,7 +111,9 @@ export const POST = api(undefined, async (ctx) => {
     throw err;
   }
 
-  const acceptUrl = `${process.env.APP_URL ?? ""}/doctor/accept-invite?email=${encodeURIComponent(body.email)}&code=${encodeURIComponent(inviteCode)}`;
+  const acceptUrlParams = new URLSearchParams({ email: body.email, code: inviteCode });
+  if (body.reg_no) acceptUrlParams.set("reg_no", body.reg_no);
+  const acceptUrl = `${process.env.APP_URL ?? ""}/doctor/accept-invite?${acceptUrlParams.toString()}`;
 
   await sendEmail(
     body.email,
