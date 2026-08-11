@@ -134,6 +134,7 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
       id: doctorId,
       name: invite.name,
       specialization: invite.specialization ?? null,
+      reg_no: body.reg_no ?? null,
       phone: invite.phone ?? null,
       certificate_url: invite.certificate_url ?? null,
       photo_url: null,

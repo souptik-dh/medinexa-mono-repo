@@ -315,6 +315,7 @@ On success, an in-app `doctor_invite_accepted` notification is created for whoev
     "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
     "name": "Dr. Smith",
     "specialization": "Cardiologist",
+    "reg_no": "MC-123456",
     "phone": "+919900000001",
     "certificate_url": null,
     "bio": null
