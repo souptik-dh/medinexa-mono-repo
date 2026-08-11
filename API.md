@@ -327,7 +327,7 @@ On success, an in-app `doctor_invite_accepted` notification is created for whoev
 ### POST /auth/branch-staff/login
 
 Requests a passwordless OTP for an existing staff account. Rate limited 10/min per IP.
-Always returns the same message (does not reveal whether the email exists).
+Rejects any email that is not an active `branch_staff` account with `403 NOT_BRANCH_STAFF` — this reveals whether an email is registered as branch staff (a deliberate trade-off; the OTP-sent response itself does not reveal anything further).
 
 **Request body**
 
@@ -342,6 +342,8 @@ Always returns the same message (does not reveal whether the email exists).
   "message": "If an account exists for this email, an OTP has been sent."
 }
 ```
+
+**Errors:** `403 NOT_BRANCH_STAFF` — "Access Denied: This email address is not registered as Branch Staff."
 
 ### POST /auth/branch-staff/verify-otp
 
