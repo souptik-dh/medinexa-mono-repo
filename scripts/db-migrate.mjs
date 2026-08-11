@@ -28,6 +28,43 @@ try {
     console.log('Applied migration: doctors.reg_no');
   }
 
+  const [inviteRegNoCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_invites' AND COLUMN_NAME = 'reg_no'`,
+  );
+  if (Number(inviteRegNoCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE doctor_invites ADD COLUMN reg_no VARCHAR(64) NULL AFTER invite_code_hash`,
+    );
+    console.log('Applied migration: doctor_invites.reg_no');
+  }
+
+  const [doctorSmcCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctors' AND COLUMN_NAME = 'smc_name'`,
+  );
+  if (Number(doctorSmcCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE doctors
+         ADD COLUMN smc_name VARCHAR(255) NULL AFTER reg_no,
+         ADD COLUMN doctor_degree VARCHAR(100) NULL AFTER smc_name`,
+    );
+    console.log('Applied migration: doctors.smc_name, doctors.doctor_degree');
+  }
+
+  const [inviteSmcCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_invites' AND COLUMN_NAME = 'smc_name'`,
+  );
+  if (Number(inviteSmcCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE doctor_invites
+         ADD COLUMN smc_name VARCHAR(255) NULL AFTER reg_no,
+         ADD COLUMN doctor_degree VARCHAR(100) NULL AFTER smc_name`,
+    );
+    console.log('Applied migration: doctor_invites.smc_name, doctor_invites.doctor_degree');
+  }
+
   const [photoCols] = await conn.query(
     `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctors' AND COLUMN_NAME = 'photo_url'`,

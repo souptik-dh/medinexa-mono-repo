@@ -28,6 +28,9 @@ const createSchema = z.object({
   specialization: z.string().trim().max(255).optional().nullable(),
   email: emailSchema,
   phone: z.string().trim().max(32).optional().nullable(),
+  reg_no: z.string().trim().max(64).optional().nullable(),
+  smc_name: z.string().trim().max(255).optional().nullable(),
+  doctor_degree: z.string().trim().max(100).optional().nullable(),
   fee_amount: z.coerce.number().positive().max(1_000_000),
   currency: z.string().trim().toUpperCase().length(3),
   certificate: z.string().trim().max(500).optional().nullable(),
@@ -80,8 +83,8 @@ export const POST = api(undefined, async (ctx) => {
   try {
     await pool.query(
       `INSERT INTO doctor_invites
-         (id, branch_id, email, name, specialization, phone, fee_amount, currency, certificate_url, slot_template, invite_code_hash, status, invited_by, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+         (id, branch_id, email, name, specialization, phone, fee_amount, currency, certificate_url, slot_template, invite_code_hash, reg_no, smc_name, doctor_degree, status, invited_by, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       [
         id,
         branchId,
@@ -94,6 +97,9 @@ export const POST = api(undefined, async (ctx) => {
         body.certificate ?? null,
         JSON.stringify(body.slot_template),
         hashToken(inviteCode),
+        body.reg_no ?? null,
+        body.smc_name ?? null,
+        body.doctor_degree ?? null,
         auth.userId,
         expiresAt,
       ],
@@ -118,6 +124,9 @@ export const POST = api(undefined, async (ctx) => {
       id,
       branch_id: branchId,
       email: body.email,
+      reg_no: body.reg_no ?? null,
+      smc_name: body.smc_name ?? null,
+      doctor_degree: body.doctor_degree ?? null,
       status: "pending",
       expires_at: `${expiresAt}Z`.replace(" ", "T"),
     },
@@ -131,7 +140,7 @@ export const GET = api(undefined, async (ctx) => {
   await requireBranchAccess(pool, auth, branchId, "doctors:manage");
 
   const [rows] = await pool.query<Row[]>(
-    `SELECT id, name, email, status, expires_at, created_at
+    `SELECT id, name, email, reg_no, smc_name, doctor_degree, status, expires_at, created_at
        FROM doctor_invites WHERE branch_id = ? ORDER BY created_at DESC`,
     [branchId],
   );
@@ -140,6 +149,9 @@ export const GET = api(undefined, async (ctx) => {
       id: r.id,
       name: r.name,
       email: r.email,
+      reg_no: r.reg_no,
+      smc_name: r.smc_name,
+      doctor_degree: r.doctor_degree,
       status: r.status,
       expires_at: r.expires_at,
       created_at: r.created_at,

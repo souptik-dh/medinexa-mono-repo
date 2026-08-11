@@ -294,7 +294,9 @@ On success, an in-app `doctor_invite_accepted` notification is created for whoev
   "email": "dr.smith@example.com",
   "invite_code": "K7QX2Z9P",
   "password": "password123",
-  "reg_no": "MC-123456"
+  "reg_no": "MC-123456",
+  "smc_name": "Medical Council of India",
+  "doctor_degree": "MBBS, MD"
 }
 ```
 
@@ -303,7 +305,9 @@ On success, an in-app `doctor_invite_accepted` notification is created for whoev
 | `email` | string | required, must match a pending invite |
 | `invite_code` | string | required, 1–32 chars |
 | `password` | string | required, 8–128 chars |
-| `reg_no` | string? | optional registration number, max 64, unique |
+| `reg_no` | string? | optional registration number, max 64, unique — ignored if the invite already has one set (from invite creation) |
+| `smc_name` | string? | max 255 — ignored if the invite already has one set |
+| `doctor_degree` | string? | max 100 — ignored if the invite already has one set |
 
 **Response `200`**
 
@@ -316,6 +320,8 @@ On success, an in-app `doctor_invite_accepted` notification is created for whoev
     "name": "Dr. Smith",
     "specialization": "Cardiologist",
     "reg_no": "MC-123456",
+    "smc_name": "Medical Council of India",
+    "doctor_degree": "MBBS, MD",
     "phone": "+919900000001",
     "certificate_url": null,
     "bio": null
@@ -1094,6 +1100,9 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
   "specialization": "Cardiologist",
   "email": "dr.smith@example.com",
   "phone": "+919900000001",
+  "reg_no": "MC-123456",
+  "smc_name": "Medical Council of India",
+  "doctor_degree": "MBBS, MD",
   "fee_amount": 500,
   "currency": "INR",
   "certificate": "https://example.com/cert.pdf",
@@ -1120,6 +1129,9 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
 | `specialization` | string? | max 255 |
 | `email` | string | required |
 | `phone` | string? | max 32 |
+| `reg_no` | string? | max 64, optional — pre-fill the doctor's registration number; if omitted, the doctor supplies it on accept |
+| `smc_name` | string? | max 255, optional — State Medical Council name |
+| `doctor_degree` | string? | max 100, optional — e.g. `MBBS, MD` |
 | `fee_amount` | number | required, > 0, ≤ 1,000,000 |
 | `currency` | string | required, 3-letter code |
 | `certificate` | string? | max 500 |
@@ -1136,6 +1148,9 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
   "id": "7c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f",
   "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
   "email": "dr.smith@example.com",
+  "reg_no": "MC-123456",
+  "smc_name": "Medical Council of India",
+  "doctor_degree": "MBBS, MD",
   "status": "pending",
   "expires_at": "2026-08-16T10:00:00Z"
 }
@@ -1156,6 +1171,9 @@ Auth: `clinic_owner` **or** `branch_staff` with `doctors:manage`.
       "id": "7c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f",
       "name": "Dr. Smith",
       "email": "dr.smith@example.com",
+      "reg_no": "MC-123456",
+      "smc_name": "Medical Council of India",
+      "doctor_degree": "MBBS, MD",
       "status": "pending",
       "expires_at": "2026-08-16T10:00:00Z",
       "created_at": "2026-08-09T10:00:00Z"
@@ -1164,7 +1182,7 @@ Auth: `clinic_owner` **or** `branch_staff` with `doctors:manage`.
 }
 ```
 
-`status` ∈ `pending | accepted | expired | revoked`.
+`status` ∈ `pending | accepted | expired | revoked`. `reg_no` is `null` until the doctor accepts the invite.
 
 ### DELETE /doctor-invites/:id
 
@@ -1188,6 +1206,8 @@ Public. Returns only **accepted** doctors assigned to the branch.
       "assignment_id": "e4f5a6b7-8c9d-0e1f-2a3b-4c5d6e7f8a9b",
       "name": "Dr. Smith",
       "specialization": "Cardiologist",
+      "smc_name": "Medical Council of India",
+      "doctor_degree": "MBBS, MD",
       "phone": "+919900000001",
       "certificate_url": null,
       "fee_amount": 500,
@@ -1278,6 +1298,8 @@ Auth: `doctor`.
   "name": "Dr. Smith",
   "specialization": "Cardiologist",
   "reg_no": "MC-123456",
+  "smc_name": "Medical Council of India",
+  "doctor_degree": "MBBS, MD",
   "phone": "+919900000001",
   "certificate_url": null,
   "bio": null
@@ -1291,7 +1313,7 @@ Auth: `doctor`.
 **Request body** (partial)
 
 ```json
-{ "name": "Dr. John Smith", "reg_no": "MC-654321", "phone": "+919900000002", "bio": "MBBS, MD (Cardiology)" }
+{ "name": "Dr. John Smith", "reg_no": "MC-654321", "smc_name": "Medical Council of India", "doctor_degree": "MBBS, MD", "phone": "+919900000002", "bio": "MBBS, MD (Cardiology)" }
 ```
 
 **Response `200`** — updated doctor object (same shape as GET).
@@ -1360,6 +1382,8 @@ Searches `reg_no` (prefix), `name` (contains), and `specialization` (contains). 
       "name": "Dr. Smith",
       "specialization": "Cardiologist",
       "reg_no": "MC-123456",
+      "smc_name": "Medical Council of India",
+      "doctor_degree": "MBBS, MD",
       "phone": "+919900000001",
       "clinic_count": 1
     }

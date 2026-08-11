@@ -13,6 +13,8 @@ const schema = z.object({
   invite_code: z.string().min(1).max(32),
   password: passwordSchema,
   reg_no: z.string().trim().max(64).optional().nullable(),
+  smc_name: z.string().trim().max(255).optional().nullable(),
+  doctor_degree: z.string().trim().max(100).optional().nullable(),
 });
 
 export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
@@ -46,12 +48,15 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
     [invite.branch_id],
   );
   const owner = ownerRows[0];
+  const regNo = invite.reg_no ?? body.reg_no ?? null;
+  const smcName = invite.smc_name ?? body.smc_name ?? null;
+  const doctorDegree = invite.doctor_degree ?? body.doctor_degree ?? null;
 
   await withTransaction(async (conn) => {
     const [claim] = await conn.query<ResultSetHeader>(
-      `UPDATE doctor_invites SET status = 'accepted'
+      `UPDATE doctor_invites SET status = 'accepted', reg_no = ?, smc_name = ?, doctor_degree = ?
         WHERE id = ? AND status = 'pending'`,
-      [invite.id],
+      [regNo, smcName, doctorDegree, invite.id],
     );
     if (claim.affectedRows !== 1) {
       throw conflict("INVITE_ALREADY_ACCEPTED", "This invite has already been accepted.");
@@ -63,9 +68,9 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
       [userId, invite.name, body.email, invite.phone ?? null, passwordHash],
     );
     await conn.query(
-      `INSERT INTO doctors (id, user_id, name, specialization, reg_no, phone, certificate_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [doctorId, userId, invite.name, invite.specialization ?? null, body.reg_no ?? null, invite.phone ?? null, invite.certificate_url ?? null],
+      `INSERT INTO doctors (id, user_id, name, specialization, reg_no, smc_name, doctor_degree, phone, certificate_url)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [doctorId, userId, invite.name, invite.specialization ?? null, regNo, smcName, doctorDegree, invite.phone ?? null, invite.certificate_url ?? null],
     );
     await conn.query(
       `INSERT INTO doctor_branch_assignments (id, doctor_id, branch_id, fee_amount, currency, is_active)
@@ -134,7 +139,9 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
       id: doctorId,
       name: invite.name,
       specialization: invite.specialization ?? null,
-      reg_no: body.reg_no ?? null,
+      reg_no: regNo,
+      smc_name: smcName,
+      doctor_degree: doctorDegree,
       phone: invite.phone ?? null,
       certificate_url: invite.certificate_url ?? null,
       photo_url: null,
