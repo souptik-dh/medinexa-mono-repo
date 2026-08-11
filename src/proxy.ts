@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const allowedOrigins = ["http://localhost:3000","https://medinexa-clinic.onrender.com"];
+const allowedOrigins = ["http://localhost:3000","https://medinexa-clinic.onrender.com","http://localhost:8081"];
 
 const corsOptions = {
   "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
