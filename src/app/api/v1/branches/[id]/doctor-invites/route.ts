@@ -105,12 +105,12 @@ export const POST = api(undefined, async (ctx) => {
     throw err;
   }
 
-  const acceptUrl = `${process.env.APP_URL ?? ""}/api/v1/auth/doctor/accept-invite`;
+  const acceptUrl = `${process.env.APP_URL ?? ""}/doctor/accept-invite?email=${encodeURIComponent(body.email)}&code=${encodeURIComponent(inviteCode)}`;
 
   await sendEmail(
     body.email,
     `Dr. ${body.name}, you've been invited to ${branch.name}`,
-    `Use this one-time invite code to set up your MediBook account: ${inviteCode}\n\nAccept your invitation here: ${acceptUrl}\n\nSend a POST request to ${acceptUrl} with your email, this code, and a password. The code expires in 7 days.`,
+    `You've been invited to join ${branch.name} on MediBook.\n\nAccept your invitation here: ${acceptUrl}\n\nYour one-time invite code is: ${inviteCode}\n\nThis code expires in 7 days.`,
   );
 
   return json(
