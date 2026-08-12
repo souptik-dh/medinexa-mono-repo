@@ -5,7 +5,7 @@ import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { conflict } from "@/lib/errors";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createNotification, notifyBranchStaff } from "@/lib/notifications";
+import { createPatientNotification, notifyBranchStaff } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 
 const schema = z.object({
@@ -52,8 +52,10 @@ export const PATCH = api(undefined, async (ctx) => {
         reason: body.reason ?? null,
       });
     } else {
-      await createNotification(conn, appt.patient_id, "appointment_cancelled", {
+      await createPatientNotification(conn, appt.patient_id, "appointment_cancelled", {
         appointment_id: appt.id,
+        date: appt.scheduled_date,
+        time: appt.scheduled_time,
         reason: body.reason ?? null,
       });
     }

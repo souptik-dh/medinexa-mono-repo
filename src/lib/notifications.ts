@@ -1,4 +1,5 @@
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
+import { randomBytes } from "node:crypto";
 import { newId } from "@/lib/ids";
 
 export type NotificationType =
@@ -38,6 +39,140 @@ export async function notifyBranchStaff(
   for (const row of rows) {
     await createNotification(db, row.user_id, type, payload, branchId);
   }
+}
+
+/**
+ * ntfy (https://ntfy.sh) push delivery. Each patient gets a private, unique
+ * topic stored in users.push_topic; their app subscribes to
+ * `${NTFY_BASE_URL}/${topic}` and the server publishes to it via HTTP.
+ */
+const NTFY_BASE_URL = (process.env.NTFY_BASE_URL ?? "https://ntfy.sh").replace(/\/+$/, "");
+const NTFY_TOKEN = process.env.NTFY_TOKEN ?? null;
+
+/** Fresh per-patient ntfy topic. Kept opaque so it doubles as the subscribe key. */
+export function newPushTopic(): string {
+  return `medinexa_${randomBytes(24).toString("base64url")}`;
+}
+
+/**
+ * Returns the patient's ntfy topic, generating and persisting one on first use
+ * (covers patients registered before push topics existed). Non-patients and
+ * unknown users return null.
+ */
+export async function getOrCreatePushTopic(
+  db: Pick<PoolConnection, "query">,
+  userId: string,
+): Promise<string | null> {
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT role, push_topic FROM users WHERE id = ?`,
+    [userId],
+  );
+  const user = rows[0];
+  if (!user || user.role !== "patient") return null;
+  if (user.push_topic) return user.push_topic as string;
+
+  const topic = newPushTopic();
+  await db.query(`UPDATE users SET push_topic = ? WHERE id = ?`, [topic, userId]);
+  return topic;
+}
+
+export interface PushMessage {
+  title: string;
+  message: string;
+  tags?: string[];
+  priority?: number;
+}
+
+/** Publishes a message to a ntfy topic. Never throws — failures are logged. */
+export async function publishPush(topic: string, msg: PushMessage): Promise<void> {
+  const headers: Record<string, string> = {
+    Title: msg.title,
+    Tags: (msg.tags ?? []).join(","),
+    Priority: String(msg.priority ?? 3),
+  };
+  if (NTFY_TOKEN) headers.Authorization = `Bearer ${NTFY_TOKEN}`;
+  try {
+    const res = await fetch(`${NTFY_BASE_URL}/${encodeURIComponent(topic)}`, {
+      method: "POST",
+      headers,
+      body: msg.message,
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error(`[push] ntfy rejected publish (${res.status}): ${detail}`);
+    }
+  } catch (err) {
+    console.error("[push] ntfy publish failed:", err);
+  }
+}
+
+/** Maps an in-app notification type to a user-facing push title/message. */
+export function pushContentFor(
+  type: NotificationType,
+  payload: Record<string, unknown> = {},
+): PushMessage {
+  const when = [payload.date, payload.time].filter(Boolean).join(" at ");
+  switch (type) {
+    case "booking_confirmed":
+      return {
+        title: "Appointment confirmed",
+        message: when
+          ? `Your appointment for ${when} has been confirmed.`
+          : "Your appointment has been confirmed.",
+        tags: ["white_check_mark"],
+        priority: 4,
+      };
+    case "payment_received":
+      return {
+        title: "Payment received",
+        message: `Payment for your appointment${when ? ` on ${when}` : ""} has been received.`,
+        tags: ["moneybag"],
+        priority: 3,
+      };
+    case "consultation_completed":
+      return {
+        title: "Consultation completed",
+        message: `Your consultation${when ? ` on ${when}` : ""} is complete.`,
+        tags: ["stethoscope"],
+        priority: 3,
+      };
+    case "prescription_ready":
+      return {
+        title: "Prescription ready",
+        message: "Your prescription is ready to view.",
+        tags: ["pill"],
+        priority: 4,
+      };
+    case "appointment_cancelled":
+      return {
+        title: "Appointment cancelled",
+        message: `Your appointment${when ? ` on ${when}` : ""} has been cancelled.`,
+        tags: ["warning"],
+        priority: 4,
+      };
+    default:
+      return {
+        title: type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+        message: typeof payload.message === "string" ? payload.message : "You have a new notification.",
+        priority: 3,
+      };
+  }
+}
+
+/**
+ * Creates the in-app notification AND delivers a ntfy push to the patient's
+ * device. Push failures never fail the underlying request.
+ */
+export async function createPatientNotification(
+  db: Pick<PoolConnection, "query">,
+  userId: string,
+  type: NotificationType,
+  payload: Record<string, unknown> = {},
+): Promise<void> {
+  await createNotification(db, userId, type, payload);
+  const topic = await getOrCreatePushTopic(db, userId);
+  if (topic) await publishPush(topic, pushContentFor(type, payload));
 }
 
 /**
