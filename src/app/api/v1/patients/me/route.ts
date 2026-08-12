@@ -6,7 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 
 const SELECT_FIELDS =
-  "id, name, email, phone, address, nearby_location, city, district, pin_code, state, post_office, photo_url, created_at, updated_at";
+  "id, name, email, phone, address, nearby_location, city, district, pin_code, state, post_office, photo_url, push_topic, created_at, updated_at";
 
 function toProfile(u: Row) {
   return {
@@ -22,6 +22,7 @@ function toProfile(u: Row) {
     state: u.state,
     post_office: u.post_office,
     photo_url: u.photo_url,
+    push_topic: u.push_topic,
     created_at: u.created_at,
     updated_at: u.updated_at,
   };

@@ -6,7 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 import { requireAssignedDoctor, serializePrescription } from "@/lib/prescriptions";
 import { getAppointmentInScope } from "@/lib/appointments";
-import { createNotification } from "@/lib/notifications";
+import { createPatientNotification } from "@/lib/notifications";
 import { newId } from "@/lib/ids";
 
 const schema = z.object({
@@ -38,7 +38,7 @@ export const PUT = api(undefined, async (ctx) => {
         finalizedAt,
       ],
     );
-    await createNotification(conn, appointment.patient_id, "prescription_ready", {
+    await createPatientNotification(conn, appointment.patient_id, "prescription_ready", {
       appointment_id: appointment.id,
       doctor_id: appointment.doctor_id,
     });

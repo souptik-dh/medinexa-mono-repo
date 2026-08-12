@@ -14,13 +14,15 @@ CREATE TABLE IF NOT EXISTS users (
   state VARCHAR(255) NULL,
   post_office VARCHAR(255) NULL,
   photo_url VARCHAR(500) NULL,
+  push_topic VARCHAR(64) NULL,
   password_hash VARCHAR(255) NULL,
   role ENUM('patient','clinic_owner','branch_staff','doctor','sys_admin') NOT NULL,
   status ENUM('active','pending','disabled') NOT NULL DEFAULT 'active',
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
-  UNIQUE KEY uniq_users_email (email)
+  UNIQUE KEY uniq_users_email (email),
+  UNIQUE KEY uniq_users_push_topic (push_topic)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -329,6 +331,22 @@ CREATE TABLE IF NOT EXISTS medical_documents (
   PRIMARY KEY (id),
   KEY idx_meddoc_patient (patient_id),
   CONSTRAINT fk_meddoc_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS patient_devices (
+  id CHAR(36) NOT NULL,
+  patient_id CHAR(36) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  category VARCHAR(40) NOT NULL,
+  brand VARCHAR(100) NULL,
+  model VARCHAR(100) NULL,
+  serial_number VARCHAR(100) NULL,
+  notes VARCHAR(1000) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY idx_patient_devices_patient (patient_id),
+  CONSTRAINT fk_patient_devices_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS prescriptions (

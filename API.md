@@ -1555,10 +1555,13 @@ Auth: `patient`. Returns the caller's own profile.
   "state": "Maharashtra",
   "post_office": "Andheri West HO",
   "photo_url": null,
+  "push_topic": "medinexa_1tQvWf4n3sBm7KpLzXr2c9hJ8dY6uEaSgHwM5vN0bA",
   "created_at": "2026-08-01T09:30:00Z",
   "updated_at": "2026-08-01T09:30:00Z"
 }
 ```
+
+`push_topic` is the patient's private ntfy topic — the mobile app subscribes to `https://ntfy.sh/{push_topic}` to receive push notifications. It is generated at registration (or lazily on first push for pre-existing accounts) and is read-only via this API.
 
 ### PATCH /patients/me
 
@@ -2034,6 +2037,8 @@ Auth: `doctor` **only**, and only with a non-cancelled appointment relationship 
 ```
 
 `type` ∈ `new_booking | booking_confirmed | payment_received | consultation_completed | prescription_ready | doctor_invited | doctor_invite_accepted | appointment_cancelled`
+
+**Delivery:** notifications are stored in-app and polled via the endpoints below. Patient-facing events (`booking_confirmed`, `payment_received`, `consultation_completed`, `prescription_ready`, and patient-cancelled/`appointment_cancelled` by staff) additionally fan out a **push** notification to the patient's device through [ntfy](https://ntfy.sh). Each patient has a private topic (`users.push_topic`, returned by `GET /patients/me`) the app subscribes to at `${NTFY_BASE_URL}/${push_topic}`; the server publishes via `NTFY_BASE_URL` (default `https://ntfy.sh`) with an optional `NTFY_TOKEN` for self-hosted instances. Push failures never fail the triggering request.
 
 ### GET /notifications
 

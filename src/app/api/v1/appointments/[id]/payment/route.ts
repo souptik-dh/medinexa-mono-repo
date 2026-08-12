@@ -5,7 +5,7 @@ import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { badRequest } from "@/lib/errors";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createNotification, clinicOwnerContact, sendEmail } from "@/lib/notifications";
+import { createNotification, createPatientNotification, clinicOwnerContact, sendEmail } from "@/lib/notifications";
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { assertBranchStaffPermission } from "@/lib/permissions";
@@ -66,7 +66,7 @@ export const PATCH = api({ rateLimit: 20 }, async (ctx) => {
            payment_count = payment_count + 1`,
         [newId(), appt.clinic_id, appt.branch_id, appt.currency, body.fee_amount],
       );
-      await createNotification(conn, appt.patient_id, "payment_received", {
+      await createPatientNotification(conn, appt.patient_id, "payment_received", {
         appointment_id: appt.id,
         amount: body.fee_amount,
         method: body.method,

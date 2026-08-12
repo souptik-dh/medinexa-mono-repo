@@ -174,6 +174,19 @@ try {
     console.log('Applied migration: users nearby_location/city/district/pin_code/state/post_office');
   }
 
+  const [userPushTopicCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'push_topic'`,
+  );
+  if (Number(userPushTopicCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE users
+         ADD COLUMN push_topic VARCHAR(64) NULL AFTER photo_url,
+         ADD UNIQUE KEY uniq_users_push_topic (push_topic)`,
+    );
+    console.log('Applied migration: users.push_topic');
+  }
+
   const [resetTokenTables] = await conn.query(
     `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'password_reset_tokens'`,
@@ -379,6 +392,31 @@ try {
       ) ENGINE=InnoDB
     `);
     console.log('Applied migration: audit_logs table');
+  }
+
+  const [deviceTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'patient_devices'`,
+  );
+  if (Number(deviceTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE patient_devices (
+        id CHAR(36) NOT NULL,
+        patient_id CHAR(36) NOT NULL,
+        name VARCHAR(255) NOT NULL,
+        category VARCHAR(40) NOT NULL,
+        brand VARCHAR(100) NULL,
+        model VARCHAR(100) NULL,
+        serial_number VARCHAR(100) NULL,
+        notes VARCHAR(1000) NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        KEY idx_patient_devices_patient (patient_id),
+        CONSTRAINT fk_patient_devices_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: patient_devices table');
   }
 
   console.log('Schema applied successfully.');

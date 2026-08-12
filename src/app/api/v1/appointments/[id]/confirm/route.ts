@@ -2,7 +2,7 @@ import { api, json } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createNotification, sendEmail } from "@/lib/notifications";
+import { createPatientNotification, sendEmail } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 
 export const PATCH = api(undefined, async (ctx) => {
@@ -12,7 +12,7 @@ export const PATCH = api(undefined, async (ctx) => {
     const appt = await getAppointmentInScope(conn, ctx.params.id, auth);
     await assertBranchStaffPermission(conn, auth, appt.branch_id, "appointments:confirm");
     await transition(conn, appt, "confirmed", auth.userId, ["pending"]);
-    await createNotification(conn, appt.patient_id, "booking_confirmed", {
+    await createPatientNotification(conn, appt.patient_id, "booking_confirmed", {
       appointment_id: appt.id,
       date: appt.scheduled_date,
       time: appt.scheduled_time,
