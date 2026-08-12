@@ -36,7 +36,7 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
   );
   await sendEmail(
     body.email,
-    "Your MediBook login code",
+    "Your Jido Healthcare login code",
     `Your one-time login code is ${otp}. It expires in 10 minutes.`,
   );
 
