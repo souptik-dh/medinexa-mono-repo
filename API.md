@@ -1684,11 +1684,21 @@ Auth: `patient`. Compact counts plus the soonest upcoming appointment, for the p
     "doctor_name": "Dr. Kavita Rao",
     "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
     "branch_name": "Andheri West Branch"
+  },
+  "previous_appointment": {
+    "id": "a9b8c7d6-e5f4-3210-9a8b-7c6d5e4f3a2b",
+    "scheduled_date": "2026-07-20",
+    "scheduled_time": "11:00",
+    "status": "completed",
+    "doctor_id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+    "doctor_name": "Dr. Kavita Rao",
+    "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+    "branch_name": "Andheri West Branch"
   }
 }
 ```
 
-`upcoming_count` counts non-terminal appointments (`pending`/`confirmed`/`paid`) scheduled today or later. `next_appointment` is `null` if there is none.
+`upcoming_count` counts non-terminal appointments (`pending`/`confirmed`/`paid`) scheduled today or later. `next_appointment` is the soonest such appointment, or `null` if there is none. `previous_appointment` is the most recent `completed` appointment (the patient's last visit), or `null` if there is none.
 
 ### POST /patients/me/change-password
 
