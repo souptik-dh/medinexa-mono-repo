@@ -72,6 +72,15 @@ function req({ folder, name, method, url, auth = true, body, query, header = [],
 }
 
 const requests = [
+  // ── Health ──────────────────────────────────────────────────────────────
+  req({
+    folder: "Health",
+    name: "Health Check",
+    method: "GET",
+    url: "/health",
+    auth: false,
+  }),
+
   // ── Auth ────────────────────────────────────────────────────────────────
   req({
     folder: "Auth",
@@ -174,6 +183,14 @@ const requests = [
   }),
   req({
     folder: "Auth",
+    name: "Verify Email",
+    method: "POST",
+    url: "/auth/verify-email",
+    auth: false,
+    body: rawJson({ token: "{{verification_token}}" }),
+  }),
+  req({
+    folder: "Auth",
     name: "Refresh Tokens",
     method: "POST",
     url: "/auth/refresh",
@@ -207,6 +224,12 @@ const requests = [
   }),
   req({
     folder: "Clinics",
+    name: "My Clinics",
+    method: "GET",
+    url: "/clinics/mine",
+  }),
+  req({
+    folder: "Clinics",
     name: "Create Clinic",
     method: "POST",
     url: "/clinics",
@@ -226,6 +249,13 @@ const requests = [
     method: "PATCH",
     url: "/clinics/:clinicId",
     body: rawJson({ name: "Sunrise Heart & Care" }),
+  }),
+  req({
+    folder: "Clinics",
+    name: "Upload Clinic License",
+    method: "POST",
+    url: "/clinics/:clinicId/licenses/:licenseType",
+    body: formData(),
   }),
   req({
     folder: "Clinics",
@@ -279,6 +309,13 @@ const requests = [
   }),
   req({
     folder: "Branches",
+    name: "Upload Branch License",
+    method: "POST",
+    url: "/branches/:branchId/licenses/:licenseType",
+    body: formData(),
+  }),
+  req({
+    folder: "Branches",
     name: "Branch Photo Signature",
     method: "POST",
     url: "/branches/:branchId/photo/signature",
@@ -324,6 +361,12 @@ const requests = [
   // ── Branch Staff ────────────────────────────────────────────────────────
   req({
     folder: "Branch Staff",
+    name: "My Branch Profile",
+    method: "GET",
+    url: "/branch-staff/me",
+  }),
+  req({
+    folder: "Branch Staff",
     name: "List Staff",
     method: "GET",
     url: "/branches/:branchId/staff",
@@ -356,6 +399,18 @@ const requests = [
     body: rawJson({
       permissions: ["appointments:confirm", "appointments:payment", "appointments:complete", "appointments:cancel"],
     }),
+  }),
+  req({
+    folder: "Branch Staff",
+    name: "Branch Patients",
+    method: "GET",
+    url: "/branches/:branchId/patients",
+    query: [
+      { key: "search", value: "", description: "Name, email, or phone" },
+      { key: "type", value: "", description: "new | old" },
+      { key: "limit", value: "20" },
+      { key: "offset", value: "0" },
+    ],
   }),
 
   // ── Doctors, Invites & Assignments ──────────────────────────────────────
@@ -540,6 +595,15 @@ const requests = [
     url: "/appointments/:appointmentId/status-history",
   }),
 
+  // ── Payment Ledger ──────────────────────────────────────────────────────
+  req({
+    folder: "Payment Ledger",
+    name: "Clinic Payment Ledger",
+    method: "GET",
+    url: "/clinics/:clinicId/ledger",
+    query: [{ key: "month", value: "", description: "YYYY-MM (optional, omit for all)" }],
+  }),
+
   // ── Prescriptions ───────────────────────────────────────────────────────
   req({
     folder: "Prescriptions",
@@ -610,6 +674,86 @@ const requests = [
     body: rawJson({ public_id: "{{publicId}}" }),
     test: ['const j = pm.response.json();', 'if (j.photo_url) pm.collectionVariables.set("fileUrl", j.photo_url);'],
   }),
+  req({
+    folder: "Patients",
+    name: "Get My Medical Info",
+    method: "GET",
+    url: "/patients/me/medical-info",
+  }),
+  req({
+    folder: "Patients",
+    name: "Update My Medical Info",
+    method: "PATCH",
+    url: "/patients/me/medical-info",
+    body: rawJson({ blood_group: "O+", allergies: "Penicillin, peanuts", emergency_contact_name: "Rohan Verma", emergency_contact_relationship: "Spouse", emergency_contact_phone: "+919876500000" }),
+  }),
+  req({
+    folder: "Patients",
+    name: "Appointment Summary",
+    method: "GET",
+    url: "/patients/me/appointment-summary",
+  }),
+  req({
+    folder: "Patients",
+    name: "Change Password",
+    method: "POST",
+    url: "/patients/me/change-password",
+    body: rawJson({ current_password: "password123", new_password: "newpassword123", confirm_password: "newpassword123" }),
+  }),
+  req({
+    folder: "Patients",
+    name: "Change Email",
+    method: "POST",
+    url: "/patients/me/change-email",
+    body: rawJson({ new_email: "aisha.new@example.com", current_password: "password123" }),
+  }),
+  req({
+    folder: "Patients",
+    name: "List Sessions",
+    method: "GET",
+    url: "/patients/me/sessions",
+    test: ['const j = pm.response.json();', 'if (j.items && j.items[0]) { pm.collectionVariables.set("sessionId", j.items[0].id); }'],
+  }),
+  req({
+    folder: "Patients",
+    name: "Revoke Session",
+    method: "DELETE",
+    url: "/patients/me/sessions/:sessionId",
+  }),
+  req({
+    folder: "Patients",
+    name: "Logout All Sessions",
+    method: "POST",
+    url: "/patients/me/logout-all",
+  }),
+  req({
+    folder: "Patients",
+    name: "List My Devices",
+    method: "GET",
+    url: "/patients/me/devices",
+    test: ['const j = pm.response.json();', 'if (j.items && j.items[0]) { pm.collectionVariables.set("deviceId", j.items[0].id); }'],
+  }),
+  req({
+    folder: "Patients",
+    name: "Add Device",
+    method: "POST",
+    url: "/patients/me/devices",
+    body: rawJson({ name: "OMRON BP Monitor", category: "blood_pressure", brand: "OMRON", model: "HEM-7120", serial_number: "SN-88421", notes: "At home" }),
+    test: ['const j = pm.response.json();', 'if (j.id) pm.collectionVariables.set("deviceId", j.id);'],
+  }),
+  req({
+    folder: "Patients",
+    name: "Update Device",
+    method: "PATCH",
+    url: "/patients/me/devices/:deviceId",
+    body: rawJson({ notes: "Living room" }),
+  }),
+  req({
+    folder: "Patients",
+    name: "Remove Device",
+    method: "DELETE",
+    url: "/patients/me/devices/:deviceId",
+  }),
 
   // ── Medical Documents ───────────────────────────────────────────────────
   req({
@@ -617,7 +761,7 @@ const requests = [
     name: "Upload Medical Document",
     method: "POST",
     url: "/patients/me/medical-documents",
-    body: formData(),
+    body: formData([{ key: "category", type: "text", value: "lab_report" }]),
     test: ['const j = pm.response.json();', 'if (j.id) pm.collectionVariables.set("medicalDocumentId", j.id);', 'if (j.file_url) pm.collectionVariables.set("fileUrl", j.file_url);'],
   }),
   req({
@@ -671,6 +815,14 @@ const requests = [
     auth: false,
     header: [],
   }),
+  req({
+    folder: "Files",
+    name: "Get Signed File (by key)",
+    method: "GET",
+    url: "/files/:fileKey",
+    auth: false,
+    query: [{ key: "expires", value: "", description: "Unix seconds" }, { key: "sig", value: "", description: "HMAC-SHA256 hex" }],
+  }),
 ];
 
 // ── Build collection ──────────────────────────────────────────────────────
@@ -692,8 +844,13 @@ const variables = [
   { key: "notificationId", value: "" },
   { key: "publicId", value: "" },
   { key: "fileUrl", value: "" },
+  { key: "fileKey", value: "" },
   { key: "galleryImageId", value: "" },
   { key: "reset_token", value: "" },
+  { key: "verification_token", value: "" },
+  { key: "licenseType", value: "trade-license" },
+  { key: "sessionId", value: "" },
+  { key: "deviceId", value: "" },
 ].map((v) => ({ ...v, type: "string" }));
 
 const folders = [...new Set(requests.map((r) => r.folder))];
