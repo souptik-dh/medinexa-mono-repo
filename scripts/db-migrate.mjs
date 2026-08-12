@@ -419,6 +419,98 @@ try {
     console.log('Applied migration: patient_devices table');
   }
 
+  const [userNameCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'first_name'`,
+  );
+  if (Number(userNameCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE users
+         ADD COLUMN first_name VARCHAR(150) NULL AFTER name,
+         ADD COLUMN last_name VARCHAR(150) NULL AFTER first_name,
+         ADD COLUMN date_of_birth DATE NULL AFTER phone,
+         ADD COLUMN gender ENUM('male','female','other','prefer_not_to_say') NULL AFTER date_of_birth`,
+    );
+    console.log('Applied migration: users first_name/last_name/date_of_birth/gender');
+  }
+
+  const [userPreferredCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'preferred_clinic_id'`,
+  );
+  if (Number(userPreferredCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE users
+         ADD COLUMN preferred_clinic_id CHAR(36) NULL AFTER push_topic,
+         ADD COLUMN preferred_branch_id CHAR(36) NULL AFTER preferred_clinic_id,
+         ADD KEY idx_users_preferred_clinic (preferred_clinic_id),
+         ADD KEY idx_users_preferred_branch (preferred_branch_id)`,
+    );
+    console.log('Applied migration: users preferred_clinic_id/preferred_branch_id');
+  }
+
+  const [userPreferredClinicFk] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLE_CONSTRAINTS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND CONSTRAINT_NAME = 'fk_users_preferred_clinic'`,
+  );
+  if (Number(userPreferredClinicFk[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE users
+         ADD CONSTRAINT fk_users_preferred_clinic FOREIGN KEY (preferred_clinic_id) REFERENCES clinics(id) ON DELETE SET NULL,
+         ADD CONSTRAINT fk_users_preferred_branch FOREIGN KEY (preferred_branch_id) REFERENCES branches(id) ON DELETE SET NULL`,
+    );
+    console.log('Applied migration: users preferred_clinic/branch foreign keys');
+  }
+
+  const [meddocCategoryCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'medical_documents' AND COLUMN_NAME = 'category'`,
+  );
+  if (Number(meddocCategoryCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE medical_documents
+         ADD COLUMN category ENUM('prescription','lab_report','doctor_note','other') NOT NULL DEFAULT 'other' AFTER patient_id,
+         ADD KEY idx_meddoc_patient_category (patient_id, category)`,
+    );
+    console.log('Applied migration: medical_documents.category');
+  }
+
+  const [verifyNewEmailCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'email_verification_tokens' AND COLUMN_NAME = 'new_email'`,
+  );
+  if (Number(verifyNewEmailCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE email_verification_tokens ADD COLUMN new_email VARCHAR(255) NULL AFTER token_hash`,
+    );
+    console.log('Applied migration: email_verification_tokens.new_email');
+  }
+
+  const [medicalProfileTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'patient_medical_profile'`,
+  );
+  if (Number(medicalProfileTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE patient_medical_profile (
+        patient_id CHAR(36) NOT NULL,
+        blood_group ENUM('A+','A-','B+','B-','AB+','AB-','O+','O-','unknown') NULL,
+        allergies TEXT NULL,
+        medical_conditions TEXT NULL,
+        current_medications TEXT NULL,
+        previous_surgeries TEXT NULL,
+        medical_notes TEXT NULL,
+        emergency_contact_name VARCHAR(255) NULL,
+        emergency_contact_relationship VARCHAR(100) NULL,
+        emergency_contact_phone VARCHAR(32) NULL,
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (patient_id),
+        CONSTRAINT fk_patient_medical_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: patient_medical_profile table');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();
