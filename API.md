@@ -275,7 +275,10 @@ Same shape as patient login; requires `role = clinic_owner`.
 
 ### POST /auth/verify-email
 
-Public. Rate limited 10/min per IP. Activates a `clinic_owner` account (`status: 'pending'` → `'active'`) using the token from the welcome email sent by `POST /auth/clinic-owner/register`. The token is single-use and expires after 24 hours.
+Public. Rate limited 10/min per IP. Single-use, 24h-expiry token; shared by two flows:
+
+1. **Signup verification** — activates a `clinic_owner` account (`status: 'pending'` → `'active'`) using the token from the welcome email sent by `POST /auth/clinic-owner/register`.
+2. **Email change** — confirms a pending email change requested via `POST /patients/me/change-email`; on success, updates `users.email` to the new address instead of touching `status`.
 
 The verification link is emailed as `{VERIFY_EMAIL_URL}/verify_email?token={VERIFICATION_TOKEN}` — `VERIFY_EMAIL_URL` defaults to `https://medinexa-clinic.onrender.com`.
 
@@ -293,7 +296,9 @@ The verification link is emailed as `{VERIFY_EMAIL_URL}/verify_email?token={VERI
 }
 ```
 
-**Errors:** `400 VALIDATION_ERROR`, `400 VERIFICATION_TOKEN_INVALID`, `410 VERIFICATION_TOKEN_EXPIRED`.
+For the email-change flow, `message` is `"Your email address has been updated."` instead.
+
+**Errors:** `400 VALIDATION_ERROR`, `400 VERIFICATION_TOKEN_INVALID`, `409 EMAIL_ALREADY_REGISTERED` (new email was claimed by someone else in the meantime), `410 VERIFICATION_TOKEN_EXPIRED`.
 
 ### POST /auth/doctor/login
 
@@ -1325,6 +1330,7 @@ Public. Returns only **accepted** doctors assigned to the branch.
       "doctor_degree": "MBBS, MD",
       "phone": "+919900000001",
       "certificate_url": null,
+      "photo_url": null,
       "fee_amount": 500,
       "currency": "INR",
       "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
@@ -1417,6 +1423,7 @@ Auth: `doctor`.
   "doctor_degree": "MBBS, MD",
   "phone": "+919900000001",
   "certificate_url": null,
+  "photo_url": null,
   "bio": null
 }
 ```
@@ -1537,7 +1544,7 @@ Patients are `users` rows with `role = 'patient'` — there is no separate `pati
 
 ### GET /patients/me
 
-Auth: `patient`. Returns the caller's own profile.
+Auth: `patient`. Returns the caller's own profile, including their preferred clinic/branch.
 
 **Response `200`**
 
@@ -1545,8 +1552,12 @@ Auth: `patient`. Returns the caller's own profile.
 {
   "id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
   "name": "Aisha Verma",
+  "first_name": "Aisha",
+  "last_name": "Verma",
   "email": "aisha@example.com",
   "phone": "+919876543210",
+  "date_of_birth": "1994-03-12",
+  "gender": "female",
   "address": "123 Link Road, Andheri West",
   "nearby_location": "Near Andheri Station",
   "city": "Mumbai",
@@ -1556,6 +1567,10 @@ Auth: `patient`. Returns the caller's own profile.
   "post_office": "Andheri West HO",
   "photo_url": null,
   "push_topic": "medinexa_1tQvWf4n3sBm7KpLzXr2c9hJ8dY6uEaSgHwM5vN0bA",
+  "preferred_clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+  "preferred_clinic_name": "Sunrise Clinic",
+  "preferred_branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+  "preferred_branch_name": "Andheri West Branch",
   "created_at": "2026-08-01T09:30:00Z",
   "updated_at": "2026-08-01T09:30:00Z"
 }
@@ -1563,9 +1578,11 @@ Auth: `patient`. Returns the caller's own profile.
 
 `push_topic` is the patient's private ntfy topic — the mobile app subscribes to `https://ntfy.sh/{push_topic}` to receive push notifications. It is generated at registration (or lazily on first push for pre-existing accounts) and is read-only via this API.
 
+`first_name`/`last_name` are optional and independent of `name` — `name` remains the canonical display name (required, shown across appointments/notifications/emails). `preferred_clinic_id`/`preferred_clinic_name`/`preferred_branch_id`/`preferred_branch_name` are `null` until the patient sets a preferred branch via `PATCH /patients/me`.
+
 ### PATCH /patients/me
 
-Auth: `patient`. Partial update of the caller's own profile — see [Partial updates](#partial-updates). `name` and `address` cannot be cleared to empty/`null` (both are required at registration); the remaining location fields accept `null` to clear them.
+Auth: `patient`. Partial update of the caller's own profile — see [Partial updates](#partial-updates). `name` and `address` cannot be cleared to empty/`null` (both are required at registration); the remaining fields accept `null` to clear them.
 
 **Request body** (any subset)
 
@@ -1576,7 +1593,11 @@ Auth: `patient`. Partial update of the caller's own profile — see [Partial upd
 | Field | Type | Notes |
 |---|---|---|
 | `name` | string? | 1–255 chars |
+| `first_name` | string? | 1–150 chars. If `name` is omitted, `name` is recomputed as `"{first_name} {last_name}"` |
+| `last_name` | string? | 1–150 chars. See above |
 | `phone` | string?\|null | max 32 |
+| `date_of_birth` | string?\|null | `YYYY-MM-DD`, cannot be in the future |
+| `gender` | string?\|null | one of `male`, `female`, `other`, `prefer_not_to_say` |
 | `address` | string? | 1–500 chars |
 | `nearby_location` | string?\|null | max 500 |
 | `city` | string?\|null | max 255 |
@@ -1584,10 +1605,164 @@ Auth: `patient`. Partial update of the caller's own profile — see [Partial upd
 | `pin_code` | string?\|null | max 20 |
 | `state` | string?\|null | max 255 |
 | `post_office` | string?\|null | max 255 |
+| `preferred_clinic_id` | string (UUID)?\|null | must be an existing, non-deleted clinic. Setting to `null` also clears `preferred_branch_id` |
+| `preferred_branch_id` | string (UUID)?\|null | must be an existing, non-deleted branch. Also sets `preferred_clinic_id` to that branch's clinic (overriding any `preferred_clinic_id` in the same request). Setting to `null` clears only the branch |
 
 **Response `200`**: same shape as `GET /patients/me`.
 
+**Errors:** `400 VALIDATION_ERROR`, `404 CLINIC_NOT_FOUND`, `404 BRANCH_NOT_FOUND`.
+
+### GET /patients/me/medical-info
+
+Auth: `patient`. Returns the caller's medical profile and emergency contact — kept in a separate table from the general profile above. Fields default to `null` if the patient hasn't filled them in yet (never 404s).
+
+**Response `200`**
+
+```json
+{
+  "patient_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "blood_group": "O+",
+  "allergies": "Penicillin, peanuts",
+  "medical_conditions": "Type 2 diabetes",
+  "current_medications": "Metformin 500mg twice daily",
+  "previous_surgeries": "Appendectomy (2018)",
+  "medical_notes": "Prefers morning appointments due to medication schedule.",
+  "emergency_contact": {
+    "name": "Rohan Verma",
+    "relationship": "Spouse",
+    "phone": "+919876500000"
+  },
+  "updated_at": "2026-08-01T09:30:00Z"
+}
+```
+
+### PATCH /patients/me/medical-info
+
+Auth: `patient`. Partial update — see [Partial updates](#partial-updates). Creates the record on first write.
+
+**Request body** (any subset)
+
+```json
+{ "blood_group": "O+", "allergies": "Penicillin, peanuts" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `blood_group` | string?\|null | one of `A+`, `A-`, `B+`, `B-`, `AB+`, `AB-`, `O+`, `O-`, `unknown` |
+| `allergies` | string?\|null | max 2000 |
+| `medical_conditions` | string?\|null | max 2000 |
+| `current_medications` | string?\|null | max 2000 |
+| `previous_surgeries` | string?\|null | max 2000 |
+| `medical_notes` | string?\|null | max 2000 |
+| `emergency_contact_name` | string?\|null | max 255 |
+| `emergency_contact_relationship` | string?\|null | max 100 |
+| `emergency_contact_phone` | string?\|null | max 32 |
+
+**Response `200`**: same shape as `GET /patients/me/medical-info`.
+
 **Errors:** `400 VALIDATION_ERROR`.
+
+### GET /patients/me/appointment-summary
+
+Auth: `patient`. Compact counts plus the soonest upcoming appointment, for the profile page's appointment summary card.
+
+**Response `200`**
+
+```json
+{
+  "upcoming_count": 2,
+  "completed_count": 5,
+  "cancelled_count": 1,
+  "no_show_count": 0,
+  "total_count": 8,
+  "next_appointment": {
+    "id": "f1e2d3c4-b5a6-7980-9a8b-7c6d5e4f3a2b",
+    "scheduled_date": "2026-08-15",
+    "scheduled_time": "09:20",
+    "status": "confirmed",
+    "doctor_id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+    "doctor_name": "Dr. Kavita Rao",
+    "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+    "branch_name": "Andheri West Branch"
+  },
+  "previous_appointment": {
+    "id": "a9b8c7d6-e5f4-3210-9a8b-7c6d5e4f3a2b",
+    "scheduled_date": "2026-07-20",
+    "scheduled_time": "11:00",
+    "status": "completed",
+    "doctor_id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+    "doctor_name": "Dr. Kavita Rao",
+    "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+    "branch_name": "Andheri West Branch"
+  }
+}
+```
+
+`upcoming_count` counts non-terminal appointments (`pending`/`confirmed`/`paid`) scheduled today or later. `next_appointment` is the soonest such appointment, or `null` if there is none. `previous_appointment` is the most recent `completed` appointment (the patient's last visit), or `null` if there is none.
+
+### POST /patients/me/change-password
+
+Auth: `patient`. Rate limited 10/min. Changes the caller's password and revokes all of their active sessions (they must log in again everywhere).
+
+**Request body**
+
+```json
+{ "current_password": "OldPass123", "new_password": "NewPass456", "confirm_password": "NewPass456" }
+```
+
+**Response `200`**
+
+```json
+{ "message": "Password changed. Please log in again on your other devices." }
+```
+
+**Errors:** `400 VALIDATION_ERROR`, `401 INVALID_CREDENTIALS`.
+
+### POST /patients/me/change-email
+
+Auth: `patient`. Rate limited 10/min. Starts an email change: verifies the current password, then emails a confirmation link to the **new** address (reusing the `POST /auth/verify-email` flow — the token carries the pending new email). The old address is notified of the request. The email only changes once the new address is confirmed.
+
+**Request body**
+
+```json
+{ "new_email": "aisha.new@example.com", "current_password": "OldPass123" }
+```
+
+**Response `200`**
+
+```json
+{ "message": "Check your new email address for a confirmation link to complete the change." }
+```
+
+**Errors:** `400 VALIDATION_ERROR`, `401 INVALID_CREDENTIALS`, `409 EMAIL_ALREADY_REGISTERED`.
+
+### GET /patients/me/sessions
+
+Auth: `patient`. Lists the caller's active (non-revoked, non-expired) login sessions, i.e. refresh tokens.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    { "id": "a1b2c3d4-...", "created_at": "2026-08-01T09:30:00Z", "expires_at": "2026-08-31T09:30:00Z" }
+  ]
+}
+```
+
+### DELETE /patients/me/sessions/:id
+
+Auth: `patient`. Revokes one of the caller's sessions by id (e.g. "log out this device").
+
+**Response `204 No Content`**
+
+**Errors:** `404 SESSION_NOT_FOUND`.
+
+### POST /patients/me/logout-all
+
+Auth: `patient`. Revokes **all** of the caller's active sessions ("log out everywhere").
+
+**Response `204 No Content`**
 
 ### POST /patients/me/photo/signature
 
@@ -1971,6 +2146,7 @@ Auth: `doctor` (assigned) or `patient` (own). Sends the prescription email (fire
 {
   "id": "8f7e6d5c-4b3a-2908-1f0e-9d8c7b6a5f4e",
   "patient_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "category": "lab_report",
   "file_url": "https://api.medibook.app/api/v1/files/medical-doc-8f7e...pdf?expires=...&sig=...",
   "file_name": "blood-report.pdf",
   "mime_type": "application/pdf",
@@ -1979,24 +2155,30 @@ Auth: `doctor` (assigned) or `patient` (own). Sends the prescription email (fire
 }
 ```
 
+`category` ∈ `prescription | lab_report | doctor_note | other` (defaults to `other`). Note that finalized in-app prescriptions live under [Prescriptions](#prescriptions) (`GET /appointments/:id/prescription`) — this `category` is for patient-uploaded scans/photos of prescriptions, not the digitized record.
+
 ### POST /patients/me/medical-documents
 
-Auth: `patient`. `multipart/form-data`, field `file`.
+Auth: `patient`. `multipart/form-data`, fields `file` (required) and `category` (optional, defaults to `other`).
 Allowed: `image/jpeg`, `image/png`, `image/webp`, `application/pdf`, ≤ 20MB.
 
 **Response `201`** — MedicalDocument object.
 
-**Errors:** `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`.
+**Errors:** `400 VALIDATION_ERROR` (bad `category`), `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`.
 
 ### GET /patients/me/medical-documents
 
 Auth: `patient`.
+
+**Query:** `?category=` (optional — one of `prescription`, `lab_report`, `doctor_note`, `other`)
 
 **Response `200`**
 
 ```json
 { "items": [ /* MedicalDocument objects, newest first */ ] }
 ```
+
+**Errors:** `400 VALIDATION_ERROR` (bad `category`).
 
 ### DELETE /medical-documents/:id
 
@@ -2113,7 +2295,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `NO_APPOINTMENT_RELATIONSHIP` | 403 | No appointment link with the patient |
 | `FEE_OWNER_CONTROLLED` | 403 | Doctor tried to change the fee |
 | `INVALID_SIGNED_URL` | 403 | Bad/expired file URL signature |
-| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
+| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
 | `INVITE_EXPIRED` / `OTP_EXPIRED` / `RESET_TOKEN_EXPIRED` | 410 | Expired one-time code |
 | `FILE_TOO_LARGE` | 413 | Upload exceeds size limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Upload has a disallowed MIME type |

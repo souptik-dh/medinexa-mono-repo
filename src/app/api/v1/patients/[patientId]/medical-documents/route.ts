@@ -21,7 +21,7 @@ export const GET = api(undefined, async (ctx) => {
   }
 
   const [rows] = await pool.query<Row[]>(
-    `SELECT id, patient_id, file_url, file_name, mime_type, size_bytes, uploaded_at
+    `SELECT id, patient_id, category, file_url, file_name, mime_type, size_bytes, uploaded_at
        FROM medical_documents WHERE patient_id = ? ORDER BY uploaded_at DESC`,
     [patientId],
   );
@@ -29,6 +29,7 @@ export const GET = api(undefined, async (ctx) => {
     items: rows.map((r) => ({
       id: r.id,
       patient_id: r.patient_id,
+      category: r.category,
       file_url: r.file_url,
       file_name: r.file_name,
       mime_type: r.mime_type,

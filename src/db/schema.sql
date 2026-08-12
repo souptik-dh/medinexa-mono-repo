@@ -4,8 +4,12 @@
 CREATE TABLE IF NOT EXISTS users (
   id CHAR(36) NOT NULL,
   name VARCHAR(255) NULL,
+  first_name VARCHAR(150) NULL,
+  last_name VARCHAR(150) NULL,
   email VARCHAR(255) NOT NULL,
   phone VARCHAR(32) NULL,
+  date_of_birth DATE NULL,
+  gender ENUM('male','female','other','prefer_not_to_say') NULL,
   address VARCHAR(500) NULL,
   nearby_location VARCHAR(500) NULL,
   city VARCHAR(255) NULL,
@@ -15,6 +19,8 @@ CREATE TABLE IF NOT EXISTS users (
   post_office VARCHAR(255) NULL,
   photo_url VARCHAR(500) NULL,
   push_topic VARCHAR(64) NULL,
+  preferred_clinic_id CHAR(36) NULL,
+  preferred_branch_id CHAR(36) NULL,
   password_hash VARCHAR(255) NULL,
   role ENUM('patient','clinic_owner','branch_staff','doctor','sys_admin') NOT NULL,
   status ENUM('active','pending','disabled') NOT NULL DEFAULT 'active',
@@ -22,7 +28,9 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uniq_users_email (email),
-  UNIQUE KEY uniq_users_push_topic (push_topic)
+  UNIQUE KEY uniq_users_push_topic (push_topic),
+  KEY idx_users_preferred_clinic (preferred_clinic_id),
+  KEY idx_users_preferred_branch (preferred_branch_id)
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS refresh_tokens (
@@ -69,6 +77,7 @@ CREATE TABLE IF NOT EXISTS email_verification_tokens (
   id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
   token_hash CHAR(64) NOT NULL,
+  new_email VARCHAR(255) NULL,
   expires_at DATETIME(3) NOT NULL,
   used_at DATETIME(3) NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -323,6 +332,7 @@ CREATE TABLE IF NOT EXISTS clinic_payment_ledger (
 CREATE TABLE IF NOT EXISTS medical_documents (
   id CHAR(36) NOT NULL,
   patient_id CHAR(36) NOT NULL,
+  category ENUM('prescription','lab_report','doctor_note','other') NOT NULL DEFAULT 'other',
   file_url VARCHAR(500) NOT NULL,
   file_name VARCHAR(255) NOT NULL,
   mime_type VARCHAR(100) NOT NULL,
@@ -330,7 +340,24 @@ CREATE TABLE IF NOT EXISTS medical_documents (
   uploaded_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   KEY idx_meddoc_patient (patient_id),
+  KEY idx_meddoc_patient_category (patient_id, category),
   CONSTRAINT fk_meddoc_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS patient_medical_profile (
+  patient_id CHAR(36) NOT NULL,
+  blood_group ENUM('A+','A-','B+','B-','AB+','AB-','O+','O-','unknown') NULL,
+  allergies TEXT NULL,
+  medical_conditions TEXT NULL,
+  current_medications TEXT NULL,
+  previous_surgeries TEXT NULL,
+  medical_notes TEXT NULL,
+  emergency_contact_name VARCHAR(255) NULL,
+  emergency_contact_relationship VARCHAR(100) NULL,
+  emergency_contact_phone VARCHAR(32) NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (patient_id),
+  CONSTRAINT fk_patient_medical_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS patient_devices (

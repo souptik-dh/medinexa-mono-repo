@@ -182,7 +182,7 @@ Auth: `clinic_owner`. Revokes a pending invite. → `204`. `409 INVITE_ALREADY_A
 
 #### `GET /branches/:id/doctors`
 Public (only returns **accepted** doctors — pending invites never appear here). → `200 { items: Doctor[] }`.
-`Doctor = { id, name, specialization, phone?, certificate_url?, fee_amount, currency, branch_id, next_available_slot }`
+`Doctor = { id, name, specialization, phone?, certificate_url?, photo_url?, fee_amount, currency, branch_id, next_available_slot }`
 
 #### `PATCH /doctor-assignments/:id`
 Auth: `clinic_owner` (branch scope) **or** `doctor` (self, limited fields: `slot_template`, `certificate` only — fee is owner-controlled). Body: partial `{ fee_amount?, slot_template?, certificate? }` → `200 DoctorAssignment`.
