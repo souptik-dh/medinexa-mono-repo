@@ -1,7 +1,7 @@
 {
   "info": {
     "_postman_id": "04ec0e7b-75ac-464f-9ff2-89c6ed39313c",
-    "name": "MediBook API",
+    "name": "Jido Healthcare API",
     "description": "Generated from API.md. Base URL is configurable via the `baseUrl` collection variable.\n\nLogin/register requests auto-save `access_token`, `refresh_token`, and resource IDs (`clinicId`, `branchId`, `doctorId`, `appointmentId`, ...) into collection variables, which the downstream requests reference via `{{...}}` placeholders. Run the auth requests first, then the resource requests in order.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },

@@ -53,7 +53,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
   await sendEmail(
     body.new_email,
     "Confirm your new email address",
-    `Hi ${user.name ?? "there"},\n\nClick the link below to confirm this as your new MediNexa account email:\n\n${link}\n\nThis link expires in 24 hours. If you didn't request this change, you can safely ignore this email.`,
+    `Hi ${user.name ?? "there"},\n\nClick the link below to confirm this as your new Jido Healthcare account email:\n\n${link}\n\nThis link expires in 24 hours. If you didn't request this change, you can safely ignore this email.`,
   );
   await sendEmail(
     user.email,

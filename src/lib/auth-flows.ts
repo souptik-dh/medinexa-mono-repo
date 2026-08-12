@@ -28,8 +28,8 @@ async function sendVerificationEmail(userId: string, email: string, name: string
 
   await sendEmail(
     email,
-    "Welcome to MediNexa — verify your email",
-    `Hi ${name},\n\nWelcome to MediNexa! Please verify your email address to activate your clinic account and log in:\n\n${link}\n\nThis link expires in 24 hours. If you didn't create this account, you can safely ignore this email.`,
+    "Welcome to Jido Healthcare — verify your email",
+    `Hi ${name},\n\nWelcome to Jido Healthcare! Please verify your email address to activate your clinic account and log in:\n\n${link}\n\nThis link expires in 24 hours. If you didn't create this account, you can safely ignore this email.`,
   );
 }
 

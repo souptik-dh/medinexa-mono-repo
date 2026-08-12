@@ -883,7 +883,7 @@ const item = folders.map((folder) => ({
 const collection = {
   info: {
     _postman_id: randomUUID(),
-    name: "MediBook API",
+    name: "Jido Healthcare API",
     description:
       "Generated from API.md. Base URL is configurable via the `baseUrl` collection variable.\n\nLogin/register requests auto-save `access_token`, `refresh_token`, and resource IDs (`clinicId`, `branchId`, `doctorId`, `appointmentId`, ...) into collection variables, which the downstream requests reference via `{{...}}` placeholders. Run the auth requests first, then the resource requests in order.",
     schema: "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",

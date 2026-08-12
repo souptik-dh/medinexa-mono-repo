@@ -235,8 +235,8 @@ export async function sendEmail(
     return;
   }
 
-  const senderEmail = process.env.BREVO_SENDER_EMAIL ?? "noreply@medibook.app";
-  const senderName = process.env.BREVO_SENDER_NAME ?? "MediBook";
+  const senderEmail = process.env.BREVO_SENDER_EMAIL ?? "noreply@jidohealthcare.app";
+  const senderName = process.env.BREVO_SENDER_NAME ?? "JidoHealthcare";
   const htmlContent = html ?? textToHtml(body);
 
   try {

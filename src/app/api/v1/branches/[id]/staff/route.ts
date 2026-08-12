@@ -99,7 +99,7 @@ export const POST = api(undefined, async (ctx) => {
   await sendEmail(
     body.email,
     "You've been added as branch staff",
-    "You can now log in to MediBook using the email-based OTP flow. Use the OTP sent to your email at login.",
+    "You can now log in to Jido Healthcare using the email-based OTP flow. Use the OTP sent to your email at login.",
   );
 
   return json(

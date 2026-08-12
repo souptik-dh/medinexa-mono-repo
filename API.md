@@ -1,4 +1,4 @@
-# MediBook — REST API Reference
+# Jido Healthcare — REST API Reference
 
 Live implementation reference for the MediBook API. Every endpoint below documents the **actual request/response payloads** produced by the code in `src/app/api/v1`, with JSON examples.
 
