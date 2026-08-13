@@ -15,12 +15,18 @@ const slotTemplateSchema = z
     start_time: z.string().regex(/^\d{2}:\d{2}$/),
     end_time: z.string().regex(/^\d{2}:\d{2}$/),
     slot_duration_minutes: z.number().int().min(5).max(240),
+    start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   })
   .array()
   .min(1)
   .refine(
     (arr) => arr.every((s) => s.start_time < s.end_time),
     "start_time must be earlier than end_time.",
+  )
+  .refine(
+    (arr) => arr.every((s) => !s.end_date || s.start_date <= s.end_date),
+    "start_date must not be after end_date.",
   );
 
 const createSchema = z.object({

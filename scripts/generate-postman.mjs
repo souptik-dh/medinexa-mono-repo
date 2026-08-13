@@ -428,8 +428,8 @@ const requests = [
       currency: "INR",
       certificate: "https://example.com/cert.pdf",
       slot_template: [
-        { weekday: 1, start_time: "09:00", end_time: "13:00", slot_duration_minutes: 20 },
-        { weekday: 3, start_time: "16:00", end_time: "20:00", slot_duration_minutes: 20 },
+        { weekday: 1, start_time: "09:00", end_time: "13:00", slot_duration_minutes: 20, start_date: "2026-08-17", end_date: "2026-12-31" },
+        { weekday: 3, start_time: "16:00", end_time: "20:00", slot_duration_minutes: 20, start_date: "2026-08-17", end_date: null },
       ],
     }),
     test: ['const j = pm.response.json();', 'if (j.id) pm.collectionVariables.set("inviteId", j.id);'],
@@ -460,7 +460,7 @@ const requests = [
     url: "/doctor-assignments/:assignmentId",
     body: rawJson({
       fee_amount: 600,
-      slot_template: [{ weekday: 2, start_time: "10:00", end_time: "14:00", slot_duration_minutes: 30 }],
+      slot_template: [{ weekday: 2, start_time: "10:00", end_time: "14:00", slot_duration_minutes: 30, start_date: "2026-08-17", end_date: "2026-12-31" }],
     }),
   }),
   req({
@@ -468,6 +468,26 @@ const requests = [
     name: "Remove Doctor Assignment",
     method: "DELETE",
     url: "/doctor-assignments/:assignmentId",
+  }),
+  req({
+    folder: "Doctors, Invites & Assignments",
+    name: "List Assignment Exceptions",
+    method: "GET",
+    url: "/doctor-assignments/:assignmentId/exceptions",
+  }),
+  req({
+    folder: "Doctors, Invites & Assignments",
+    name: "Create Assignment Exception",
+    method: "POST",
+    url: "/doctor-assignments/:assignmentId/exceptions",
+    body: rawJson({ excluded_date: "2026-09-07", reason: "On leave" }),
+    test: ['const j = pm.response.json();', 'if (j.id) pm.collectionVariables.set("exceptionId", j.id);'],
+  }),
+  req({
+    folder: "Doctors, Invites & Assignments",
+    name: "Delete Assignment Exception",
+    method: "DELETE",
+    url: "/doctor-assignments/:assignmentId/exceptions/:exceptionId",
   }),
   req({
     folder: "Doctors, Invites & Assignments",
@@ -835,6 +855,7 @@ const variables = [
   { key: "branchId", value: "" },
   { key: "doctorId", value: "" },
   { key: "assignmentId", value: "" },
+  { key: "exceptionId", value: "" },
   { key: "inviteId", value: "" },
   { key: "staffId", value: "" },
   { key: "patientId", value: "" },

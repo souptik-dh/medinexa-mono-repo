@@ -250,12 +250,24 @@ CREATE TABLE IF NOT EXISTS doctor_slot_templates (
   start_time TIME NOT NULL,
   end_time TIME NOT NULL,
   slot_duration_minutes SMALLINT NOT NULL,
-  effective_from DATE NOT NULL,
-  effective_to DATE NULL,
+  start_date DATE NOT NULL,
+  end_date DATE NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   KEY idx_slot_assignment (doctor_branch_assignment_id),
   CONSTRAINT fk_slot_assignment FOREIGN KEY (doctor_branch_assignment_id)
+    REFERENCES doctor_branch_assignments(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS doctor_slot_exceptions (
+  id CHAR(36) NOT NULL,
+  doctor_branch_assignment_id CHAR(36) NOT NULL,
+  excluded_date DATE NOT NULL,
+  reason VARCHAR(255) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_exception_assignment_date (doctor_branch_assignment_id, excluded_date),
+  CONSTRAINT fk_exception_assignment FOREIGN KEY (doctor_branch_assignment_id)
     REFERENCES doctor_branch_assignments(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 

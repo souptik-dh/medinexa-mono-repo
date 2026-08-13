@@ -13,12 +13,18 @@ const slotTemplateSchema = z
     start_time: z.string().regex(/^\d{2}:\d{2}$/),
     end_time: z.string().regex(/^\d{2}:\d{2}$/),
     slot_duration_minutes: z.number().int().min(5).max(240),
+    start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
   })
   .array()
   .min(1)
   .refine(
     (arr) => arr.every((s) => s.start_time < s.end_time),
     "start_time must be earlier than end_time.",
+  )
+  .refine(
+    (arr) => arr.every((s) => !s.end_date || s.start_date <= s.end_date),
+    "start_date must not be after end_date.",
   );
 
 const patchSchema = z.object({
@@ -104,9 +110,18 @@ export const PATCH = api(undefined, async (ctx) => {
         const [eh, em] = t.end_time.split(":");
         await conn.query(
           `INSERT INTO doctor_slot_templates
-             (id, doctor_branch_assignment_id, weekday, start_time, end_time, slot_duration_minutes, effective_from)
-           VALUES (?, ?, ?, ?, ?, ?, CURDATE())`,
-          [newId(), assignment.id, t.weekday, `${h}:${m}:00`, `${eh}:${em}:00`, t.slot_duration_minutes],
+             (id, doctor_branch_assignment_id, weekday, start_time, end_time, slot_duration_minutes, start_date, end_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            newId(),
+            assignment.id,
+            t.weekday,
+            `${h}:${m}:00`,
+            `${eh}:${em}:00`,
+            t.slot_duration_minutes,
+            t.start_date,
+            t.end_date ?? null,
+          ],
         );
       }
     }

@@ -1232,13 +1232,17 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
       "weekday": 1,
       "start_time": "09:00",
       "end_time": "13:00",
-      "slot_duration_minutes": 20
+      "slot_duration_minutes": 20,
+      "start_date": "2026-08-17",
+      "end_date": "2026-12-31"
     },
     {
       "weekday": 3,
       "start_time": "16:00",
       "end_time": "20:00",
-      "slot_duration_minutes": 20
+      "slot_duration_minutes": 20,
+      "start_date": "2026-08-17",
+      "end_date": null
     }
   ]
 }
@@ -1258,10 +1262,12 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
 | `certificate` | string? | max 500 |
 | `slot_type` | string? | `fixed` \| `sequential`, defaults to `fixed` — see [Slot types](#slot-types) |
 | `slot_template` | array | required, ≥ 1 entry |
-| `slot_template[].weekday` | number | 0 (Sun) – 6 (Sat) |
+| `slot_template[].weekday` | number | 0 (Sun) – 6 (Sat); the pattern repeats every week within the date range below |
 | `slot_template[].start_time` | string | `HH:MM` |
 | `slot_template[].end_time` | string | `HH:MM`, must be after start |
 | `slot_template[].slot_duration_minutes` | number | 5–240 |
+| `slot_template[].start_date` | string | `YYYY-MM-DD`, required — first date the weekly pattern applies |
+| `slot_template[].end_date` | string? | `YYYY-MM-DD`, nullable — last date the pattern applies; `null`/omitted means it repeats indefinitely |
 
 #### Slot types
 
@@ -1390,12 +1396,21 @@ Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff`
 {
   "fee_amount": 600,
   "slot_type": "sequential",
-  "slot_template": [{ "weekday": 2, "start_time": "10:00", "end_time": "14:00", "slot_duration_minutes": 30 }],
+  "slot_template": [{
+    "weekday": 2,
+    "start_time": "10:00",
+    "end_time": "14:00",
+    "slot_duration_minutes": 30,
+    "start_date": "2026-08-17",
+    "end_date": "2026-12-31"
+  }],
   "certificate": "https://example.com/new-cert.pdf"
 }
 ```
 
 `slot_type` ∈ `fixed | sequential` — see [Slot types](#slot-types). Switching an assignment to `sequential` does not require changing `slot_template`; the same weekday/time-range/duration rows are reused, just booked in order instead of by patient-picked time.
+
+Sending `slot_template` fully replaces the assignment's existing rows — it is not a diff/patch of individual entries. Each entry's `weekday` pattern repeats every week between `start_date` and `end_date` (or indefinitely if `end_date` is `null`). To keep a doctor's weekly schedule but pull them off a single date within that range (holiday, leave, etc.), use the exceptions endpoints below instead of shrinking the date range.
 
 **Response `200`**
 
@@ -1420,6 +1435,51 @@ Auth: `clinic_owner` **or** `branch_staff` with `doctors:manage`. Deactivates th
 **Response `204 No Content`**
 
 **Errors:** `409 DOCTOR_HAS_ACTIVE_APPOINTMENTS`.
+
+### GET /doctor-assignments/:id/exceptions
+
+Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff` with `doctors:manage`. Lists the dates within the assignment's slot-template range where the doctor is marked unavailable, overriding the otherwise-recurring weekly pattern.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    { "id": "b1c2d3e4-...", "excluded_date": "2026-09-07", "reason": "On leave", "created_at": "2026-08-13T10:00:00.000Z" }
+  ]
+}
+```
+
+### POST /doctor-assignments/:id/exceptions
+
+Auth: same as above. Marks a single date unavailable, even if it falls inside an active `slot_template` weekday/date-range.
+
+**Request body**
+
+```json
+{ "excluded_date": "2026-09-07", "reason": "On leave" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `excluded_date` | string | required, `YYYY-MM-DD` |
+| `reason` | string? | max 255 |
+
+**Response `201`**
+
+```json
+{ "id": "b1c2d3e4-...", "doctor_branch_assignment_id": "e4f5a6b7-...", "excluded_date": "2026-09-07", "reason": "On leave" }
+```
+
+**Errors:** `404 ASSIGNMENT_NOT_FOUND`, `409 EXCEPTION_ALREADY_EXISTS`.
+
+### DELETE /doctor-assignments/:id/exceptions/:exceptionId
+
+Auth: same as above. Re-enables the doctor's normal recurring availability on that date.
+
+**Response `204 No Content`**
+
+**Errors:** `404 EXCEPTION_NOT_FOUND`.
 
 ### GET /doctors/me
 
@@ -1549,6 +1609,8 @@ Public.
 ```
 
 Each slot carries the `slot_type` of the template it came from (see [Slot types](#slot-types)). For a `sequential` assignment, the listed slots show the doctor's queue positions and their availability, but the client should not let the patient pick one directly — `POST /appointments` auto-assigns the next open one.
+
+If `date` matches an entry in the assignment's exceptions list (see `GET /doctor-assignments/:id/exceptions`), `slots` is returned empty regardless of the weekly `slot_template`.
 
 **Errors:** `422 VALIDATION_ERROR` (bad date), `404 DOCTOR_NOT_FOUND`.
 
@@ -2316,7 +2378,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `NO_APPOINTMENT_RELATIONSHIP` | 403 | No appointment link with the patient |
 | `FEE_OWNER_CONTROLLED` | 403 | Doctor tried to change the fee |
 | `INVALID_SIGNED_URL` | 403 | Bad/expired file URL signature |
-| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
+| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` / `EXCEPTION_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
 | `INVITE_EXPIRED` / `OTP_EXPIRED` / `RESET_TOKEN_EXPIRED` | 410 | Expired one-time code |
 | `FILE_TOO_LARGE` | 413 | Upload exceeds size limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Upload has a disallowed MIME type |
@@ -2327,6 +2389,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `INVITE_ALREADY_ACCEPTED` | 409 | Invite already accepted |
 | `DOCTOR_ALREADY_ASSIGNED` | 409 | Doctor already at this branch |
 | `STAFF_ALREADY_EXISTS_FOR_BRANCH` | 409 | Staff email already registered to the branch |
+| `EXCEPTION_ALREADY_EXISTS` | 409 | Date already marked unavailable for this assignment |
 | `SLOT_ALREADY_BOOKED` | 409 | Slot taken (DB-level unique guard, `fixed` doctors) |
 | `DOCTOR_FULLY_BOOKED` | 409 | No slots left that date (`sequential` doctors) |
 | `INVALID_STATUS_TRANSITION` | 409 | Appointment status change not allowed |

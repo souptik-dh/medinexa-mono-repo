@@ -535,6 +535,40 @@ try {
     console.log('Applied migration: doctor_invites.slot_type');
   }
 
+  const [slotStartDateCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_slot_templates' AND COLUMN_NAME = 'start_date'`,
+  );
+  if (Number(slotStartDateCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE doctor_slot_templates
+         CHANGE COLUMN effective_from start_date DATE NOT NULL,
+         CHANGE COLUMN effective_to end_date DATE NULL`,
+    );
+    console.log('Applied migration: doctor_slot_templates.effective_from/to -> start_date/end_date');
+  }
+
+  const [exceptionTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_slot_exceptions'`,
+  );
+  if (Number(exceptionTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE doctor_slot_exceptions (
+        id CHAR(36) NOT NULL,
+        doctor_branch_assignment_id CHAR(36) NOT NULL,
+        excluded_date DATE NOT NULL,
+        reason VARCHAR(255) NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_exception_assignment_date (doctor_branch_assignment_id, excluded_date),
+        CONSTRAINT fk_exception_assignment FOREIGN KEY (doctor_branch_assignment_id)
+          REFERENCES doctor_branch_assignments(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: doctor_slot_exceptions table');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();

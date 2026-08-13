@@ -84,8 +84,12 @@ export async function computeDaySlots(
        JOIN doctor_branch_assignments dba ON dba.id = dst.doctor_branch_assignment_id
        JOIN branches b ON b.id = dba.branch_id AND b.deleted_at IS NULL
       WHERE dba.doctor_id = ? AND dba.is_active = 1 AND dst.weekday = ?
-        AND dst.effective_from <= ? AND (dst.effective_to IS NULL OR dst.effective_to >= ?)`,
-    [doctorId, wd, date, date],
+        AND dst.start_date <= ? AND (dst.end_date IS NULL OR dst.end_date >= ?)
+        AND NOT EXISTS (
+          SELECT 1 FROM doctor_slot_exceptions dse
+           WHERE dse.doctor_branch_assignment_id = dba.id AND dse.excluded_date = ?
+        )`,
+    [doctorId, wd, date, date, date],
   );
 
   const slots = new Map<string, { available: boolean; slotType: SlotType }>();
@@ -128,8 +132,12 @@ export async function findNextSequentialSlot(
        JOIN doctor_branch_assignments dba ON dba.id = dst.doctor_branch_assignment_id
       WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1
         AND dba.slot_type = 'sequential' AND dst.weekday = ?
-        AND dst.effective_from <= ? AND (dst.effective_to IS NULL OR dst.effective_to >= ?)`,
-    [doctorId, branchId, wd, date, date],
+        AND dst.start_date <= ? AND (dst.end_date IS NULL OR dst.end_date >= ?)
+        AND NOT EXISTS (
+          SELECT 1 FROM doctor_slot_exceptions dse
+           WHERE dse.doctor_branch_assignment_id = dba.id AND dse.excluded_date = ?
+        )`,
+    [doctorId, branchId, wd, date, date, date],
   );
   if (templates.length === 0) return null;
 
@@ -177,16 +185,23 @@ export async function nextAvailableSlot(
   const doctorId = assignments[0]?.doctor_id;
   if (!doctorId) return null;
 
+  const [exceptions] = await db.query<Row[]>(
+    `SELECT excluded_date FROM doctor_slot_exceptions WHERE doctor_branch_assignment_id = ?`,
+    [assignmentId],
+  );
+  const excludedDates = new Set(exceptions.map((e) => String(e.excluded_date).slice(0, 10)));
+
   const today = todayInTz(tz);
 
   for (let dayOffset = 0; dayOffset < 60; dayOffset++) {
     const date = addDays(today, dayOffset);
+    if (excludedDates.has(date)) continue;
     const wd = weekdayInTz(date, tz);
     const nowKey = dayOffset === 0 ? currentTimeKeyInTz(tz) : null;
     for (const t of templates) {
       if (Number(t.weekday) !== wd) continue;
-      if (t.effective_from > date) continue;
-      if (t.effective_to && t.effective_to < date) continue;
+      if (t.start_date > date) continue;
+      if (t.end_date && t.end_date < date) continue;
       const [booked] = await db.query<Row[]>(
         `SELECT scheduled_time FROM appointments
           WHERE doctor_id = ? AND scheduled_date = ? AND status != 'cancelled'`,

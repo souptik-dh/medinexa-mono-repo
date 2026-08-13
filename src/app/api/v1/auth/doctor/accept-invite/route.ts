@@ -82,8 +82,8 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
       const [eh, em] = String(t.end_time).split(":");
       await conn.query(
         `INSERT INTO doctor_slot_templates
-           (id, doctor_branch_assignment_id, weekday, start_time, end_time, slot_duration_minutes, effective_from)
-         VALUES (?, ?, ?, ?, ?, ?, CURDATE())`,
+           (id, doctor_branch_assignment_id, weekday, start_time, end_time, slot_duration_minutes, start_date, end_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           newId(),
           assignmentId,
@@ -91,6 +91,8 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
           `${h}:${m}:00`,
           `${eh}:${em}:00`,
           t.slot_duration_minutes,
+          t.start_date,
+          t.end_date ?? null,
         ],
       );
     }

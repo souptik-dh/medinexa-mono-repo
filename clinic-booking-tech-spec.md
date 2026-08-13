@@ -169,8 +169,9 @@ Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. → `204`.
 Doctor records exist in two states: an **invite** (owned by the branch, no login) and an **accepted doctor profile** (owned by the doctor, login-capable). These are modeled as separate resources so permission boundaries are explicit in the URL structure.
 
 #### `POST /branches/:id/doctor-invites`
-Auth: `clinic_owner`. Body: `{ name, specialization, email, phone?, fee_amount, currency, certificate?, slot_template: [{ weekday, start_time, end_time, slot_duration_minutes }] }`
+Auth: `clinic_owner`. Body: `{ name, specialization, email, phone?, fee_amount, currency, certificate?, slot_template: [{ weekday, start_time, end_time, slot_duration_minutes, start_date, end_date? }] }`
 → `201 { id, branch_id, email, status: "pending", expires_at }`.
+Each `slot_template` entry recurs weekly on `weekday` from `start_date` through `end_date` (inclusive; `null`/omitted `end_date` means indefinitely).
 Side effect: generates single-use `invite_code`, emails it to `email` (code itself is **never** returned in this response body — only sent via the notification channel — to prevent a clinic UI from silently activating a doctor).
 Errors: `409 INVITE_ALREADY_PENDING`.
 
@@ -186,16 +187,26 @@ Public (only returns **accepted** doctors — pending invites never appear here)
 
 #### `PATCH /doctor-assignments/:id`
 Auth: `clinic_owner` (branch scope) **or** `doctor` (self, limited fields: `slot_template`, `certificate` only — fee is owner-controlled). Body: partial `{ fee_amount?, slot_template?, certificate? }` → `200 DoctorAssignment`.
+Sending `slot_template` fully replaces the assignment's rows (not a per-entry patch).
 
 #### `DELETE /doctor-assignments/:id`
 Auth: `clinic_owner`. Removes doctor from this branch (does not delete the doctor's global account). → `204`. `409 DOCTOR_HAS_ACTIVE_APPOINTMENTS`.
+
+#### `GET /doctor-assignments/:id/exceptions`
+Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff` with `doctors:manage`. → `200 { items: [{ id, excluded_date, reason, created_at }] }`.
+
+#### `POST /doctor-assignments/:id/exceptions`
+Auth: same as above. Body: `{ excluded_date, reason? }` → `201 { id, doctor_branch_assignment_id, excluded_date, reason }`. Pulls the doctor off availability for one date within an otherwise-recurring `slot_template` range, without editing the template itself. `409 EXCEPTION_ALREADY_EXISTS`.
+
+#### `DELETE /doctor-assignments/:id/exceptions/:exceptionId`
+Auth: same as above. → `204`. `404 EXCEPTION_NOT_FOUND`.
 
 #### `GET /doctors/me` / `PATCH /doctors/me`
 Auth: `doctor`. Own profile read/update (`name, phone, bio` — email is immutable post-acceptance).
 
 #### `GET /doctors/:id/availability`
 Public. Query: `?date=YYYY-MM-DD`. → `200 { date, slots: [{ time, available: bool }] }`.
-Computed as `slot_template` for that weekday minus existing non-cancelled appointments. This is a derived/read endpoint, not a stored resource — always computed live to avoid stale-availability bugs.
+Computed as `slot_template` for that weekday (within its `start_date`/`end_date` range) minus existing non-cancelled appointments, minus any date matching a `doctor_slot_exceptions` row for the assignment. This is a derived/read endpoint, not a stored resource — always computed live to avoid stale-availability bugs.
 
 ---
 
@@ -383,7 +394,9 @@ The tables below exist to satisfy the resource contracts in §3 — if a field i
 `doctor_invites(id, branch_id, email, invite_code_hash, status, invited_by, expires_at, created_at)`
 `doctors(id, user_id, name, specialization, phone, certificate_url, bio, created_at, deleted_at)`
 `doctor_branch_assignments(id, doctor_id, branch_id, fee_amount, currency, is_active)`
-`doctor_slot_templates(id, doctor_branch_assignment_id, weekday, start_time, end_time, slot_duration_minutes, effective_from, effective_to)`
+`doctor_slot_templates(id, doctor_branch_assignment_id, weekday, start_time, end_time, slot_duration_minutes, start_date, end_date)`
+`doctor_slot_exceptions(id, doctor_branch_assignment_id, excluded_date, reason, created_at)`
+  — unique constraint: `(doctor_branch_assignment_id, excluded_date)`; a date-specific override that discards availability from the otherwise-recurring `doctor_slot_templates` weekday pattern
 `appointments(id, patient_id, clinic_id, branch_id, doctor_id, scheduled_date, scheduled_time, duration_minutes, status, fee_amount, currency, payment_method, created_at, updated_at)`
   — unique constraint: `(doctor_id, scheduled_date, scheduled_time) WHERE status NOT IN ('cancelled')`
 `appointment_status_log(id, appointment_id, from_status, to_status, changed_by, changed_at, note)`

@@ -118,8 +118,12 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
          FROM doctor_slot_templates dst
          JOIN doctor_branch_assignments dba ON dba.id = dst.doctor_branch_assignment_id
         WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1
-          AND dst.weekday = ? AND dst.effective_from <= ? AND (dst.effective_to IS NULL OR dst.effective_to >= ?)`,
-      [body.doctor_id, body.branch_id, wd, body.date, body.date],
+          AND dst.weekday = ? AND dst.start_date <= ? AND (dst.end_date IS NULL OR dst.end_date >= ?)
+          AND NOT EXISTS (
+            SELECT 1 FROM doctor_slot_exceptions dse
+             WHERE dse.doctor_branch_assignment_id = dba.id AND dse.excluded_date = ?
+          )`,
+      [body.doctor_id, body.branch_id, wd, body.date, body.date, body.date],
     );
     const template = templates[0];
     if (!template) {
