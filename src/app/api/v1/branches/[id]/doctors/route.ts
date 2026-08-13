@@ -21,7 +21,7 @@ export const GET = api(undefined, async (ctx) => {
 
   const [rows] = await pool.query<Row[]>(
     `SELECT d.id, d.name, d.specialization, d.smc_name, d.doctor_degree, d.phone, d.certificate_url, d.photo_url,
-            dba.id AS assignment_id, dba.fee_amount, dba.currency, dba.branch_id
+            dba.id AS assignment_id, dba.fee_amount, dba.currency, dba.branch_id, dba.slot_type
        FROM doctor_branch_assignments dba
        JOIN doctors d ON d.id = dba.doctor_id AND d.deleted_at IS NULL
       WHERE dba.branch_id = ? AND dba.is_active = 1
@@ -45,6 +45,7 @@ export const GET = api(undefined, async (ctx) => {
       fee_amount: Number(r.fee_amount),
       currency: r.currency,
       branch_id: r.branch_id,
+      slot_type: r.slot_type,
       next_available_slot,
     });
   }

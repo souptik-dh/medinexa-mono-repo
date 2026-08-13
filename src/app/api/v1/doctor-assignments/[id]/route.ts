@@ -23,6 +23,7 @@ const slotTemplateSchema = z
 
 const patchSchema = z.object({
   fee_amount: z.coerce.number().positive().max(1_000_000).optional(),
+  slot_type: z.enum(["fixed", "sequential"]).optional(),
   slot_template: slotTemplateSchema.optional(),
   certificate: z.string().trim().max(500).nullable().optional(),
 });
@@ -75,6 +76,10 @@ export const PATCH = api(undefined, async (ctx) => {
       fields.push("fee_amount = ?");
       params.push(body.fee_amount);
     }
+    if (body.slot_type !== undefined) {
+      fields.push("slot_type = ?");
+      params.push(body.slot_type);
+    }
     if (fields.length > 0) {
       await conn.query(
         `UPDATE doctor_branch_assignments SET ${fields.join(", ")} WHERE id = ?`,
@@ -113,6 +118,7 @@ export const PATCH = api(undefined, async (ctx) => {
     branch_id: assignment.branch_id,
     fee_amount: Number(body.fee_amount ?? assignment.fee_amount),
     currency: assignment.currency,
+    slot_type: body.slot_type ?? assignment.slot_type,
     certificate_url: body.certificate !== undefined ? body.certificate : assignment.certificate_url ?? null,
   });
 });
