@@ -511,6 +511,30 @@ try {
     console.log('Applied migration: patient_medical_profile table');
   }
 
+  const [assignmentSlotTypeCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_branch_assignments' AND COLUMN_NAME = 'slot_type'`,
+  );
+  if (Number(assignmentSlotTypeCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE doctor_branch_assignments
+         ADD COLUMN slot_type ENUM('fixed','sequential') NOT NULL DEFAULT 'fixed' AFTER is_active`,
+    );
+    console.log('Applied migration: doctor_branch_assignments.slot_type');
+  }
+
+  const [inviteSlotTypeCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_invites' AND COLUMN_NAME = 'slot_type'`,
+  );
+  if (Number(inviteSlotTypeCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE doctor_invites
+         ADD COLUMN slot_type ENUM('fixed','sequential') NOT NULL DEFAULT 'fixed' AFTER slot_template`,
+    );
+    console.log('Applied migration: doctor_invites.slot_type');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();

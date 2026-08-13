@@ -1226,6 +1226,7 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
   "fee_amount": 500,
   "currency": "INR",
   "certificate": "https://example.com/cert.pdf",
+  "slot_type": "fixed",
   "slot_template": [
     {
       "weekday": 1,
@@ -1255,11 +1256,19 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
 | `fee_amount` | number | required, > 0, ≤ 1,000,000 |
 | `currency` | string | required, 3-letter code |
 | `certificate` | string? | max 500 |
+| `slot_type` | string? | `fixed` \| `sequential`, defaults to `fixed` — see [Slot types](#slot-types) |
 | `slot_template` | array | required, ≥ 1 entry |
 | `slot_template[].weekday` | number | 0 (Sun) – 6 (Sat) |
 | `slot_template[].start_time` | string | `HH:MM` |
 | `slot_template[].end_time` | string | `HH:MM`, must be after start |
 | `slot_template[].slot_duration_minutes` | number | 5–240 |
+
+#### Slot types
+
+A doctor's booking behavior for a branch is controlled by `slot_type` on the assignment (`doctor_branch_assignments.slot_type`), set at invite time and editable via `PATCH /doctor-assignments/:id`:
+
+- **`fixed`** (default) — the patient picks one specific `HH:MM` slot from `GET /doctors/:id/availability`, and `POST /appointments` requires a `time` that aligns to the doctor's slot template.
+- **`sequential`** ("as per bookings") — the doctor only defines a time range and slot duration (e.g. 7 PM–9 PM, 15 min slots); patients do **not** choose a time. `POST /appointments` omits `time`, and the server assigns the next free slot in order: 1st booking gets 7:00–7:15, 2nd gets 7:15–7:30, 3rd gets 7:30–7:45, and so on. If the range is full for that date, `POST /appointments` returns `409 DOCTOR_FULLY_BOOKED`.
 
 **Response `201`**
 
@@ -1334,13 +1343,14 @@ Public. Returns only **accepted** doctors assigned to the branch.
       "fee_amount": 500,
       "currency": "INR",
       "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+      "slot_type": "fixed",
       "next_available_slot": "2026-08-10T09:20:00"
     }
   ]
 }
 ```
 
-`id` is the doctor's own id. `assignment_id` is the id of this doctor's assignment to the branch — use it for `PATCH /doctor-assignments/:id` and `DELETE /doctor-assignments/:id`, not `id`. `next_available_slot` is a localized `YYYY-MM-DDTHH:MM:00` string or `null`.
+`id` is the doctor's own id. `assignment_id` is the id of this doctor's assignment to the branch — use it for `PATCH /doctor-assignments/:id` and `DELETE /doctor-assignments/:id`, not `id`. `next_available_slot` is a localized `YYYY-MM-DDTHH:MM:00` string or `null`. `slot_type` ∈ `fixed | sequential` — see [Slot types](#slot-types); when `sequential`, the client should offer a "book next available" action instead of a time picker.
 
 ### POST /branches/:id/doctors/:doctorId/photo/signature
 
@@ -1372,17 +1382,20 @@ Auth: `clinic_owner`, must own the branch **or** `branch_staff` with `doctors:ma
 
 ### PATCH /doctor-assignments/:id
 
-Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff` with `doctors:manage`. Doctors may only update `slot_template`/`certificate`; attempting to set `fee_amount` as a doctor returns `403 FEE_OWNER_CONTROLLED`.
+Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff` with `doctors:manage`. Doctors may only update `slot_type`/`slot_template`/`certificate`; attempting to set `fee_amount` as a doctor returns `403 FEE_OWNER_CONTROLLED`.
 
 **Request body** (partial)
 
 ```json
 {
   "fee_amount": 600,
+  "slot_type": "sequential",
   "slot_template": [{ "weekday": 2, "start_time": "10:00", "end_time": "14:00", "slot_duration_minutes": 30 }],
   "certificate": "https://example.com/new-cert.pdf"
 }
 ```
+
+`slot_type` ∈ `fixed | sequential` — see [Slot types](#slot-types). Switching an assignment to `sequential` does not require changing `slot_template`; the same weekday/time-range/duration rows are reused, just booked in order instead of by patient-picked time.
 
 **Response `200`**
 
@@ -1393,6 +1406,7 @@ Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff`
   "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
   "fee_amount": 600,
   "currency": "INR",
+  "slot_type": "sequential",
   "certificate_url": "https://example.com/new-cert.pdf"
 }
 ```
@@ -1527,12 +1541,14 @@ Public.
 {
   "date": "2026-08-10",
   "slots": [
-    { "time": "09:00", "available": true },
-    { "time": "09:20", "available": true },
-    { "time": "09:40", "available": false }
+    { "time": "09:00", "available": true, "slot_type": "fixed" },
+    { "time": "09:20", "available": true, "slot_type": "fixed" },
+    { "time": "09:40", "available": false, "slot_type": "fixed" }
   ]
 }
 ```
+
+Each slot carries the `slot_type` of the template it came from (see [Slot types](#slot-types)). For a `sequential` assignment, the listed slots show the doctor's queue positions and their availability, but the client should not let the patient pick one directly — `POST /appointments` auto-assigns the next open one.
 
 **Errors:** `422 VALIDATION_ERROR` (bad date), `404 DOCTOR_NOT_FOUND`.
 
@@ -1871,6 +1887,11 @@ Auth: `patient`. Header `Idempotency-Key` **required**.
 
 On success, an in-app notification (`new_booking`) is created for every branch staff member **and** the clinic owner, and each of them is emailed the patient's name/email/phone and the doctor's name.
 
+Behavior depends on the doctor's assignment `slot_type` for `branch_id` (see [Slot types](#slot-types)):
+
+- **`fixed`** — `time` is required and must be one of the doctor's aligned slots for that date (from `GET /doctors/:id/availability`).
+- **`sequential`** — `time` is ignored/omitted; the server books the next free slot in the doctor's range for that date, in booking order (1st patient gets the range's first slot, 2nd patient gets the next, etc.).
+
 **Request body**
 
 ```json
@@ -1887,11 +1908,11 @@ On success, an in-app notification (`new_booking`) is created for every branch s
 | `doctor_id` | string (UUID) | required |
 | `branch_id` | string (UUID) | required |
 | `date` | string | required, `YYYY-MM-DD`, not in the past |
-| `time` | string | required, `HH:MM`, must be an aligned slot |
+| `time` | string? | required and must be an aligned slot when the doctor's `slot_type` is `fixed`; omit for `sequential` doctors |
 
-**Response `201`** — Appointment object (`status: "pending"`).
+**Response `201`** — Appointment object (`status: "pending"`, `scheduled_time` is the server-assigned time for `sequential` bookings).
 
-**Errors:** `400 IDEMPOTENCY_KEY_REQUIRED`, `409 SLOT_ALREADY_BOOKED`, `422 OUTSIDE_DOCTOR_AVAILABILITY`, `422 DATE_IN_PAST`, `404 BRANCH_NOT_FOUND`, `404 DOCTOR_NOT_FOUND`.
+**Errors:** `400 IDEMPOTENCY_KEY_REQUIRED`, `400 VALIDATION_ERROR` (`time` missing for a `fixed` doctor), `409 SLOT_ALREADY_BOOKED` (`fixed` only), `409 DOCTOR_FULLY_BOOKED` (`sequential` only — no slots left that date), `422 OUTSIDE_DOCTOR_AVAILABILITY`, `422 DATE_IN_PAST`, `404 BRANCH_NOT_FOUND`, `404 DOCTOR_NOT_FOUND`.
 
 ### GET /appointments
 
@@ -2306,7 +2327,8 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `INVITE_ALREADY_ACCEPTED` | 409 | Invite already accepted |
 | `DOCTOR_ALREADY_ASSIGNED` | 409 | Doctor already at this branch |
 | `STAFF_ALREADY_EXISTS_FOR_BRANCH` | 409 | Staff email already registered to the branch |
-| `SLOT_ALREADY_BOOKED` | 409 | Slot taken (DB-level unique guard) |
+| `SLOT_ALREADY_BOOKED` | 409 | Slot taken (DB-level unique guard, `fixed` doctors) |
+| `DOCTOR_FULLY_BOOKED` | 409 | No slots left that date (`sequential` doctors) |
 | `INVALID_STATUS_TRANSITION` | 409 | Appointment status change not allowed |
 | `CANNOT_CANCEL_PAID_APPOINTMENT` | 409 | Patient cannot cancel a paid appointment |
 | `DOCTOR_HAS_ACTIVE_APPOINTMENTS` | 409 | Cannot remove doctor with live appointments |
@@ -2341,7 +2363,7 @@ Any other transition returns `409 INVALID_STATUS_TRANSITION`.
 POST /auth/clinic-owner/register
 POST /clinics                       {name, trade_license_number}
 POST /clinics/:clinicId/branches    {name, address, phone, timezone, trade_license_number}
-POST /branches/:id/doctor-invites   {name, specialization, email, fee_amount, currency, slot_template}
+POST /branches/:id/doctor-invites   {name, specialization, email, fee_amount, currency, slot_type, slot_template}
   → invite code emailed to the doctor
 POST /auth/doctor/accept-invite     {email, invite_code, password, reg_no}
 GET  /branches/:id/doctors          → doctor now listed
@@ -2354,7 +2376,7 @@ GET  /clinics?search=Sunrise
 GET  /clinics/:clinicId/branches
 GET  /branches/:id/doctors
 GET  /doctors/:doctorId/availability?date=2026-08-10
-POST /appointments   {doctor_id, branch_id, date, time}   [Idempotency-Key]
+POST /appointments   {doctor_id, branch_id, date, time?}   [Idempotency-Key]   (time omitted for "sequential" doctors)
 PATCH /appointments/:id/confirm
 PATCH /appointments/:id/payment     {fee_amount, method}   [Idempotency-Key]
 PUT   /appointments/:id/prescription {text}

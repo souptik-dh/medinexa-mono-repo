@@ -8,7 +8,13 @@ import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { scopeWhere, serializeAppointment, APPT_STATUSES } from "@/lib/appointments";
 import { notifyBranchStaff, createNotification, branchContactEmails, sendEmail } from "@/lib/notifications";
-import { todayInTz, weekdayInTz, toMinutes, fmtMinutes } from "@/lib/availability";
+import {
+  todayInTz,
+  weekdayInTz,
+  currentTimeKeyInTz,
+  generateSlotTimes,
+  findNextSequentialSlot,
+} from "@/lib/availability";
 import { fetchPage } from "@/lib/pagination";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -67,7 +73,7 @@ const schema = z.object({
   doctor_id: idSchema,
   branch_id: idSchema,
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
-  time: timeSchema,
+  time: timeSchema.optional(),
 });
 
 export const POST = api({ rateLimit: 20 }, async (ctx) => {
@@ -108,7 +114,7 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
 
     const wd = weekdayInTz(body.date, tz);
     const [templates] = await pool.query<Row[]>(
-      `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes
+      `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes, dba.slot_type
          FROM doctor_slot_templates dst
          JOIN doctor_branch_assignments dba ON dba.id = dst.doctor_branch_assignment_id
         WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1
@@ -123,33 +129,37 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
       );
     }
 
-    const start = toMinutes(template.start_time);
-    const end = toMinutes(template.end_time);
+    const isSequential = template.slot_type === "sequential";
     const dur = Number(template.slot_duration_minutes);
-    let aligned = false;
-    for (let m = start; m + dur <= end; m += dur) {
-      if (fmtMinutes(m) === body.time) aligned = true;
-    }
-    if (!aligned) {
-      throw unprocessable(
-        "OUTSIDE_DOCTOR_AVAILABILITY",
-        "The requested time is not an available slot for this doctor.",
-      );
-    }
+    let scheduledTime: string;
 
-    if (body.date === today) {
-      const nowParts = new Intl.DateTimeFormat("en-US", {
-        timeZone: tz,
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-      }).formatToParts(new Date());
-      const h = Number(nowParts.find((p) => p.type === "hour")?.value);
-      const m = Number(nowParts.find((p) => p.type === "minute")?.value);
-      const nowKey = fmtMinutes((Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0));
-      if (body.time <= nowKey) {
+    if (isSequential) {
+      const next = await findNextSequentialSlot(pool, body.doctor_id, body.branch_id, body.date, tz);
+      if (!next) {
+        throw conflict(
+          "DOCTOR_FULLY_BOOKED",
+          "No slots are left for this doctor on the selected date.",
+        );
+      }
+      scheduledTime = next;
+    } else {
+      if (!body.time) {
+        throw badRequest("VALIDATION_ERROR", "time is required.", "time");
+      }
+      let aligned = false;
+      for (const key of generateSlotTimes(template.start_time, template.end_time, dur)) {
+        if (key === body.time) aligned = true;
+      }
+      if (!aligned) {
+        throw unprocessable(
+          "OUTSIDE_DOCTOR_AVAILABILITY",
+          "The requested time is not an available slot for this doctor.",
+        );
+      }
+      if (body.date === today && body.time <= currentTimeKeyInTz(tz)) {
         throw unprocessable("DATE_IN_PAST", "This time slot has already passed.");
       }
+      scheduledTime = body.time;
     }
 
     const [assignments] = await pool.query<Row[]>(
@@ -163,43 +173,61 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
     if (!assignment) throw notFound("DOCTOR_NOT_FOUND", "Doctor is not assigned to this branch.");
 
     const id = newId();
-    try {
-      await withTransaction(async (conn) => {
-        await conn.query(
-          `INSERT INTO appointments
-             (id, patient_id, clinic_id, branch_id, doctor_id, scheduled_date, scheduled_time, duration_minutes, status, fee_amount, currency)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-          [
-            id,
-            auth.userId,
-            branch.clinic_id,
-            body.branch_id,
-            body.doctor_id,
-            body.date,
-            body.time,
-            dur,
-            assignment.fee_amount,
-            assignment.currency,
-          ],
-        );
-        const payload = {
-          appointment_id: id,
-          doctor_id: body.doctor_id,
-          patient_id: auth.userId,
-          date: body.date,
-          time: body.time,
-        };
-        await notifyBranchStaff(conn, body.branch_id, "new_booking", payload);
-        await createNotification(conn, branch.owner_user_id, "new_booking", payload, body.branch_id);
-      });
-    } catch (err) {
-      if (isUniqueViolation(err)) {
-        throw conflict(
-          "SLOT_ALREADY_BOOKED",
-          "This time slot was just taken. Please choose another.",
-        );
+    const triedTimes = new Set<string>();
+    let attemptsLeft = isSequential ? 25 : 1;
+    for (;;) {
+      try {
+        await withTransaction(async (conn) => {
+          await conn.query(
+            `INSERT INTO appointments
+               (id, patient_id, clinic_id, branch_id, doctor_id, scheduled_date, scheduled_time, duration_minutes, status, fee_amount, currency)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+            [
+              id,
+              auth.userId,
+              branch.clinic_id,
+              body.branch_id,
+              body.doctor_id,
+              body.date,
+              scheduledTime,
+              dur,
+              assignment.fee_amount,
+              assignment.currency,
+            ],
+          );
+          const payload = {
+            appointment_id: id,
+            doctor_id: body.doctor_id,
+            patient_id: auth.userId,
+            date: body.date,
+            time: scheduledTime,
+          };
+          await notifyBranchStaff(conn, body.branch_id, "new_booking", payload);
+          await createNotification(conn, branch.owner_user_id, "new_booking", payload, body.branch_id);
+        });
+        break;
+      } catch (err) {
+        if (!isUniqueViolation(err)) throw err;
+        if (!isSequential) {
+          throw conflict(
+            "SLOT_ALREADY_BOOKED",
+            "This time slot was just taken. Please choose another.",
+          );
+        }
+        triedTimes.add(scheduledTime);
+        attemptsLeft -= 1;
+        const next: string | null =
+          attemptsLeft > 0
+            ? await findNextSequentialSlot(pool, body.doctor_id, body.branch_id, body.date, tz, triedTimes)
+            : null;
+        if (!next) {
+          throw conflict(
+            "DOCTOR_FULLY_BOOKED",
+            "No slots are left for this doctor on the selected date.",
+          );
+        }
+        scheduledTime = next;
       }
-      throw err;
     }
 
     const [rows] = await pool.query<Row[]>(`SELECT * FROM appointments WHERE id = ?`, [id]);
@@ -225,7 +253,7 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
         `Email: ${info.patient_email ?? "-"}`,
         `Phone: ${info.patient_phone ?? "-"}`,
         `Doctor: Dr. ${info.doctor_name}`,
-        `Date: ${body.date} at ${body.time}`,
+        `Date: ${body.date} at ${scheduledTime}`,
       ].join("\n");
       await Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody)));
     }

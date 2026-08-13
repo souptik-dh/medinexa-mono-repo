@@ -34,6 +34,7 @@ const createSchema = z.object({
   fee_amount: z.coerce.number().positive().max(1_000_000),
   currency: z.string().trim().toUpperCase().length(3),
   certificate: z.string().trim().max(500).optional().nullable(),
+  slot_type: z.enum(["fixed", "sequential"]).default("fixed"),
   slot_template: slotTemplateSchema,
 });
 
@@ -83,8 +84,8 @@ export const POST = api(undefined, async (ctx) => {
   try {
     await pool.query(
       `INSERT INTO doctor_invites
-         (id, branch_id, email, name, specialization, phone, fee_amount, currency, certificate_url, slot_template, invite_code_hash, reg_no, smc_name, doctor_degree, status, invited_by, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+         (id, branch_id, email, name, specialization, phone, fee_amount, currency, certificate_url, slot_template, slot_type, invite_code_hash, reg_no, smc_name, doctor_degree, status, invited_by, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
       [
         id,
         branchId,
@@ -96,6 +97,7 @@ export const POST = api(undefined, async (ctx) => {
         body.currency,
         body.certificate ?? null,
         JSON.stringify(body.slot_template),
+        body.slot_type,
         hashToken(inviteCode),
         body.reg_no ?? null,
         body.smc_name ?? null,

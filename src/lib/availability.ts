@@ -41,9 +41,34 @@ export function addDays(date: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+export function currentTimeKeyInTz(tz: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date());
+  const h = Number(parts.find((p) => p.type === "hour")?.value);
+  const m = Number(parts.find((p) => p.type === "minute")?.value);
+  return fmtMinutes((Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0));
+}
+
+export function generateSlotTimes(startTime: string, endTime: string, durationMinutes: number): string[] {
+  const start = toMinutes(startTime);
+  const end = toMinutes(endTime);
+  const times: string[] = [];
+  for (let m = start; m + durationMinutes <= end; m += durationMinutes) {
+    times.push(fmtMinutes(m));
+  }
+  return times;
+}
+
+export type SlotType = "fixed" | "sequential";
+
 export interface DaySlot {
   time: string;
   available: boolean;
+  slot_type: SlotType;
 }
 
 export async function computeDaySlots(
@@ -54,7 +79,7 @@ export async function computeDaySlots(
 ): Promise<DaySlot[]> {
   const wd = weekdayInTz(date, tz);
   const [templates] = await db.query<Row[]>(
-    `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes
+    `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes, dba.slot_type
        FROM doctor_slot_templates dst
        JOIN doctor_branch_assignments dba ON dba.id = dst.doctor_branch_assignment_id
        JOIN branches b ON b.id = dba.branch_id AND b.deleted_at IS NULL
@@ -63,14 +88,11 @@ export async function computeDaySlots(
     [doctorId, wd, date, date],
   );
 
-  const slots = new Map<string, boolean>();
+  const slots = new Map<string, { available: boolean; slotType: SlotType }>();
   for (const t of templates) {
-    const start = toMinutes(t.start_time);
-    const end = toMinutes(t.end_time);
     const dur = Number(t.slot_duration_minutes);
-    for (let m = start; m + dur <= end; m += dur) {
-      const key = fmtMinutes(m);
-      if (!slots.has(key)) slots.set(key, true);
+    for (const key of generateSlotTimes(t.start_time, t.end_time, dur)) {
+      if (!slots.has(key)) slots.set(key, { available: true, slotType: t.slot_type as SlotType });
     }
   }
 
@@ -80,12 +102,62 @@ export async function computeDaySlots(
         WHERE doctor_id = ? AND scheduled_date = ? AND status != 'cancelled'`,
       [doctorId, date],
     );
-    for (const b of booked) slots.set(b.scheduled_time, false);
+    for (const b of booked) {
+      const entry = slots.get(b.scheduled_time);
+      if (entry) entry.available = false;
+    }
   }
 
   return [...slots.entries()]
-    .map(([time, available]) => ({ time, available }))
+    .map(([time, { available, slotType }]) => ({ time, available, slot_type: slotType }))
     .sort((a, b) => a.time.localeCompare(b.time));
+}
+
+export async function findNextSequentialSlot(
+  db: Db,
+  doctorId: string,
+  branchId: string,
+  date: string,
+  tz: string,
+  excludeTimes: Set<string> = new Set(),
+): Promise<string | null> {
+  const wd = weekdayInTz(date, tz);
+  const [templates] = await db.query<Row[]>(
+    `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes
+       FROM doctor_slot_templates dst
+       JOIN doctor_branch_assignments dba ON dba.id = dst.doctor_branch_assignment_id
+      WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1
+        AND dba.slot_type = 'sequential' AND dst.weekday = ?
+        AND dst.effective_from <= ? AND (dst.effective_to IS NULL OR dst.effective_to >= ?)`,
+    [doctorId, branchId, wd, date, date],
+  );
+  if (templates.length === 0) return null;
+
+  const [booked] = await db.query<Row[]>(
+    `SELECT scheduled_time FROM appointments
+      WHERE doctor_id = ? AND scheduled_date = ? AND status != 'cancelled'`,
+    [doctorId, date],
+  );
+  const taken = new Set(booked.map((b) => b.scheduled_time));
+  for (const t of excludeTimes) taken.add(t);
+
+  const today = todayInTz(tz);
+  const nowKey = date === today ? currentTimeKeyInTz(tz) : null;
+
+  const candidates: string[] = [];
+  for (const t of templates) {
+    for (const key of generateSlotTimes(t.start_time, t.end_time, Number(t.slot_duration_minutes))) {
+      candidates.push(key);
+    }
+  }
+  candidates.sort((a, b) => a.localeCompare(b));
+
+  for (const key of candidates) {
+    if (taken.has(key)) continue;
+    if (nowKey !== null && key <= nowKey) continue;
+    return key;
+  }
+  return null;
 }
 
 export async function nextAvailableSlot(
@@ -106,40 +178,22 @@ export async function nextAvailableSlot(
   if (!doctorId) return null;
 
   const today = todayInTz(tz);
-  const now = new Date();
 
   for (let dayOffset = 0; dayOffset < 60; dayOffset++) {
     const date = addDays(today, dayOffset);
     const wd = weekdayInTz(date, tz);
+    const nowKey = dayOffset === 0 ? currentTimeKeyInTz(tz) : null;
     for (const t of templates) {
       if (Number(t.weekday) !== wd) continue;
       if (t.effective_from > date) continue;
       if (t.effective_to && t.effective_to < date) continue;
-      const start = toMinutes(t.start_time);
-      const end = toMinutes(t.end_time);
-      const dur = Number(t.slot_duration_minutes);
       const [booked] = await db.query<Row[]>(
         `SELECT scheduled_time FROM appointments
           WHERE doctor_id = ? AND scheduled_date = ? AND status != 'cancelled'`,
         [doctorId, date],
       );
       const taken = new Set(booked.map((b) => b.scheduled_time));
-      const nowKey =
-        dayOffset === 0
-          ? (() => {
-              const parts = new Intl.DateTimeFormat("en-US", {
-                timeZone: tz,
-                hour: "2-digit",
-                minute: "2-digit",
-                hour12: false,
-              }).formatToParts(now);
-              const h = Number(parts.find((p) => p.type === "hour")?.value);
-              const m = Number(parts.find((p) => p.type === "minute")?.value);
-              return fmtMinutes((Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0));
-            })()
-          : null;
-      for (let m = start; m + dur <= end; m += dur) {
-        const key = fmtMinutes(m);
+      for (const key of generateSlotTimes(t.start_time, t.end_time, Number(t.slot_duration_minutes))) {
         if (taken.has(key)) continue;
         if (nowKey !== null && key <= nowKey) continue;
         return `${date}T${key}:00`;
