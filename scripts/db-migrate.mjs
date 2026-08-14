@@ -569,6 +569,19 @@ try {
     console.log('Applied migration: doctor_slot_exceptions table');
   }
 
+  const [assignmentDateCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_branch_assignments' AND COLUMN_NAME = 'start_date'`,
+  );
+  if (Number(assignmentDateCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE doctor_branch_assignments
+         ADD COLUMN start_date DATE NULL AFTER slot_type,
+         ADD COLUMN end_date DATE NULL AFTER start_date`,
+    );
+    console.log('Applied migration: doctor_branch_assignments.start_date/end_date');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();
