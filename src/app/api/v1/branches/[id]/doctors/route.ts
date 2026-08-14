@@ -1,7 +1,7 @@
 import { api, json } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
 import { notFound } from "@/lib/errors";
-import { nextAvailableSlot } from "@/lib/availability";
+import { addDays, nextAvailableSlot, todayInTz } from "@/lib/availability";
 
 export const GET = api(undefined, async (ctx) => {
   const branchId = ctx.params.id;
@@ -50,19 +50,28 @@ export const GET = api(undefined, async (ctx) => {
     }
   }
 
+  // Consecutive excluded_date rows (same assignment, same reason, back-to-back calendar
+  // days) are merged into a single { start_date, end_date } range so a multi-day leave
+  // reads as one range instead of one entry per day — matches the documented contract.
   const unavailableByAssignment = new Map<string, { start_date: string; end_date: string; reason: string | null }[]>();
   if (assignmentIds.length > 0) {
     const [exceptionRows] = await pool.query<Row[]>(
       `SELECT doctor_branch_assignment_id, excluded_date, reason
          FROM doctor_slot_exceptions
-        WHERE doctor_branch_assignment_id IN (?) AND excluded_date >= CURDATE()`,
-      [assignmentIds],
+        WHERE doctor_branch_assignment_id IN (?) AND excluded_date >= ?
+        ORDER BY doctor_branch_assignment_id, excluded_date`,
+      [assignmentIds, todayInTz(tz)],
     );
     for (const e of exceptionRows) {
       const date = String(e.excluded_date).slice(0, 10);
-      const list = unavailableByAssignment.get(e.doctor_branch_assignment_id) ?? [];
-      list.push({ start_date: date, end_date: date, reason: e.reason });
-      unavailableByAssignment.set(e.doctor_branch_assignment_id, list);
+      const ranges = unavailableByAssignment.get(e.doctor_branch_assignment_id) ?? [];
+      const last = ranges[ranges.length - 1];
+      if (last && last.reason === e.reason && addDays(last.end_date, 1) === date) {
+        last.end_date = date;
+      } else {
+        ranges.push({ start_date: date, end_date: date, reason: e.reason });
+      }
+      unavailableByAssignment.set(e.doctor_branch_assignment_id, ranges);
     }
   }
 
