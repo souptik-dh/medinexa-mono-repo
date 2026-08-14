@@ -112,18 +112,30 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
       throw unprocessable("DATE_IN_PAST", "The appointment date is in the past.");
     }
 
+    // Checked separately (and before the weekday/template match) so a booking blocked by
+    // an active leave gets the specific DOCTOR_ON_LEAVE conflict rather than being folded
+    // into the generic OUTSIDE_DOCTOR_AVAILABILITY case — this is what stops a client from
+    // bypassing the disabled calendar day by calling the booking API directly.
+    const [leaveRows] = await pool.query<Row[]>(
+      `SELECT dse.id FROM doctor_slot_exceptions dse
+         JOIN doctor_branch_assignments dba ON dba.id = dse.doctor_branch_assignment_id
+        WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1
+          AND dse.status = 'active' AND dse.excluded_date <= ? AND COALESCE(dse.end_date, dse.excluded_date) >= ?
+        LIMIT 1`,
+      [body.doctor_id, body.branch_id, body.date, body.date],
+    );
+    if (leaveRows[0]) {
+      throw conflict("DOCTOR_ON_LEAVE", "Doctor is unavailable on the selected date.");
+    }
+
     const wd = weekdayInTz(body.date, tz);
     const [templates] = await pool.query<Row[]>(
       `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes, dba.slot_type
          FROM doctor_slot_templates dst
          JOIN doctor_branch_assignments dba ON dba.id = dst.doctor_branch_assignment_id
         WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1
-          AND dst.weekday = ? AND dst.start_date <= ? AND (dst.end_date IS NULL OR dst.end_date >= ?)
-          AND NOT EXISTS (
-            SELECT 1 FROM doctor_slot_exceptions dse
-             WHERE dse.doctor_branch_assignment_id = dba.id AND dse.excluded_date = ?
-          )`,
-      [body.doctor_id, body.branch_id, wd, body.date, body.date, body.date],
+          AND dst.weekday = ? AND dst.start_date <= ? AND (dst.end_date IS NULL OR dst.end_date >= ?)`,
+      [body.doctor_id, body.branch_id, wd, body.date, body.date],
     );
     const template = templates[0];
     if (!template) {

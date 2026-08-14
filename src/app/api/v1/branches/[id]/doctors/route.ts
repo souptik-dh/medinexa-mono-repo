@@ -1,7 +1,7 @@
 import { api, json } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
 import { notFound } from "@/lib/errors";
-import { addDays, nextAvailableSlot, todayInTz } from "@/lib/availability";
+import { getActiveLeaves, getAvailabilityPeriods, nextAvailableSlot, todayInTz } from "@/lib/availability";
 
 export const GET = api(undefined, async (ctx) => {
   const branchId = ctx.params.id;
@@ -31,55 +31,20 @@ export const GET = api(undefined, async (ctx) => {
 
   const assignmentIds = rows.map((r) => r.assignment_id);
 
-  const datesByAssignment = new Map<string, { start_date: string | null; end_date: string | null }>();
-  if (assignmentIds.length > 0) {
-    const [templateRows] = await pool.query<Row[]>(
-      `SELECT doctor_branch_assignment_id,
-              MIN(start_date) AS start_date,
-              CASE WHEN SUM(end_date IS NULL) > 0 THEN NULL ELSE MAX(end_date) END AS end_date
-         FROM doctor_slot_templates
-        WHERE doctor_branch_assignment_id IN (?)
-        GROUP BY doctor_branch_assignment_id`,
-      [assignmentIds],
-    );
-    for (const t of templateRows) {
-      datesByAssignment.set(t.doctor_branch_assignment_id, {
-        start_date: t.start_date ? String(t.start_date).slice(0, 10) : null,
-        end_date: t.end_date ? String(t.end_date).slice(0, 10) : null,
-      });
-    }
-  }
-
-  // Consecutive excluded_date rows (same assignment, same reason, back-to-back calendar
-  // days) are merged into a single { start_date, end_date } range so a multi-day leave
-  // reads as one range instead of one entry per day — matches the documented contract.
-  const unavailableByAssignment = new Map<string, { start_date: string; end_date: string; reason: string | null }[]>();
-  if (assignmentIds.length > 0) {
-    const [exceptionRows] = await pool.query<Row[]>(
-      `SELECT doctor_branch_assignment_id, excluded_date, reason
-         FROM doctor_slot_exceptions
-        WHERE doctor_branch_assignment_id IN (?) AND excluded_date >= ?
-        ORDER BY doctor_branch_assignment_id, excluded_date`,
-      [assignmentIds, todayInTz(tz)],
-    );
-    for (const e of exceptionRows) {
-      const date = String(e.excluded_date).slice(0, 10);
-      const ranges = unavailableByAssignment.get(e.doctor_branch_assignment_id) ?? [];
-      const last = ranges[ranges.length - 1];
-      if (last && last.reason === e.reason && addDays(last.end_date, 1) === date) {
-        last.end_date = date;
-      } else {
-        ranges.push({ start_date: date, end_date: date, reason: e.reason });
-      }
-      unavailableByAssignment.set(e.doctor_branch_assignment_id, ranges);
-    }
-  }
+  const datesByAssignment = await getAvailabilityPeriods(pool, assignmentIds);
+  // Leave ranges are stored natively as { start_date, end_date } rows now, so no
+  // client-side merging of adjacent single-day rows is needed here anymore.
+  const unavailableByAssignment = await getActiveLeaves(pool, assignmentIds, { from: todayInTz(tz) });
 
   const items = [];
   for (const r of rows) {
     const next_available_slot = await nextAvailableSlot(pool, r.assignment_id, tz);
     const dates = datesByAssignment.get(r.assignment_id) ?? { start_date: null, end_date: null };
-    const unavailable_dates = unavailableByAssignment.get(r.assignment_id) ?? [];
+    const unavailable_dates = (unavailableByAssignment.get(r.assignment_id) ?? []).map((l) => ({
+      start_date: l.start_date,
+      end_date: l.end_date,
+      reason: l.reason,
+    }));
     items.push({
       id: r.id,
       assignment_id: r.assignment_id,

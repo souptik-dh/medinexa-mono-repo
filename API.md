@@ -1445,44 +1445,61 @@ Auth: `clinic_owner` **or** `branch_staff` with `doctors:manage`. Deactivates th
 
 ### GET /doctor-assignments/:id/exceptions
 
-Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff` with `doctors:manage`. Lists the dates within the assignment's slot-template range where the doctor is marked unavailable, overriding the otherwise-recurring weekly pattern.
+Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff` with `doctors:manage`. Lists the doctor's **leaves** for this assignment — inclusive date ranges within the assignment's slot-template range where the doctor is unavailable, overriding the otherwise-recurring weekly pattern. Both active and cancelled leaves are returned (cancelled ones are kept as an audit record); filter on `status` client-side if only active leaves are needed.
 
 **Response `200`**
 
 ```json
 {
   "items": [
-    { "id": "b1c2d3e4-...", "excluded_date": "2026-09-07", "reason": "On leave", "created_at": "2026-08-13T10:00:00.000Z" }
+    {
+      "id": "b1c2d3e4-...",
+      "excluded_date": "2026-09-01",
+      "end_date": "2026-09-07",
+      "reason": "Annual leave",
+      "status": "active",
+      "created_at": "2026-08-13T10:00:00.000Z"
+    }
   ]
 }
 ```
 
+`excluded_date` is the leave's (inclusive) start date; `end_date` is the (inclusive) end date — equal to `excluded_date` for a single-day leave. `status` ∈ `active | cancelled`; only `active` leaves block availability/booking (see [§8 Backend availability calculation](#doctors-invites--assignments)).
+
 ### POST /doctor-assignments/:id/exceptions
 
-Auth: same as above. Marks a single date unavailable, even if it falls inside an active `slot_template` weekday/date-range.
+Auth: same as above. Marks a date range unavailable ("doctor leave"), even if it falls inside an active `slot_template` weekday/date-range. The leave does not need to fall entirely inside the assignment's slot-template range — the effective unavailable window is the **intersection** of the leave and the doctor's availability period, computed live by every availability/booking endpoint rather than stored.
 
 **Request body**
 
 ```json
-{ "excluded_date": "2026-09-07", "reason": "On leave" }
+{ "excluded_date": "2026-09-01", "end_date": "2026-09-07", "reason": "Annual leave" }
 ```
 
 | Field | Type | Notes |
 |---|---|---|
-| `excluded_date` | string | required, `YYYY-MM-DD` |
+| `excluded_date` | string | required, `YYYY-MM-DD` — leave start date (inclusive) |
+| `end_date` | string? | `YYYY-MM-DD`, nullable — leave end date (inclusive); omit for a single-day leave (defaults to `excluded_date`) |
 | `reason` | string? | max 255 |
 
 **Response `201`**
 
 ```json
-{ "id": "b1c2d3e4-...", "doctor_branch_assignment_id": "e4f5a6b7-...", "excluded_date": "2026-09-07", "reason": "On leave" }
+{
+  "id": "b1c2d3e4-...",
+  "doctor_branch_assignment_id": "e4f5a6b7-...",
+  "excluded_date": "2026-09-01",
+  "end_date": "2026-09-07",
+  "reason": "Annual leave",
+  "status": "active"
+}
 ```
 
-**Errors:** `404 ASSIGNMENT_NOT_FOUND`, `409 EXCEPTION_ALREADY_EXISTS`.
+**Errors:** `404 ASSIGNMENT_NOT_FOUND`, `400 VALIDATION_ERROR` (`end_date` before `excluded_date`). Overlapping leaves for the same assignment are allowed (the union of active ranges is what matters for availability), so there is no `409 EXCEPTION_ALREADY_EXISTS` in this version of the contract.
 
 ### DELETE /doctor-assignments/:id/exceptions/:exceptionId
 
-Auth: same as above. Re-enables the doctor's normal recurring availability on that date.
+Auth: same as above. **Cancels** the leave (`status` → `cancelled`) rather than deleting the row, so it's kept as an audit record — this immediately restores the doctor's normal recurring availability across the leave's date range, without touching `slot_template`.
 
 **Response `204 No Content`**
 
@@ -1598,15 +1615,31 @@ Searches `reg_no` (prefix), `name` (contains), and `specialization` (contains). 
 
 ### GET /doctors/:id/availability
 
-Public.
+Public. The authoritative availability rule (applied identically here, in `/availability/week`, `/availability/calendar`, and `POST /appointments`) is:
 
-**Query:** `?date=2026-08-10` (required, `YYYY-MM-DD`)
+```text
+AVAILABLE =
+    date >= assignment's derived availability start date   (inclusive)
+    AND date <= assignment's derived availability end date  (inclusive, if set)
+    AND date >= today
+    AND NOT EXISTS an ACTIVE leave covering date             (doctor_slot_exceptions)
+    AND at least one bookable slot exists for that date
+```
+
+The availability start/end dates are never stored directly — they're derived as the union of the assignment's `doctor_slot_templates` date ranges (same aggregation as `GET /branches/:id/doctors`'s `start_date`/`end_date`). All date comparisons are on `YYYY-MM-DD` strings, never JS `Date` timestamps, so there's no timezone drift between "today" and stored dates.
+
+Two modes, selected by which query params are present:
+
+**Single-date mode** — `?date=2026-08-10` (`YYYY-MM-DD`, required for this mode), `?branch_id=` optional (defaults to the doctor's first active assignment if omitted, for backward compatibility).
 
 **Response `200`**
 
 ```json
 {
   "date": "2026-08-10",
+  "status": "available",
+  "is_bookable": true,
+  "leave": null,
   "slots": [
     { "time": "09:00", "available": true, "slot_type": "fixed" },
     { "time": "09:20", "available": true, "slot_type": "fixed" },
@@ -1615,11 +1648,91 @@ Public.
 }
 ```
 
-Each slot carries the `slot_type` of the template it came from (see [Slot types](#slot-types)). For a `sequential` assignment, the listed slots show the doctor's queue positions and their availability, but the client should not let the patient pick one directly — `POST /appointments` auto-assigns the next open one.
+`status` ∈ `available | leave | unavailable | fully_booked | outside_schedule | past`. `leave` is `{ start_date, end_date, reason }` when `status = "leave"`, else `null`. `slots`/`status`/`is_bookable`/`leave` were added additively — `date`+`slots` is unchanged from the prior contract, so existing clients keep working untouched. Each slot carries the `slot_type` of the template it came from (see [Slot types](#slot-types)); for a `sequential` assignment the client should not let the patient pick a slot directly — `POST /appointments` auto-assigns the next open one.
 
-If `date` matches an entry in the assignment's exceptions list (see `GET /doctor-assignments/:id/exceptions`), `slots` is returned empty regardless of the weekly `slot_template`.
+**Range mode** — `?from=2026-08-16&to=2026-08-31&branch_id=<id>` (all three required; range capped at 62 days). Returns calendar availability, leave info, and slots for every date in one response instead of one call per day.
 
-**Errors:** `422 VALIDATION_ERROR` (bad date), `404 DOCTOR_NOT_FOUND`.
+**Response `200`**
+
+```json
+{
+  "doctor_id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+  "availability_period": { "start_date": "2026-08-16", "end_date": "2026-08-23" },
+  "leaves": [
+    { "start_date": "2026-08-20", "end_date": "2026-08-22", "reason": "Doctor unavailable" }
+  ],
+  "dates": [
+    {
+      "date": "2026-08-16",
+      "day": "Sunday",
+      "status": "available",
+      "is_bookable": true,
+      "leave": null,
+      "slots": [{ "time": "09:00", "available": true, "slot_type": "fixed" }]
+    },
+    {
+      "date": "2026-08-20",
+      "day": "Thursday",
+      "status": "leave",
+      "is_bookable": false,
+      "leave": { "start_date": "2026-08-20", "end_date": "2026-08-22", "reason": "Doctor unavailable" },
+      "slots": []
+    }
+  ]
+}
+```
+
+**Errors:** `422 VALIDATION_ERROR` (bad `date`, single-date mode) / `400 VALIDATION_ERROR` (missing/invalid `branch_id`, `from`, `to`, or range too large), `404 DOCTOR_NOT_FOUND`.
+
+### GET /doctors/:id/availability/week
+
+Public. Drives a doctor profile's "Availability this week" cards without the client generating dates or hardcoding a weekly pattern itself.
+
+**Query:** `?branch_id=<id>` (required), `?date=2026-08-16` (optional anchor date, `YYYY-MM-DD`, defaults to today) — the response covers exactly the 7 calendar days starting at `date`.
+
+**Response `200`**
+
+```json
+{
+  "week_start": "2026-08-16",
+  "week_end": "2026-08-22",
+  "dates": [
+    { "date": "2026-08-16", "day": "Sun", "status": "available", "is_bookable": true, "display_time": "9:00 AM" },
+    { "date": "2026-08-17", "day": "Mon", "status": "unavailable", "is_bookable": false, "display_time": "No slots" },
+    { "date": "2026-08-20", "day": "Thu", "status": "leave", "is_bookable": false, "display_time": "Doctor on leave" }
+  ]
+}
+```
+
+`display_time` is a UI-ready label: the first open slot formatted 12-hour (`"9:00 AM"`) when bookable, `"Doctor on leave"` for `leave`, `"Fully booked"` for `fully_booked`, else `"No slots"`. Tapping a date should follow up with `GET /doctors/:id/availability?from=<date>&to=<date>&branch_id=<id>` for the actual slot list.
+
+**Errors:** `400 VALIDATION_ERROR` (missing `branch_id`, bad `date`), `404 DOCTOR_NOT_FOUND`.
+
+### GET /doctors/:id/availability/calendar
+
+Public. Drives a full-month calendar picker (e.g. the booking flow's date step) in one call.
+
+**Query:** `?branch_id=<id>&year=2026&month=8` (all required; `month` is 1–12).
+
+**Response `200`**
+
+```json
+{
+  "year": 2026,
+  "month": 8,
+  "availability_period": { "start_date": "2026-08-16", "end_date": "2026-08-23" },
+  "dates": [
+    { "date": "2026-08-16", "status": "available", "is_bookable": true },
+    { "date": "2026-08-20", "status": "leave", "is_bookable": false },
+    { "date": "2026-08-24", "status": "outside_schedule", "is_bookable": false }
+  ]
+}
+```
+
+Every day of the month is included (not just the availability period) so the client can render the full grid and grey out non-bookable days without extra logic — dates with open slots should be visually highlighted; all others (outside the doctor's schedule, fully booked, on leave, or in the past) rendered disabled.
+
+**Errors:** `400 VALIDATION_ERROR` (missing/invalid `branch_id`, `year`, or `month`), `404 DOCTOR_NOT_FOUND`.
 
 ---
 
@@ -1981,7 +2094,9 @@ Behavior depends on the doctor's assignment `slot_type` for `branch_id` (see [Sl
 
 **Response `201`** — Appointment object (`status: "pending"`, `scheduled_time` is the server-assigned time for `sequential` bookings).
 
-**Errors:** `400 IDEMPOTENCY_KEY_REQUIRED`, `400 VALIDATION_ERROR` (`time` missing for a `fixed` doctor), `409 SLOT_ALREADY_BOOKED` (`fixed` only), `409 DOCTOR_FULLY_BOOKED` (`sequential` only — no slots left that date), `422 OUTSIDE_DOCTOR_AVAILABILITY`, `422 DATE_IN_PAST`, `404 BRANCH_NOT_FOUND`, `404 DOCTOR_NOT_FOUND`.
+The server never trusts the client's disabled-calendar rendering — every check below re-runs against `doctor_slot_templates`/`doctor_slot_exceptions` regardless of what the calendar/availability endpoints previously returned, so a direct API call can't book a leave day or a day outside the doctor's schedule. A leave specifically produces `409 DOCTOR_ON_LEAVE` rather than being folded into the generic `422 OUTSIDE_DOCTOR_AVAILABILITY`, so the client can show "Doctor is on leave" instead of a generic unavailable message.
+
+**Errors:** `400 IDEMPOTENCY_KEY_REQUIRED`, `400 VALIDATION_ERROR` (`time` missing for a `fixed` doctor), `409 SLOT_ALREADY_BOOKED` (`fixed` only), `409 DOCTOR_FULLY_BOOKED` (`sequential` only — no slots left that date), `409 DOCTOR_ON_LEAVE` (date falls within an active leave), `422 OUTSIDE_DOCTOR_AVAILABILITY`, `422 DATE_IN_PAST`, `404 BRANCH_NOT_FOUND`, `404 DOCTOR_NOT_FOUND`.
 
 ### GET /appointments
 
@@ -2396,9 +2511,9 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `INVITE_ALREADY_ACCEPTED` | 409 | Invite already accepted |
 | `DOCTOR_ALREADY_ASSIGNED` | 409 | Doctor already at this branch |
 | `STAFF_ALREADY_EXISTS_FOR_BRANCH` | 409 | Staff email already registered to the branch |
-| `EXCEPTION_ALREADY_EXISTS` | 409 | Date already marked unavailable for this assignment |
 | `SLOT_ALREADY_BOOKED` | 409 | Slot taken (DB-level unique guard, `fixed` doctors) |
 | `DOCTOR_FULLY_BOOKED` | 409 | No slots left that date (`sequential` doctors) |
+| `DOCTOR_ON_LEAVE` | 409 | Booking date falls within an active doctor leave |
 | `INVALID_STATUS_TRANSITION` | 409 | Appointment status change not allowed |
 | `CANNOT_CANCEL_PAID_APPOINTMENT` | 409 | Patient cannot cancel a paid appointment |
 | `DOCTOR_HAS_ACTIVE_APPOINTMENTS` | 409 | Cannot remove doctor with live appointments |
@@ -2445,7 +2560,8 @@ GET  /branches/:id/doctors          → doctor now listed
 GET  /clinics?search=Sunrise
 GET  /clinics/:clinicId/branches
 GET  /branches/:id/doctors
-GET  /doctors/:doctorId/availability?date=2026-08-10
+GET  /doctors/:doctorId/availability/calendar?branch_id=...&year=2026&month=8
+GET  /doctors/:doctorId/availability?date=2026-08-10&branch_id=...
 POST /appointments   {doctor_id, branch_id, date, time?}   [Idempotency-Key]   (time omitted for "sequential" doctors)
 PATCH /appointments/:id/confirm
 PATCH /appointments/:id/payment     {fee_amount, method}   [Idempotency-Key]

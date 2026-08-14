@@ -259,14 +259,21 @@ CREATE TABLE IF NOT EXISTS doctor_slot_templates (
     REFERENCES doctor_branch_assignments(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+-- A doctor leave/exception: a date range (inclusive) that overrides the assignment's
+-- otherwise-recurring doctor_slot_templates availability. excluded_date is the range's
+-- start; end_date NULL means a single-day exception (end_date = excluded_date).
+-- Only status='active' rows block availability/booking — cancelling restores
+-- availability for the range without deleting the audit row.
 CREATE TABLE IF NOT EXISTS doctor_slot_exceptions (
   id CHAR(36) NOT NULL,
   doctor_branch_assignment_id CHAR(36) NOT NULL,
   excluded_date DATE NOT NULL,
+  end_date DATE NULL,
   reason VARCHAR(255) NULL,
+  status ENUM('active','cancelled') NOT NULL DEFAULT 'active',
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
-  UNIQUE KEY uniq_exception_assignment_date (doctor_branch_assignment_id, excluded_date),
+  KEY idx_exception_assignment_range (doctor_branch_assignment_id, status, excluded_date),
   CONSTRAINT fk_exception_assignment FOREIGN KEY (doctor_branch_assignment_id)
     REFERENCES doctor_branch_assignments(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;

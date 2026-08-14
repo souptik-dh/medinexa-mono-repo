@@ -4,6 +4,15 @@ type Db = Pool | PoolConnection;
 type Row = RowDataPacket;
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const WEEKDAYS_LONG = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
 
 export function todayInTz(tz: string): string {
   return new Intl.DateTimeFormat("en-CA", {
@@ -22,6 +31,19 @@ export function weekdayInTz(date: string, tz: string): number {
   }).formatToParts(dt);
   const weekday = parts.find((p) => p.type === "weekday")?.value;
   return Math.max(0, WEEKDAYS.indexOf(weekday ?? ""));
+}
+
+export function weekdayNameInTz(date: string, tz: string, style: "long" | "short" = "long"): string {
+  const wd = weekdayInTz(date, tz);
+  return (style === "long" ? WEEKDAYS_LONG : WEEKDAYS)[wd];
+}
+
+export function formatTime12h(t: string): string {
+  const [hStr, mStr] = t.split(":");
+  let h = Number(hStr);
+  const period = h >= 12 ? "PM" : "AM";
+  h = h % 12 || 12;
+  return `${h}:${mStr} ${period}`;
 }
 
 export function toMinutes(t: string): number {
@@ -76,20 +98,27 @@ export async function computeDaySlots(
   doctorId: string,
   date: string,
   tz: string,
+  branchId?: string,
 ): Promise<DaySlot[]> {
   const wd = weekdayInTz(date, tz);
+  const params: unknown[] = [doctorId];
+  const branchFilter = branchId ? "AND dba.branch_id = ?" : "";
+  if (branchId) params.push(branchId);
+  params.push(wd, date, date, date, date);
+
   const [templates] = await db.query<Row[]>(
     `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes, dba.slot_type
        FROM doctor_slot_templates dst
        JOIN doctor_branch_assignments dba ON dba.id = dst.doctor_branch_assignment_id
        JOIN branches b ON b.id = dba.branch_id AND b.deleted_at IS NULL
-      WHERE dba.doctor_id = ? AND dba.is_active = 1 AND dst.weekday = ?
+      WHERE dba.doctor_id = ? ${branchFilter} AND dba.is_active = 1 AND dst.weekday = ?
         AND dst.start_date <= ? AND (dst.end_date IS NULL OR dst.end_date >= ?)
         AND NOT EXISTS (
           SELECT 1 FROM doctor_slot_exceptions dse
-           WHERE dse.doctor_branch_assignment_id = dba.id AND dse.excluded_date = ?
+           WHERE dse.doctor_branch_assignment_id = dba.id AND dse.status = 'active'
+             AND dse.excluded_date <= ? AND COALESCE(dse.end_date, dse.excluded_date) >= ?
         )`,
-    [doctorId, wd, date, date, date],
+    params,
   );
 
   const slots = new Map<string, { available: boolean; slotType: SlotType }>();
@@ -135,9 +164,10 @@ export async function findNextSequentialSlot(
         AND dst.start_date <= ? AND (dst.end_date IS NULL OR dst.end_date >= ?)
         AND NOT EXISTS (
           SELECT 1 FROM doctor_slot_exceptions dse
-           WHERE dse.doctor_branch_assignment_id = dba.id AND dse.excluded_date = ?
+           WHERE dse.doctor_branch_assignment_id = dba.id AND dse.status = 'active'
+             AND dse.excluded_date <= ? AND COALESCE(dse.end_date, dse.excluded_date) >= ?
         )`,
-    [doctorId, branchId, wd, date, date, date],
+    [doctorId, branchId, wd, date, date, date, date],
   );
   if (templates.length === 0) return null;
 
@@ -186,16 +216,21 @@ export async function nextAvailableSlot(
   if (!doctorId) return null;
 
   const [exceptions] = await db.query<Row[]>(
-    `SELECT excluded_date FROM doctor_slot_exceptions WHERE doctor_branch_assignment_id = ?`,
+    `SELECT excluded_date, end_date FROM doctor_slot_exceptions
+      WHERE doctor_branch_assignment_id = ? AND status = 'active'`,
     [assignmentId],
   );
-  const excludedDates = new Set(exceptions.map((e) => String(e.excluded_date).slice(0, 10)));
+  const leaveRanges: LeaveRange[] = exceptions.map((e) => ({
+    start_date: String(e.excluded_date).slice(0, 10),
+    end_date: String(e.end_date ?? e.excluded_date).slice(0, 10),
+    reason: null,
+  }));
 
   const today = todayInTz(tz);
 
   for (let dayOffset = 0; dayOffset < 60; dayOffset++) {
     const date = addDays(today, dayOffset);
-    if (excludedDates.has(date)) continue;
+    if (findCoveringLeave(date, leaveRanges)) continue;
     const wd = weekdayInTz(date, tz);
     const nowKey = dayOffset === 0 ? currentTimeKeyInTz(tz) : null;
     for (const t of templates) {
@@ -216,4 +251,181 @@ export async function nextAvailableSlot(
     }
   }
   return null;
+}
+
+export interface LeaveRange {
+  id?: string;
+  start_date: string;
+  end_date: string;
+  reason: string | null;
+}
+
+export function findCoveringLeave(date: string, leaves: LeaveRange[]): LeaveRange | null {
+  for (const l of leaves) {
+    if (date >= l.start_date && date <= l.end_date) return l;
+  }
+  return null;
+}
+
+export interface AvailabilityPeriod {
+  start_date: string | null;
+  end_date: string | null;
+}
+
+// The doctor-level availability period is derived (not stored): the union of an
+// assignment's recurring doctor_slot_templates date ranges, per §6/§9 of the
+// availability redesign — a doctor never has a single stored start/end date.
+export async function getAvailabilityPeriods(
+  db: Db,
+  assignmentIds: string[],
+): Promise<Map<string, AvailabilityPeriod>> {
+  const result = new Map<string, AvailabilityPeriod>();
+  if (assignmentIds.length === 0) return result;
+  const [rows] = await db.query<Row[]>(
+    `SELECT doctor_branch_assignment_id,
+            MIN(start_date) AS start_date,
+            CASE WHEN SUM(end_date IS NULL) > 0 THEN NULL ELSE MAX(end_date) END AS end_date
+       FROM doctor_slot_templates
+      WHERE doctor_branch_assignment_id IN (?)
+      GROUP BY doctor_branch_assignment_id`,
+    [assignmentIds],
+  );
+  for (const r of rows) {
+    result.set(r.doctor_branch_assignment_id, {
+      start_date: r.start_date ? String(r.start_date).slice(0, 10) : null,
+      end_date: r.end_date ? String(r.end_date).slice(0, 10) : null,
+    });
+  }
+  return result;
+}
+
+// Range-overlap query (per §11): only ACTIVE leaves overlapping [from, to] are fetched,
+// so a selected week/month doesn't have to scan every historical leave row.
+export async function getActiveLeaves(
+  db: Db,
+  assignmentIds: string[],
+  range?: { from?: string; to?: string },
+): Promise<Map<string, LeaveRange[]>> {
+  const result = new Map<string, LeaveRange[]>();
+  if (assignmentIds.length === 0) return result;
+  const where = [`doctor_branch_assignment_id IN (?)`, `status = 'active'`];
+  const params: unknown[] = [assignmentIds];
+  if (range?.to) {
+    where.push(`excluded_date <= ?`);
+    params.push(range.to);
+  }
+  if (range?.from) {
+    where.push(`COALESCE(end_date, excluded_date) >= ?`);
+    params.push(range.from);
+  }
+  const [rows] = await db.query<Row[]>(
+    `SELECT id, doctor_branch_assignment_id, excluded_date, end_date, reason
+       FROM doctor_slot_exceptions
+      WHERE ${where.join(" AND ")}
+      ORDER BY excluded_date`,
+    params,
+  );
+  for (const r of rows) {
+    const list = result.get(r.doctor_branch_assignment_id) ?? [];
+    list.push({
+      id: r.id,
+      start_date: String(r.excluded_date).slice(0, 10),
+      end_date: String(r.end_date ?? r.excluded_date).slice(0, 10),
+      reason: r.reason,
+    });
+    result.set(r.doctor_branch_assignment_id, list);
+  }
+  return result;
+}
+
+export type DateStatus =
+  | "available"
+  | "leave"
+  | "unavailable"
+  | "fully_booked"
+  | "outside_schedule"
+  | "past";
+
+export interface DateAvailability {
+  date: string;
+  status: DateStatus;
+  is_bookable: boolean;
+  leave: { start_date: string; end_date: string; reason: string | null } | null;
+  slots: DaySlot[];
+}
+
+// The single source of truth for "is this date bookable": AVAILABLE = within the
+// doctor's derived schedule range, not covered by an active leave, not in the past,
+// and has at least one open slot for that weekday. Every availability endpoint
+// (single-date, range, week, calendar) and the booking endpoint must agree with this.
+export async function computeDateAvailability(
+  db: Db,
+  doctorId: string,
+  branchId: string,
+  date: string,
+  tz: string,
+  period: AvailabilityPeriod,
+  leaves: LeaveRange[],
+  today: string,
+): Promise<DateAvailability> {
+  if (date < today) {
+    return { date, status: "past", is_bookable: false, leave: null, slots: [] };
+  }
+  if (!period.start_date || date < period.start_date || (period.end_date !== null && date > period.end_date)) {
+    return { date, status: "outside_schedule", is_bookable: false, leave: null, slots: [] };
+  }
+  const leave = findCoveringLeave(date, leaves);
+  if (leave) {
+    return {
+      date,
+      status: "leave",
+      is_bookable: false,
+      leave: { start_date: leave.start_date, end_date: leave.end_date, reason: leave.reason },
+      slots: [],
+    };
+  }
+  const slots = await computeDaySlots(db, doctorId, date, tz, branchId);
+  if (slots.length === 0) {
+    return { date, status: "unavailable", is_bookable: false, leave: null, slots: [] };
+  }
+  const hasOpen = slots.some((s) => s.available);
+  return {
+    date,
+    status: hasOpen ? "available" : "fully_booked",
+    is_bookable: hasOpen,
+    leave: null,
+    slots,
+  };
+}
+
+export interface ResolvedAssignment {
+  assignmentId: string;
+  branchId: string;
+  timezone: string;
+}
+
+// Resolves which doctor_branch_assignment an availability lookup means. If branchId is
+// given, it must match exactly (a doctor's schedule differs per branch). If omitted, the
+// doctor's first active assignment is used — preserved for callers that predate the
+// multi-branch-aware availability endpoints.
+export async function resolveActiveAssignment(
+  db: Db,
+  doctorId: string,
+  branchId?: string,
+): Promise<ResolvedAssignment | null> {
+  const params: unknown[] = [doctorId];
+  const branchFilter = branchId ? "AND dba.branch_id = ?" : "";
+  if (branchId) params.push(branchId);
+  const [rows] = await db.query<Row[]>(
+    `SELECT dba.id AS assignment_id, dba.branch_id, b.timezone
+       FROM doctor_branch_assignments dba
+       JOIN branches b ON b.id = dba.branch_id AND b.deleted_at IS NULL
+      WHERE dba.doctor_id = ? ${branchFilter} AND dba.is_active = 1
+      ORDER BY dba.created_at
+      LIMIT 1`,
+    params,
+  );
+  const row = rows[0];
+  if (!row) return null;
+  return { assignmentId: row.assignment_id, branchId: row.branch_id, timezone: row.timezone };
 }

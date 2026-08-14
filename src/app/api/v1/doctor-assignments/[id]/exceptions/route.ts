@@ -3,14 +3,22 @@ import { api, json, readJson } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
 import { requireRoles, type AuthContext } from "@/lib/auth";
-import { notFound, isUniqueViolation, conflict } from "@/lib/errors";
+import { notFound } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 
-const createSchema = z.object({
-  excluded_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  reason: z.string().trim().max(255).optional().nullable(),
-});
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+const createSchema = z
+  .object({
+    excluded_date: z.string().regex(DATE_RE),
+    end_date: z.string().regex(DATE_RE).optional().nullable(),
+    reason: z.string().trim().max(255).optional().nullable(),
+  })
+  .refine((b) => !b.end_date || b.end_date >= b.excluded_date, {
+    message: "end_date must not be before excluded_date.",
+    path: ["end_date"],
+  });
 
 async function loadAssignment(assignmentId: string) {
   const [rows] = await pool.query<Row[]>(
@@ -46,7 +54,7 @@ export const GET = api(undefined, async (ctx) => {
   await authorize(auth, assignment);
 
   const [rows] = await pool.query<Row[]>(
-    `SELECT id, excluded_date, reason, created_at
+    `SELECT id, excluded_date, end_date, reason, status, created_at
        FROM doctor_slot_exceptions
       WHERE doctor_branch_assignment_id = ?
       ORDER BY excluded_date`,
@@ -56,7 +64,9 @@ export const GET = api(undefined, async (ctx) => {
     items: rows.map((r) => ({
       id: r.id,
       excluded_date: r.excluded_date,
+      end_date: r.end_date ?? r.excluded_date,
       reason: r.reason,
+      status: r.status,
       created_at: r.created_at,
     })),
   });
@@ -69,21 +79,22 @@ export const POST = api(undefined, async (ctx) => {
   const body = parseBody(createSchema, await readJson(ctx.request));
 
   const id = newId();
-  try {
-    await pool.query(
-      `INSERT INTO doctor_slot_exceptions (id, doctor_branch_assignment_id, excluded_date, reason)
-       VALUES (?, ?, ?, ?)`,
-      [id, assignment.id, body.excluded_date, body.reason ?? null],
-    );
-  } catch (err) {
-    if (isUniqueViolation(err)) {
-      throw conflict("EXCEPTION_ALREADY_EXISTS", "This date is already marked unavailable.");
-    }
-    throw err;
-  }
+  const endDate = body.end_date ?? body.excluded_date;
+  await pool.query(
+    `INSERT INTO doctor_slot_exceptions (id, doctor_branch_assignment_id, excluded_date, end_date, reason)
+     VALUES (?, ?, ?, ?, ?)`,
+    [id, assignment.id, body.excluded_date, endDate, body.reason ?? null],
+  );
 
   return json(
-    { id, doctor_branch_assignment_id: assignment.id, excluded_date: body.excluded_date, reason: body.reason ?? null },
+    {
+      id,
+      doctor_branch_assignment_id: assignment.id,
+      excluded_date: body.excluded_date,
+      end_date: endDate,
+      reason: body.reason ?? null,
+      status: "active",
+    },
     201,
   );
 });

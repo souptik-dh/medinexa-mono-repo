@@ -44,6 +44,9 @@ export const DELETE = api(undefined, async (ctx) => {
   );
   if (!rows[0]) throw notFound("EXCEPTION_NOT_FOUND", "Availability exception not found.");
 
-  await pool.query(`DELETE FROM doctor_slot_exceptions WHERE id = ?`, [exceptionId]);
+  // Soft-cancel rather than hard-delete: preserves the leave as an audit record while
+  // immediately restoring availability for its date range (status='active' is the only
+  // thing every availability/booking query checks).
+  await pool.query(`UPDATE doctor_slot_exceptions SET status = 'cancelled' WHERE id = ?`, [exceptionId]);
   return noContent();
 });

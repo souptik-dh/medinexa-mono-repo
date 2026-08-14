@@ -580,6 +580,26 @@ try {
     console.log('Applied migration: doctor_branch_assignments dropped start_date/end_date (derived from doctor_slot_templates instead)');
   }
 
+  const [exceptionEndDateCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_slot_exceptions' AND COLUMN_NAME = 'end_date'`,
+  );
+  if (Number(exceptionEndDateCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE doctor_slot_exceptions
+         ADD COLUMN end_date DATE NULL AFTER excluded_date,
+         ADD COLUMN status ENUM('active','cancelled') NOT NULL DEFAULT 'active' AFTER reason`,
+    );
+    // The old (assignment, excluded_date) unique key can't coexist with cancel-and-recreate
+    // semantics for the same start date, so it's replaced with a plain lookup index.
+    await conn.query(
+      `ALTER TABLE doctor_slot_exceptions
+         DROP INDEX uniq_exception_assignment_date,
+         ADD INDEX idx_exception_assignment_range (doctor_branch_assignment_id, status, excluded_date)`,
+    );
+    console.log('Applied migration: doctor_slot_exceptions.end_date/status (leave ranges)');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();
