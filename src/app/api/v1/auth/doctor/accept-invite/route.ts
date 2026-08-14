@@ -73,8 +73,8 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
       [doctorId, userId, invite.name, invite.specialization ?? null, regNo, smcName, doctorDegree, invite.phone ?? null, invite.certificate_url ?? null],
     );
     await conn.query(
-      `INSERT INTO doctor_branch_assignments (id, doctor_id, branch_id, fee_amount, currency, is_active, slot_type, start_date)
-       VALUES (?, ?, ?, ?, ?, 1, ?, CURDATE())`,
+      `INSERT INTO doctor_branch_assignments (id, doctor_id, branch_id, fee_amount, currency, is_active, slot_type)
+       VALUES (?, ?, ?, ?, ?, 1, ?)`,
       [assignmentId, doctorId, invite.branch_id, invite.fee_amount, invite.currency, invite.slot_type],
     );
     for (const t of slotTemplates) {

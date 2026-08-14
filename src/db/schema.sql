@@ -235,8 +235,6 @@ CREATE TABLE IF NOT EXISTS doctor_branch_assignments (
   currency CHAR(3) NOT NULL DEFAULT 'INR',
   is_active TINYINT(1) NOT NULL DEFAULT 1,
   slot_type ENUM('fixed','sequential') NOT NULL DEFAULT 'fixed',
-  start_date DATE NULL,
-  end_date DATE NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uniq_assignment (doctor_id, branch_id),

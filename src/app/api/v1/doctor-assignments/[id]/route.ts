@@ -27,19 +27,12 @@ const slotTemplateSchema = z
     "start_date must not be after end_date.",
   );
 
-const patchSchema = z
-  .object({
-    fee_amount: z.coerce.number().positive().max(1_000_000).optional(),
-    slot_type: z.enum(["fixed", "sequential"]).optional(),
-    slot_template: slotTemplateSchema.optional(),
-    certificate: z.string().trim().max(500).nullable().optional(),
-    start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-    end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-  })
-  .refine(
-    (body) => !body.start_date || !body.end_date || body.start_date <= body.end_date,
-    "start_date must not be after end_date.",
-  );
+const patchSchema = z.object({
+  fee_amount: z.coerce.number().positive().max(1_000_000).optional(),
+  slot_type: z.enum(["fixed", "sequential"]).optional(),
+  slot_template: slotTemplateSchema.optional(),
+  certificate: z.string().trim().max(500).nullable().optional(),
+});
 
 async function loadAssignment(assignmentId: string) {
   const [rows] = await pool.query<Row[]>(
@@ -81,12 +74,6 @@ export const PATCH = api(undefined, async (ctx) => {
       "Only the clinic owner can change the consultation fee.",
     );
   }
-  if (!isOwner && (body.start_date !== undefined || body.end_date !== undefined)) {
-    throw forbidden(
-      "ASSIGNMENT_DATES_OWNER_CONTROLLED",
-      "Only the clinic owner can change the assignment start/end date.",
-    );
-  }
 
   await withTransaction(async (conn) => {
     const fields: string[] = [];
@@ -98,14 +85,6 @@ export const PATCH = api(undefined, async (ctx) => {
     if (body.slot_type !== undefined) {
       fields.push("slot_type = ?");
       params.push(body.slot_type);
-    }
-    if (body.start_date !== undefined) {
-      fields.push("start_date = ?");
-      params.push(body.start_date);
-    }
-    if (body.end_date !== undefined) {
-      fields.push("end_date = ?");
-      params.push(body.end_date);
     }
     if (fields.length > 0) {
       await conn.query(
@@ -148,14 +127,6 @@ export const PATCH = api(undefined, async (ctx) => {
     }
   });
 
-  const start_date = body.start_date ?? (assignment.start_date ? String(assignment.start_date).slice(0, 10) : null);
-  const end_date =
-    body.end_date !== undefined
-      ? body.end_date
-      : assignment.end_date
-        ? String(assignment.end_date).slice(0, 10)
-        : null;
-
   return json({
     id: assignment.id,
     doctor_id: assignment.doctor_id,
@@ -164,8 +135,6 @@ export const PATCH = api(undefined, async (ctx) => {
     currency: assignment.currency,
     slot_type: body.slot_type ?? assignment.slot_type,
     certificate_url: body.certificate !== undefined ? body.certificate : assignment.certificate_url ?? null,
-    start_date,
-    end_date,
   });
 });
 

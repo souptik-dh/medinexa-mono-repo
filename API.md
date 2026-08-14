@@ -1363,7 +1363,7 @@ Public. Returns only **accepted** doctors assigned to the branch.
 }
 ```
 
-`total` is the count of doctors in `items` (this endpoint is not paginated). `id` is the doctor's own id. `assignment_id` is the id of this doctor's assignment to the branch — use it for `PATCH /doctor-assignments/:id` and `DELETE /doctor-assignments/:id`, not `id`. `start_date`/`end_date` are the assignment's tenure at this branch (`start_date` is set automatically when the doctor accepts the branch invite; both are editable by the clinic owner via `PATCH /doctor-assignments/:id`). `unavailable_dates` merges the assignment's upcoming single-day exceptions with the doctor's upcoming time-off ranges at this branch, each as `{ start_date, end_date, reason }` (`start_date == end_date` for a single day). `next_available_slot` is a localized `YYYY-MM-DDTHH:MM:00` string or `null`. `slot_type` ∈ `fixed | sequential` — see [Slot types](#slot-types); when `sequential`, the client should offer a "book next available" action instead of a time picker.
+`total` is the count of doctors in `items` (this endpoint is not paginated). `id` is the doctor's own id. `assignment_id` is the id of this doctor's assignment to the branch — use it for `PATCH /doctor-assignments/:id` and `DELETE /doctor-assignments/:id`, not `id`. `start_date`/`end_date` are derived from the assignment's `slot_template` rows (`doctor_slot_templates`, set via `POST /branches/:id/doctor-invites` or `PATCH /doctor-assignments/:id`): `start_date` is the earliest `slot_template[].start_date` across all of the assignment's weekly entries, and `end_date` is the latest `slot_template[].end_date` — but `null` if **any** entry has no `end_date` (i.e. repeats indefinitely), since that makes the assignment's overall end open-ended. Both are `null` if the assignment has no slot template rows. `unavailable_dates` lists the assignment's upcoming single-day exceptions (`doctor_slot_exceptions`, see `GET /doctor-assignments/:id/exceptions`) as `{ start_date, end_date, reason }` with `start_date == end_date` (each exception is one day). `next_available_slot` is a localized `YYYY-MM-DDTHH:MM:00` string or `null`. `slot_type` ∈ `fixed | sequential` — see [Slot types](#slot-types); when `sequential`, the client should offer a "book next available" action instead of a time picker.
 
 ### POST /branches/:id/doctors/:doctorId/photo/signature
 
@@ -1395,7 +1395,7 @@ Auth: `clinic_owner`, must own the branch **or** `branch_staff` with `doctors:ma
 
 ### PATCH /doctor-assignments/:id
 
-Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff` with `doctors:manage`. Doctors may only update `slot_type`/`slot_template`/`certificate`; attempting to set `fee_amount`, `start_date`, or `end_date` as a doctor returns `403 FEE_OWNER_CONTROLLED` / `403 ASSIGNMENT_DATES_OWNER_CONTROLLED` respectively.
+Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff` with `doctors:manage`. Doctors may only update `slot_type`/`slot_template`/`certificate`; attempting to set `fee_amount` as a doctor returns `403 FEE_OWNER_CONTROLLED`.
 
 **Request body** (partial)
 
@@ -1411,17 +1411,13 @@ Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff`
     "start_date": "2026-08-17",
     "end_date": "2026-12-31"
   }],
-  "certificate": "https://example.com/new-cert.pdf",
-  "start_date": "2026-01-15",
-  "end_date": "2026-12-31"
+  "certificate": "https://example.com/new-cert.pdf"
 }
 ```
 
 `slot_type` ∈ `fixed | sequential` — see [Slot types](#slot-types). Switching an assignment to `sequential` does not require changing `slot_template`; the same weekday/time-range/duration rows are reused, just booked in order instead of by patient-picked time.
 
-Sending `slot_template` fully replaces the assignment's existing rows — it is not a diff/patch of individual entries. Each entry's `weekday` pattern repeats every week between `start_date` and `end_date` (or indefinitely if `end_date` is `null`). To keep a doctor's weekly schedule but pull them off a single date within that range (holiday, leave, etc.), use the exceptions endpoints below instead of shrinking the date range.
-
-The top-level `start_date`/`end_date` are unrelated to `slot_template`'s per-entry dates — they mark the doctor's overall tenure at the branch (surfaced in `GET /branches/:id/doctors`), not a recurring schedule's validity window. `end_date` accepts `null` to clear a previously set end date.
+Sending `slot_template` fully replaces the assignment's existing rows — it is not a diff/patch of individual entries. Each entry's `weekday` pattern repeats every week between `start_date` and `end_date` (or indefinitely if `end_date` is `null`). To keep a doctor's weekly schedule but pull them off a single date within that range (holiday, leave, etc.), use the exceptions endpoints below instead of shrinking the date range. These per-entry dates are also what `GET /branches/:id/doctors` aggregates into its top-level `start_date`/`end_date` per doctor — see that endpoint's docs.
 
 **Response `200`**
 
@@ -1433,13 +1429,11 @@ The top-level `start_date`/`end_date` are unrelated to `slot_template`'s per-ent
   "fee_amount": 600,
   "currency": "INR",
   "slot_type": "sequential",
-  "certificate_url": "https://example.com/new-cert.pdf",
-  "start_date": "2026-01-15",
-  "end_date": "2026-12-31"
+  "certificate_url": "https://example.com/new-cert.pdf"
 }
 ```
 
-**Errors:** `404 ASSIGNMENT_NOT_FOUND`, `403 FEE_OWNER_CONTROLLED`, `403 ASSIGNMENT_DATES_OWNER_CONTROLLED`, `400 VALIDATION_ERROR` (`start_date` after `end_date`).
+**Errors:** `404 ASSIGNMENT_NOT_FOUND`, `403 FEE_OWNER_CONTROLLED`.
 
 ### DELETE /doctor-assignments/:id
 

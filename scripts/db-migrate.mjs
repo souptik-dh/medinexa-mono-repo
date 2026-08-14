@@ -573,13 +573,11 @@ try {
     `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_branch_assignments' AND COLUMN_NAME = 'start_date'`,
   );
-  if (Number(assignmentDateCols[0].cnt) === 0) {
+  if (Number(assignmentDateCols[0].cnt) > 0) {
     await conn.query(
-      `ALTER TABLE doctor_branch_assignments
-         ADD COLUMN start_date DATE NULL AFTER slot_type,
-         ADD COLUMN end_date DATE NULL AFTER start_date`,
+      `ALTER TABLE doctor_branch_assignments DROP COLUMN start_date, DROP COLUMN end_date`,
     );
-    console.log('Applied migration: doctor_branch_assignments.start_date/end_date');
+    console.log('Applied migration: doctor_branch_assignments dropped start_date/end_date (derived from doctor_slot_templates instead)');
   }
 
   console.log('Schema applied successfully.');
