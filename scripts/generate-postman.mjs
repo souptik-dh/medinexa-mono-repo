@@ -534,6 +534,27 @@ const requests = [
   }),
   req({
     folder: "Doctors, Invites & Assignments",
+    name: "List/Browse Doctors",
+    method: "GET",
+    url: "/doctors",
+    auth: false,
+    query: [
+      { key: "specialization", value: "", description: "Exact match" },
+      { key: "city", value: "", description: "Exact match" },
+      { key: "q", value: "", description: "Name substring" },
+      { key: "limit", value: "20" },
+      { key: "cursor", value: "" },
+    ],
+  }),
+  req({
+    folder: "Doctors, Invites & Assignments",
+    name: "List Doctor Specializations",
+    method: "GET",
+    url: "/doctors/specializations",
+    auth: false,
+  }),
+  req({
+    folder: "Doctors, Invites & Assignments",
     name: "Search Doctors",
     method: "GET",
     url: "/doctors/search",

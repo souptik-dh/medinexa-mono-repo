@@ -1464,6 +1464,72 @@ Public. Returns only **accepted** doctors assigned to the branch.
 
 `total` is the count of doctors in `items` (this endpoint is not paginated). `id` is the doctor's own id. `assignment_id` is the id of this doctor's assignment to the branch — use it for `PATCH /doctor-assignments/:id` and `DELETE /doctor-assignments/:id`, not `id`. `start_date`/`end_date` are derived from the assignment's `slot_template` rows (`doctor_slot_templates`, set via `POST /branches/:id/doctor-invites` or `PATCH /doctor-assignments/:id`): `start_date` is the earliest `slot_template[].start_date` across all of the assignment's weekly entries, and `end_date` is the latest `slot_template[].end_date` — but `null` if **any** entry has no `end_date` (i.e. repeats indefinitely), since that makes the assignment's overall end open-ended. Both are `null` if the assignment has no slot template rows. `unavailable_dates` lists the assignment's upcoming active leaves (`doctor_slot_exceptions`, see `GET /doctor-assignments/:id/exceptions`) as `{ start_date, end_date, reason }` — a leave is a genuine inclusive date range now (`start_date` and `end_date` can differ), not always a single day. `next_available_slot` is a localized `YYYY-MM-DDTHH:MM:00` string or `null`. `slot_type` ∈ `fixed | sequential` — see [Slot types](#slot-types); when `sequential`, the client should offer a "book next available" action instead of a time picker.
 
+### GET /doctors
+
+Public. Cursor-paginated. Browses doctors across all clinics/branches with no
+prerequisite search term or known branch — unlike `GET /doctors/search` (auth-required,
+`q` required) or `GET /branches/:id/doctors` (requires a branch id). Drives a
+patient-facing "browse all doctors" view (e.g. a home screen's "Top doctors" section).
+
+**Query:** `?specialization=&city=&q=&limit=&cursor=` — `specialization` and `city` are
+exact matches (see `GET /doctors/specializations` for the canonical specialization list;
+`city` typically comes from the patient's own saved profile); `q` is an optional `name`
+substring match. All filters are optional and combine with AND.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+      "assignment_id": "e4f5a6b7-8c9d-0e1f-2a3b-4c5d6e7f8a9b",
+      "name": "Dr. Smith",
+      "specialization": "Cardiologist",
+      "smc_name": "Medical Council of India",
+      "doctor_degree": "MBBS, MD",
+      "phone": "+919900000001",
+      "photo_url": null,
+      "fee_amount": 500,
+      "currency": "INR",
+      "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+      "branch_name": "Sunrise — Andheri",
+      "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+      "clinic_name": "Sunrise Multispeciality",
+      "city": "Mumbai",
+      "slot_type": "fixed",
+      "start_date": "2026-01-15",
+      "end_date": null,
+      "next_available_slot": "2026-08-10T09:20:00"
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+One item per active doctor↔branch assignment (a doctor at two branches appears twice,
+each with its own `assignment_id`/fee/availability) — same field semantics as
+`GET /branches/:id/doctors`'s items. `limit` is capped at 50 regardless of the
+`?limit=` value, since `next_available_slot` costs one extra query per row.
+
+### GET /doctors/specializations
+
+Public. Not paginated. Distinct `specialization` values currently in use across active
+doctor assignments, most common first — drives category/filter chips on a browse screen.
+`specialization` is free text (no fixed enum), so this reflects whatever clinic owners
+have actually entered.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    { "specialization": "Cardiologist", "doctor_count": 12 },
+    { "specialization": "General Physician", "doctor_count": 8 }
+  ]
+}
+```
+
 ### POST /branches/:id/doctors/:doctorId/photo/signature
 
 Auth: `clinic_owner`, must own the branch **or** `branch_staff` with `doctors:manage`. Returns a Cloudinary upload grant for a doctor assigned to the branch.

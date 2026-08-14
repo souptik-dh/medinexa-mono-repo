@@ -1,6 +1,6 @@
 {
   "info": {
-    "_postman_id": "1b48323e-c3a4-4a7f-8bf6-9fee141717c8",
+    "_postman_id": "c3e6e6fd-bc8b-4ee3-92ce-6549daa766df",
     "name": "Jido Healthcare API",
     "description": "Generated from API.md. Base URL is configurable via the `baseUrl` collection variable.\n\nLogin/register requests auto-save `access_token`, `refresh_token`, and resource IDs (`clinicId`, `branchId`, `doctorId`, `appointmentId`, ...) into collection variables, which the downstream requests reference via `{{...}}` placeholders. Run the auth requests first, then the resource requests in order.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
@@ -2530,6 +2530,78 @@
               }
             }
           ]
+        },
+        {
+          "name": "List/Browse Doctors",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/doctors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "doctors"
+              ],
+              "query": [
+                {
+                  "key": "specialization",
+                  "value": "",
+                  "description": "Exact match"
+                },
+                {
+                  "key": "city",
+                  "value": "",
+                  "description": "Exact match"
+                },
+                {
+                  "key": "q",
+                  "value": "",
+                  "description": "Name substring"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "cursor",
+                  "value": ""
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Doctor Specializations",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/doctors/specializations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "doctors",
+                "specializations"
+              ]
+            }
+          },
+          "response": []
         },
         {
           "name": "Search Doctors",

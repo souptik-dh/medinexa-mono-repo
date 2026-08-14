@@ -1,7 +1,16 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
-const allowedOrigins = ["http://localhost:3000","https://medinexa-clinic.onrender.com","http://localhost:8081"];
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://medinexa-clinic.onrender.com",
+  "http://localhost:8081",
+  "http://localhost:4200", // jido-healthcare-app: ng serve
+  "http://localhost:8100", // jido-healthcare-app: ionic serve
+  "http://localhost", // Capacitor Android WebView default origin
+  "https://localhost", // Capacitor Android WebView default origin (androidScheme: 'https')
+  "capacitor://localhost", // Capacitor iOS WebView default origin
+];
 
 const corsOptions = {
   "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
