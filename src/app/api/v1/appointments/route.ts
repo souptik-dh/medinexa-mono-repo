@@ -14,6 +14,9 @@ import {
   currentTimeKeyInTz,
   generateSlotTimes,
   findNextSequentialSlot,
+  getBranchSchedule,
+  isWeekdayOpen,
+  findCoveringLeave,
 } from "@/lib/availability";
 import { fetchPage } from "@/lib/pagination";
 
@@ -110,6 +113,18 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
     const today = todayInTz(tz);
     if (body.date < today) {
       throw unprocessable("DATE_IN_PAST", "The appointment date is in the past.");
+    }
+
+    // Branch-level gate checked first — it's the outermost constraint (a doctor can
+    // never be bookable on a day/date the branch itself isn't open), so it gets its
+    // own conflict code rather than being folded into DOCTOR_ON_LEAVE.
+    const branchWeekday = weekdayInTz(body.date, tz);
+    const branchSchedule = await getBranchSchedule(pool, body.branch_id, {
+      from: body.date,
+      to: body.date,
+    });
+    if (!isWeekdayOpen(branchSchedule, branchWeekday) || findCoveringLeave(body.date, branchSchedule.closures)) {
+      throw conflict("CLINIC_CLOSED", "The clinic is closed on the selected date.");
     }
 
     // Checked separately (and before the weekday/template match) so a booking blocked by

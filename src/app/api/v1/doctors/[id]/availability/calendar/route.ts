@@ -6,6 +6,7 @@ import {
   computeDateAvailability,
   getActiveLeaves,
   getAvailabilityPeriods,
+  getBranchSchedule,
   resolveActiveAssignment,
   todayInTz,
 } from "@/lib/availability";
@@ -49,6 +50,7 @@ export const GET = api(undefined, async (ctx) => {
   });
   const leaves = leavesByAssignment.get(assignment.assignmentId) ?? [];
   const today = todayInTz(assignment.timezone);
+  const branchSchedule = await getBranchSchedule(pool, assignment.branchId, { from: monthStart, to: monthEnd });
 
   const dates = [];
   for (let d = monthStart; d <= monthEnd; d = addDays(d, 1)) {
@@ -61,6 +63,7 @@ export const GET = api(undefined, async (ctx) => {
       period,
       leaves,
       today,
+      branchSchedule,
     );
     dates.push({ date: info.date, status: info.status, is_bookable: info.is_bookable });
   }

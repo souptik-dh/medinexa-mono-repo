@@ -600,6 +600,51 @@ try {
     console.log('Applied migration: doctor_slot_exceptions.end_date/status (leave ranges)');
   }
 
+  const [operatingDaysTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'branch_operating_days'`,
+  );
+  if (Number(operatingDaysTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE branch_operating_days (
+        id CHAR(36) NOT NULL,
+        branch_id CHAR(36) NOT NULL,
+        weekday TINYINT NOT NULL,
+        is_open TINYINT(1) NOT NULL DEFAULT 1,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_branch_weekday (branch_id, weekday),
+        CONSTRAINT fk_operating_day_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: branch_operating_days table');
+  }
+
+  const [closureTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'branch_closures'`,
+  );
+  if (Number(closureTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE branch_closures (
+        id CHAR(36) NOT NULL,
+        branch_id CHAR(36) NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        reason VARCHAR(255) NULL,
+        status ENUM('active','cancelled') NOT NULL DEFAULT 'active',
+        created_by CHAR(36) NOT NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        KEY idx_closure_branch_range (branch_id, status, start_date),
+        CONSTRAINT fk_closure_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+        CONSTRAINT fk_closure_created_by FOREIGN KEY (created_by) REFERENCES users(id)
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: branch_closures table');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();

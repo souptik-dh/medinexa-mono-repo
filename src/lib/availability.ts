@@ -155,6 +155,13 @@ export async function findNextSequentialSlot(
   excludeTimes: Set<string> = new Set(),
 ): Promise<string | null> {
   const wd = weekdayInTz(date, tz);
+  // Defensive backstop: the appointments route already checks the branch schedule
+  // and returns a specific CLINIC_CLOSED error before reaching this function, but a
+  // closed branch/weekday must never surface a sequential slot regardless of caller.
+  const branchSchedule = await getBranchSchedule(db, branchId, { from: date, to: date });
+  if (!isWeekdayOpen(branchSchedule, wd) || findCoveringLeave(date, branchSchedule.closures)) {
+    return null;
+  }
   const [templates] = await db.query<Row[]>(
     `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes
        FROM doctor_slot_templates dst
@@ -209,11 +216,12 @@ export async function nextAvailableSlot(
     [assignmentId],
   );
   const [assignments] = await db.query<Row[]>(
-    `SELECT doctor_id FROM doctor_branch_assignments WHERE id = ?`,
+    `SELECT doctor_id, branch_id FROM doctor_branch_assignments WHERE id = ?`,
     [assignmentId],
   );
   const doctorId = assignments[0]?.doctor_id;
-  if (!doctorId) return null;
+  const branchId = assignments[0]?.branch_id;
+  if (!doctorId || !branchId) return null;
 
   const [exceptions] = await db.query<Row[]>(
     `SELECT excluded_date, end_date FROM doctor_slot_exceptions
@@ -227,11 +235,13 @@ export async function nextAvailableSlot(
   }));
 
   const today = todayInTz(tz);
+  const branchSchedule = await getBranchSchedule(db, branchId, { from: today, to: addDays(today, 59) });
 
   for (let dayOffset = 0; dayOffset < 60; dayOffset++) {
     const date = addDays(today, dayOffset);
     if (findCoveringLeave(date, leaveRanges)) continue;
     const wd = weekdayInTz(date, tz);
+    if (!isWeekdayOpen(branchSchedule, wd) || findCoveringLeave(date, branchSchedule.closures)) continue;
     const nowKey = dayOffset === 0 ? currentTimeKeyInTz(tz) : null;
     for (const t of templates) {
       if (Number(t.weekday) !== wd) continue;
@@ -338,9 +348,73 @@ export async function getActiveLeaves(
   return result;
 }
 
+export interface BranchScheduleGate {
+  // weekday -> is_open; absence of a key means "open" (the branch default).
+  operatingDays: Map<number, boolean>;
+  closures: LeaveRange[];
+}
+
+export function isWeekdayOpen(schedule: BranchScheduleGate, weekday: number): boolean {
+  return schedule.operatingDays.get(weekday) ?? true;
+}
+
+export async function getBranchOperatingDays(db: Db, branchId: string): Promise<Map<number, boolean>> {
+  const [rows] = await db.query<Row[]>(
+    `SELECT weekday, is_open FROM branch_operating_days WHERE branch_id = ?`,
+    [branchId],
+  );
+  const map = new Map<number, boolean>();
+  for (const r of rows) map.set(Number(r.weekday), !!r.is_open);
+  return map;
+}
+
+// Same range-overlap pattern as getActiveLeaves, scoped to one branch rather than a
+// set of assignments.
+export async function getActiveBranchClosures(
+  db: Db,
+  branchId: string,
+  range?: { from?: string; to?: string },
+): Promise<LeaveRange[]> {
+  const where = [`branch_id = ?`, `status = 'active'`];
+  const params: unknown[] = [branchId];
+  if (range?.to) {
+    where.push(`start_date <= ?`);
+    params.push(range.to);
+  }
+  if (range?.from) {
+    where.push(`end_date >= ?`);
+    params.push(range.from);
+  }
+  const [rows] = await db.query<Row[]>(
+    `SELECT id, start_date, end_date, reason FROM branch_closures
+      WHERE ${where.join(" AND ")}
+      ORDER BY start_date`,
+    params,
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    start_date: String(r.start_date).slice(0, 10),
+    end_date: String(r.end_date).slice(0, 10),
+    reason: r.reason,
+  }));
+}
+
+export async function getBranchSchedule(
+  db: Db,
+  branchId: string,
+  range?: { from?: string; to?: string },
+): Promise<BranchScheduleGate> {
+  const [operatingDays, closures] = await Promise.all([
+    getBranchOperatingDays(db, branchId),
+    getActiveBranchClosures(db, branchId, range),
+  ]);
+  return { operatingDays, closures };
+}
+
 export type DateStatus =
   | "available"
   | "leave"
+  | "clinic_closed"
   | "unavailable"
   | "fully_booked"
   | "outside_schedule"
@@ -351,12 +425,14 @@ export interface DateAvailability {
   status: DateStatus;
   is_bookable: boolean;
   leave: { start_date: string; end_date: string; reason: string | null } | null;
+  closure: { start_date: string; end_date: string; reason: string | null } | null;
   slots: DaySlot[];
 }
 
-// The single source of truth for "is this date bookable": AVAILABLE = within the
-// doctor's derived schedule range, not covered by an active leave, not in the past,
-// and has at least one open slot for that weekday. Every availability endpoint
+// The single source of truth for "is this date bookable": AVAILABLE = the branch is
+// open that weekday and not under an active closure, the date is within the doctor's
+// derived schedule range, not covered by an active doctor leave, not in the past, and
+// has at least one open slot for that weekday. Every availability endpoint
 // (single-date, range, week, calendar) and the booking endpoint must agree with this.
 export async function computeDateAvailability(
   db: Db,
@@ -367,12 +443,27 @@ export async function computeDateAvailability(
   period: AvailabilityPeriod,
   leaves: LeaveRange[],
   today: string,
+  branchSchedule: BranchScheduleGate,
 ): Promise<DateAvailability> {
   if (date < today) {
-    return { date, status: "past", is_bookable: false, leave: null, slots: [] };
+    return { date, status: "past", is_bookable: false, leave: null, closure: null, slots: [] };
+  }
+  const weekday = weekdayInTz(date, tz);
+  const closure = findCoveringLeave(date, branchSchedule.closures);
+  if (closure || !isWeekdayOpen(branchSchedule, weekday)) {
+    return {
+      date,
+      status: "clinic_closed",
+      is_bookable: false,
+      leave: null,
+      closure: closure
+        ? { start_date: closure.start_date, end_date: closure.end_date, reason: closure.reason }
+        : null,
+      slots: [],
+    };
   }
   if (!period.start_date || date < period.start_date || (period.end_date !== null && date > period.end_date)) {
-    return { date, status: "outside_schedule", is_bookable: false, leave: null, slots: [] };
+    return { date, status: "outside_schedule", is_bookable: false, leave: null, closure: null, slots: [] };
   }
   const leave = findCoveringLeave(date, leaves);
   if (leave) {
@@ -381,12 +472,13 @@ export async function computeDateAvailability(
       status: "leave",
       is_bookable: false,
       leave: { start_date: leave.start_date, end_date: leave.end_date, reason: leave.reason },
+      closure: null,
       slots: [],
     };
   }
   const slots = await computeDaySlots(db, doctorId, date, tz, branchId);
   if (slots.length === 0) {
-    return { date, status: "unavailable", is_bookable: false, leave: null, slots: [] };
+    return { date, status: "unavailable", is_bookable: false, leave: null, closure: null, slots: [] };
   }
   const hasOpen = slots.some((s) => s.available);
   return {
@@ -394,6 +486,7 @@ export async function computeDateAvailability(
     status: hasOpen ? "available" : "fully_booked",
     is_bookable: hasOpen,
     leave: null,
+    closure: null,
     slots,
   };
 }

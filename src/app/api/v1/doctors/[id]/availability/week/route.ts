@@ -7,6 +7,7 @@ import {
   formatTime12h,
   getActiveLeaves,
   getAvailabilityPeriods,
+  getBranchSchedule,
   resolveActiveAssignment,
   todayInTz,
   weekdayNameInTz,
@@ -16,6 +17,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function displayTime(info: { status: string; is_bookable: boolean; slots: { time: string; available: boolean }[] }): string {
   if (info.status === "leave") return "Doctor on leave";
+  if (info.status === "clinic_closed") return "Clinic closed";
   if (info.status === "fully_booked") return "Fully booked";
   if (!info.is_bookable) return "No slots";
   const first = info.slots.find((s) => s.available);
@@ -53,6 +55,7 @@ export const GET = api(undefined, async (ctx) => {
     to: weekEnd,
   });
   const leaves = leavesByAssignment.get(assignment.assignmentId) ?? [];
+  const branchSchedule = await getBranchSchedule(pool, assignment.branchId, { from: weekStart, to: weekEnd });
 
   const dates = [];
   for (let d = weekStart; d <= weekEnd; d = addDays(d, 1)) {
@@ -65,6 +68,7 @@ export const GET = api(undefined, async (ctx) => {
       period,
       leaves,
       today,
+      branchSchedule,
     );
     dates.push({
       date: info.date,

@@ -153,6 +153,41 @@ CREATE TABLE IF NOT EXISTS branches (
   CONSTRAINT fk_branches_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id)
 ) ENGINE=InnoDB;
 
+-- Branch-level operating calendar: which weekdays the branch itself is open, and any
+-- branch-wide closures (holidays, maintenance, etc). This sits ABOVE doctor-level
+-- scheduling in the availability rule — a doctor can never be bookable on a day/date
+-- the branch itself isn't open, regardless of their own slot_template/leaves.
+-- Absence of a row for a given weekday means "open" (default), so existing branches
+-- behave exactly as before until a clinic owner customizes their calendar.
+CREATE TABLE IF NOT EXISTS branch_operating_days (
+  id CHAR(36) NOT NULL,
+  branch_id CHAR(36) NOT NULL,
+  weekday TINYINT NOT NULL, -- 0=Sun .. 6=Sat
+  is_open TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_branch_weekday (branch_id, weekday),
+  CONSTRAINT fk_operating_day_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Branch-wide closures (inclusive date range) — same active/cancelled soft-cancel
+-- pattern as doctor_slot_exceptions, for the same audit-trail reason.
+CREATE TABLE IF NOT EXISTS branch_closures (
+  id CHAR(36) NOT NULL,
+  branch_id CHAR(36) NOT NULL,
+  start_date DATE NOT NULL,
+  end_date DATE NOT NULL,
+  reason VARCHAR(255) NULL,
+  status ENUM('active','cancelled') NOT NULL DEFAULT 'active',
+  created_by CHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY idx_closure_branch_range (branch_id, status, start_date),
+  CONSTRAINT fk_closure_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE,
+  CONSTRAINT fk_closure_created_by FOREIGN KEY (created_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS branch_staff (
   id CHAR(36) NOT NULL,
   branch_id CHAR(36) NOT NULL,

@@ -7,6 +7,7 @@ import {
   computeDateAvailability,
   getActiveLeaves,
   getAvailabilityPeriods,
+  getBranchSchedule,
   resolveActiveAssignment,
   todayInTz,
   weekdayNameInTz,
@@ -61,6 +62,7 @@ export const GET = api(undefined, async (ctx) => {
     const leavesByAssignment = await getActiveLeaves(pool, [assignment.assignmentId], { from, to });
     const leaves = leavesByAssignment.get(assignment.assignmentId) ?? [];
     const today = todayInTz(assignment.timezone);
+    const branchSchedule = await getBranchSchedule(pool, assignment.branchId, { from, to });
 
     const dates = [];
     for (let d = from; d <= to; d = addDays(d, 1)) {
@@ -73,6 +75,7 @@ export const GET = api(undefined, async (ctx) => {
         period,
         leaves,
         today,
+        branchSchedule,
       );
       dates.push({
         date: info.date,
@@ -80,6 +83,7 @@ export const GET = api(undefined, async (ctx) => {
         status: info.status,
         is_bookable: info.is_bookable,
         leave: info.leave,
+        closure: info.closure,
         slots: info.slots,
       });
     }
@@ -89,6 +93,11 @@ export const GET = api(undefined, async (ctx) => {
       branch_id: assignment.branchId,
       availability_period: period,
       leaves: leaves.map((l) => ({ start_date: l.start_date, end_date: l.end_date, reason: l.reason })),
+      closures: branchSchedule.closures.map((c) => ({
+        start_date: c.start_date,
+        end_date: c.end_date,
+        reason: c.reason,
+      })),
       dates,
     });
   }
@@ -118,7 +127,7 @@ export const GET = api(undefined, async (ctx) => {
   if (!assignment) {
     // Preserve legacy behavior for doctors with no active assignment: empty slots,
     // not a 404, since this endpoint historically only required the doctor to exist.
-    return json({ date, status: "outside_schedule", is_bookable: false, leave: null, slots: [] });
+    return json({ date, status: "outside_schedule", is_bookable: false, leave: null, closure: null, slots: [] });
   }
 
   const periods = await getAvailabilityPeriods(pool, [assignment.assignmentId]);
@@ -129,6 +138,7 @@ export const GET = api(undefined, async (ctx) => {
   });
   const leaves = leavesByAssignment.get(assignment.assignmentId) ?? [];
   const today = todayInTz(assignment.timezone);
+  const branchSchedule = await getBranchSchedule(pool, assignment.branchId, { from: date, to: date });
 
   const info = await computeDateAvailability(
     pool,
@@ -139,6 +149,7 @@ export const GET = api(undefined, async (ctx) => {
     period,
     leaves,
     today,
+    branchSchedule,
   );
 
   return json({
@@ -146,6 +157,7 @@ export const GET = api(undefined, async (ctx) => {
     status: info.status,
     is_bookable: info.is_bookable,
     leave: info.leave,
+    closure: info.closure,
     slots: info.slots,
   });
 });
