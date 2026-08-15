@@ -4,6 +4,7 @@ import { parsePagination } from "@/lib/validators";
 import { fetchPage } from "@/lib/pagination";
 import { getAvailabilityPeriods, nextAvailableSlot } from "@/lib/availability";
 import { getDoctorSpecializations, specializationDisplayName } from "@/lib/specializations";
+import { getDoctorRatingMap } from "@/lib/reviews";
 
 function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
@@ -65,6 +66,7 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
   const assignmentIds = rows.map((r) => String(r.id));
   const datesByAssignment = await getAvailabilityPeriods(pool, assignmentIds);
   const specializationsByDoctor = await getDoctorSpecializations(pool, rows.map((r) => String(r.doctor_id)));
+  const ratingByDoctor = await getDoctorRatingMap(pool, rows.map((r) => String(r.doctor_id)));
 
   const items = [];
   for (const r of rows) {
@@ -92,6 +94,7 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
       start_date: dates.start_date,
       end_date: dates.end_date,
       next_available_slot,
+      rating: ratingByDoctor.get(String(r.doctor_id)) ?? { average: null, count: 0 },
     });
   }
 

@@ -12,6 +12,7 @@
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",
     "bcryptjs": "^3.0.3",
+    "firebase-admin": "^14.2.0",
     "jose": "^6.2.8",
     "mysql2": "^3.23.2",
     "next": "16.3.0",

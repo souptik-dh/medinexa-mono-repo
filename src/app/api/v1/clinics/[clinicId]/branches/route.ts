@@ -7,6 +7,7 @@ import { getOwnedClinic } from "@/lib/scope";
 import { notFound } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { licenseFields } from "@/lib/licenses";
+import { getBranchRatingMap } from "@/lib/reviews";
 
 function isTimezone(tz: string): boolean {
   try {
@@ -55,6 +56,7 @@ export const GET = api(undefined, async (ctx) => {
     `SELECT * FROM branches WHERE clinic_id = ? AND deleted_at IS NULL ORDER BY created_at ASC`,
     [clinicId],
   );
+  const ratingByBranch = await getBranchRatingMap(pool, branches.map((b) => String(b.id)));
   return json({
     items: branches.map((b) => ({
       id: b.id,
@@ -74,6 +76,7 @@ export const GET = api(undefined, async (ctx) => {
       photo_url: b.photo_url,
       ...licenseFields(b),
       created_at: b.created_at,
+      rating: ratingByBranch.get(String(b.id)) ?? { average: null, count: 0 },
     })),
   });
 });

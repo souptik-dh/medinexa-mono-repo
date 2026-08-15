@@ -3,6 +3,7 @@ import { pool, type Row } from "@/lib/db";
 import { notFound } from "@/lib/errors";
 import { getActiveLeaves, getAvailabilityPeriods, nextAvailableSlot, todayInTz } from "@/lib/availability";
 import { getDoctorSpecializations, specializationDisplayName } from "@/lib/specializations";
+import { getDoctorRatingMap } from "@/lib/reviews";
 
 export const GET = api(undefined, async (ctx) => {
   const branchId = ctx.params.id;
@@ -37,6 +38,7 @@ export const GET = api(undefined, async (ctx) => {
   // client-side merging of adjacent single-day rows is needed here anymore.
   const unavailableByAssignment = await getActiveLeaves(pool, assignmentIds, { from: todayInTz(tz) });
   const specializationsByDoctor = await getDoctorSpecializations(pool, rows.map((r) => String(r.id)));
+  const ratingByDoctor = await getDoctorRatingMap(pool, rows.map((r) => String(r.id)));
 
   const items = [];
   for (const r of rows) {
@@ -67,6 +69,7 @@ export const GET = api(undefined, async (ctx) => {
       end_date: dates.end_date,
       next_available_slot,
       unavailable_dates,
+      rating: ratingByDoctor.get(String(r.id)) ?? { average: null, count: 0 },
     });
   }
 

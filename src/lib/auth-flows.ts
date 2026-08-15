@@ -7,7 +7,7 @@ import {
 } from "@/lib/auth";
 import { conflict, forbidden, unauthorized, isUniqueViolation } from "@/lib/errors";
 import { newId, type Role } from "@/lib/ids";
-import { newPushTopic, sendEmail } from "@/lib/notifications";
+import { sendEmail } from "@/lib/notifications";
 
 const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -76,13 +76,12 @@ export async function registerUser(input: RegisterInput) {
   const passwordHash = await hashPassword(input.password);
   const id = newId();
   const status = input.role === "clinic_owner" ? "pending" : "active";
-  const pushTopic = input.role === "patient" ? newPushTopic() : null;
   let clinic: PublicClinic | null = null;
   try {
     await withTransaction(async (conn) => {
       await conn.query(
-        `INSERT INTO users (id, name, email, phone, address, nearby_location, city, district, pin_code, state, post_office, photo_url, push_topic, password_hash, role, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO users (id, name, email, phone, address, nearby_location, city, district, pin_code, state, post_office, photo_url, password_hash, role, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           input.name,
@@ -96,7 +95,6 @@ export async function registerUser(input: RegisterInput) {
           input.state ?? null,
           input.post_office ?? null,
           null,
-          pushTopic,
           passwordHash,
           input.role,
           status,

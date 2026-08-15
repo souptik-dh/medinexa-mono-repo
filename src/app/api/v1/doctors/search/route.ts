@@ -3,6 +3,7 @@ import { pool, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { badRequest } from "@/lib/errors";
 import { getDoctorSpecializations, specializationDisplayName } from "@/lib/specializations";
+import { getDoctorRatingMap } from "@/lib/reviews";
 
 function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
@@ -39,6 +40,7 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
   );
 
   const specializationsByDoctor = await getDoctorSpecializations(pool, rows.map((r) => String(r.id)));
+  const ratingByDoctor = await getDoctorRatingMap(pool, rows.map((r) => String(r.id)));
 
   return json({
     items: rows.map((r) => {
@@ -54,6 +56,7 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
         phone: r.phone,
         photo_url: r.photo_url,
         clinic_count: Number(r.clinic_count),
+        rating: ratingByDoctor.get(String(r.id)) ?? { average: null, count: 0 },
       };
     }),
   });

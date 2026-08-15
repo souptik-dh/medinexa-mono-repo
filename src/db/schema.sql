@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS users (
   state VARCHAR(255) NULL,
   post_office VARCHAR(255) NULL,
   photo_url VARCHAR(500) NULL,
-  push_topic VARCHAR(64) NULL,
   preferred_clinic_id CHAR(36) NULL,
   preferred_branch_id CHAR(36) NULL,
   password_hash VARCHAR(255) NULL,
@@ -28,7 +27,6 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uniq_users_email (email),
-  UNIQUE KEY uniq_users_push_topic (push_topic),
   KEY idx_users_preferred_clinic (preferred_clinic_id),
   KEY idx_users_preferred_branch (preferred_branch_id)
 ) ENGINE=InnoDB;
@@ -534,6 +532,19 @@ CREATE TABLE IF NOT EXISTS notifications (
   KEY idx_notif_user (user_id, created_at),
   KEY idx_notif_branch (branch_id),
   CONSTRAINT fk_notif_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS device_tokens (
+  id CHAR(36) NOT NULL,
+  user_id CHAR(36) NOT NULL,
+  token VARCHAR(255) NOT NULL,
+  platform ENUM('android','ios') NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_device_token (token),
+  KEY idx_device_tokens_user (user_id),
+  CONSTRAINT fk_device_tokens_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS doctor_time_offs (

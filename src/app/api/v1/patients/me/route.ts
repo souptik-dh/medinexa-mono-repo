@@ -7,7 +7,7 @@ import { badRequest, notFound } from "@/lib/errors";
 
 const SELECT_FIELDS = `u.id, u.name, u.first_name, u.last_name, u.email, u.phone, u.date_of_birth, u.gender,
        u.address, u.nearby_location, u.city, u.district, u.pin_code, u.state, u.post_office,
-       u.photo_url, u.push_topic, u.preferred_clinic_id, u.preferred_branch_id,
+       u.photo_url, u.preferred_clinic_id, u.preferred_branch_id,
        pc.name AS preferred_clinic_name, pb.name AS preferred_branch_name,
        u.created_at, u.updated_at`;
 
@@ -36,7 +36,6 @@ function toProfile(u: Row) {
     state: u.state,
     post_office: u.post_office,
     photo_url: u.photo_url,
-    push_topic: u.push_topic,
     preferred_clinic_id: u.preferred_clinic_id,
     preferred_clinic_name: u.preferred_clinic_name,
     preferred_branch_id: u.preferred_branch_id,

@@ -183,19 +183,6 @@ try {
     console.log('Applied migration: users nearby_location/city/district/pin_code/state/post_office');
   }
 
-  const [userPushTopicCols] = await conn.query(
-    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
-      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'push_topic'`,
-  );
-  if (Number(userPushTopicCols[0].cnt) === 0) {
-    await conn.query(
-      `ALTER TABLE users
-         ADD COLUMN push_topic VARCHAR(64) NULL AFTER photo_url,
-         ADD UNIQUE KEY uniq_users_push_topic (push_topic)`,
-    );
-    console.log('Applied migration: users.push_topic');
-  }
-
   const [resetTokenTables] = await conn.query(
     `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'password_reset_tokens'`,
@@ -731,6 +718,37 @@ try {
     }
 
     console.log(`Applied migration: doctor_specializations backfill (${slugToId.size} specializations)`);
+  }
+
+  const [deviceTokenTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'device_tokens'`,
+  );
+  if (Number(deviceTokenTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE device_tokens (
+        id CHAR(36) NOT NULL,
+        user_id CHAR(36) NOT NULL,
+        token VARCHAR(255) NOT NULL,
+        platform ENUM('android','ios') NOT NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_device_token (token),
+        KEY idx_device_tokens_user (user_id),
+        CONSTRAINT fk_device_tokens_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: device_tokens table');
+  }
+
+  const [userPushTopicDropCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'push_topic'`,
+  );
+  if (Number(userPushTopicDropCols[0].cnt) > 0) {
+    await conn.query(`ALTER TABLE users DROP INDEX uniq_users_push_topic, DROP COLUMN push_topic`);
+    console.log('Applied migration: dropped users.push_topic (replaced by device_tokens/FCM)');
   }
 
   console.log('Schema applied successfully.');
