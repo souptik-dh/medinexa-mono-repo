@@ -136,6 +136,20 @@ try {
     console.log('Applied migration: clinics licenses');
   }
 
+  const [tradeLicenseValidationCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'clinics' AND COLUMN_NAME = 'trade_license_validated'`,
+  );
+  if (Number(tradeLicenseValidationCols[0].cnt) === 0) {
+    await conn.query(`
+      ALTER TABLE clinics
+        ADD COLUMN trade_license_validated TINYINT(1) NOT NULL DEFAULT 0 AFTER trade_license_url,
+        ADD COLUMN trade_license_validation_status ENUM('PENDING','VALID','INVALID') NOT NULL DEFAULT 'PENDING' AFTER trade_license_validated,
+        ADD COLUMN trade_license_validated_at DATETIME(3) NULL AFTER trade_license_validation_status
+    `);
+    console.log('Applied migration: clinics.trade_license_validated/validation_status/validated_at');
+  }
+
   const [branchLicenseCols] = await conn.query(
     `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'branches' AND COLUMN_NAME = 'trade_license_number'`,

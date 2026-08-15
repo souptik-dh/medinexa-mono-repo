@@ -41,3 +41,12 @@ export function licenseFields(row: Row) {
     clinical_establishment_reg_url: row.clinical_establishment_reg_url ?? null,
   };
 }
+
+// Clinics only (not branches) — the PRDEODB trade-license validation state.
+export function tradeLicenseValidationFields(row: Row) {
+  return {
+    trade_license_validated: !!row.trade_license_validated,
+    trade_license_validation_status: row.trade_license_validation_status ?? "PENDING",
+    trade_license_validated_at: row.trade_license_validated_at ?? null,
+  };
+}

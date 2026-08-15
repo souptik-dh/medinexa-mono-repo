@@ -589,6 +589,9 @@ Auth: `clinic_owner`. Returns every clinic owned by the caller, each with its fu
       "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
       "trade_license_number": "TL-2026-004521",
       "trade_license_url": null,
+      "trade_license_validated": true,
+      "trade_license_validation_status": "VALID",
+      "trade_license_validated_at": "2026-08-01T09:31:00.000Z",
       "drug_license_number": "DL-MH-2026-1187",
       "drug_license_url": null,
       "clinical_establishment_reg_number": "CER-MH-2026-0932",
@@ -645,6 +648,7 @@ Auth: `clinic_owner`.
   "state": "Maharashtra",
   "post_office": "Andheri West GPO",
   "trade_license_number": "TL-2026-004521",
+  "trade_license_validation_status": "VALID",
   "drug_license_number": "DL-MH-2026-1187",
   "clinical_establishment_reg_number": "CER-MH-2026-0932"
 }
@@ -653,6 +657,7 @@ Auth: `clinic_owner`.
 | Field | Type | Notes |
 |---|---|---|
 | `trade_license_number` | string | **required**, issued by the local municipality, 1–100 |
+| `trade_license_validation_status` | string? | optional, `PENDING` \| `VALID` \| `INVALID` — set this only to the `status` a just-prior `POST /clinics/validate-trade-license` call returned **for this exact number**; omit it (defaults to `PENDING`) if the number hasn't been validated in this session. See [Trade license validation](#trade-license-validation). |
 | `drug_license_number` | string? | optional — only if selling/stocking medicines, max 100 |
 | `clinical_establishment_reg_number` | string? | optional — Clinical Establishment Registration, max 100 |
 
@@ -672,6 +677,9 @@ Auth: `clinic_owner`.
   "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
   "trade_license_number": "TL-2026-004521",
   "trade_license_url": null,
+  "trade_license_validated": true,
+  "trade_license_validation_status": "VALID",
+  "trade_license_validated_at": "2026-08-09T10:00:00.000Z",
   "drug_license_number": "DL-MH-2026-1187",
   "drug_license_url": null,
   "clinical_establishment_reg_number": "CER-MH-2026-0932",
@@ -704,6 +712,9 @@ Public. If the request is authenticated as a `clinic_owner` who does not own thi
   "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
   "trade_license_number": "TL-2026-004521",
   "trade_license_url": "https://res.cloudinary.com/p274ocjz/image/upload/v1754700900/clinics/licenses/3f9d6b5e-....pdf",
+  "trade_license_validated": true,
+  "trade_license_validation_status": "VALID",
+  "trade_license_validated_at": "2026-08-01T09:31:00.000Z",
   "drug_license_number": "DL-MH-2026-1187",
   "drug_license_url": null,
   "clinical_establishment_reg_number": "CER-MH-2026-0932",
@@ -720,11 +731,13 @@ Public. If the request is authenticated as a `clinic_owner` who does not own thi
 
 Auth: `clinic_owner`, must own the clinic.
 
-**Request body** (partial) — any subset of `name, description, nearby_location, city, district, pin_code, state, post_office, trade_license_number, drug_license_number, clinical_establishment_reg_number`. `trade_license_number` cannot be cleared to `null`; `drug_license_number` and `clinical_establishment_reg_number` can.
+**Request body** (partial) — any subset of `name, description, nearby_location, city, district, pin_code, state, post_office, trade_license_number, trade_license_validation_status, drug_license_number, clinical_establishment_reg_number`. `trade_license_number` cannot be cleared to `null`; `drug_license_number` and `clinical_establishment_reg_number` can.
 
 ```json
 { "name": "Sunrise Heart & Care", "description": null, "nearby_location": "Opposite City Mall", "city": "Mumbai", "district": "Mumbai Suburban", "pin_code": "400058", "state": "Maharashtra", "post_office": "Andheri West GPO", "drug_license_number": null }
 ```
+
+`trade_license_validation_status` follows the same "only right after validating this exact number" rule as `POST /clinics` — see [Trade license validation](#trade-license-validation). If `trade_license_number` is being changed to a new value and this request does **not** also include `trade_license_validation_status`, the server resets `trade_license_validated`/`trade_license_validation_status`/`trade_license_validated_at` to `false`/`PENDING`/`null` regardless of their previous value — a number change always invalidates a prior validation unless the client re-validated the new number in the same request.
 
 **Response `200`**
 
@@ -742,6 +755,9 @@ Auth: `clinic_owner`, must own the clinic.
   "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
   "trade_license_number": "TL-2026-004521",
   "trade_license_url": "https://res.cloudinary.com/p274ocjz/image/upload/v1754700900/clinics/licenses/3f9d6b5e-....pdf",
+  "trade_license_validated": true,
+  "trade_license_validation_status": "VALID",
+  "trade_license_validated_at": "2026-08-01T09:31:00.000Z",
   "drug_license_number": null,
   "drug_license_url": null,
   "clinical_establishment_reg_number": "CER-MH-2026-0932",
@@ -751,6 +767,52 @@ Auth: `clinic_owner`, must own the clinic.
 ```
 
 **Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`.
+
+### Trade license validation
+
+A clinic's `trade_license_number` is checked against the West Bengal PRDEODB acknowledgement service via `POST /clinics/validate-trade-license`, called from both the create-clinic and edit-clinic forms. That endpoint is a stateless proxy — it never touches a clinic row — so the client is responsible for persisting the outcome by passing `trade_license_validation_status` back in the following `POST /clinics` (create) or `PATCH /clinics/:clinicId` (edit) call. Entering a number is never itself validation: `trade_license_validation_status` defaults to `PENDING` on create, and a clinic stays `PENDING` until a validate call for that exact number comes back `VALID` (or `INVALID`) and gets echoed into a save. Changing an already-validated number resets it to `PENDING` — enforced server-side on `PATCH /clinics/:clinicId`, see below.
+
+### POST /clinics/validate-trade-license
+
+Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Proxies a lookup against the West Bengal PRDEODB acknowledgement service server-side, so the browser never talks to (or holds a session/cookie for) that third-party site directly. Stateless — doesn't touch any clinic row, since it's also used from the create-clinic form before a clinic exists yet; the caller persists the result by echoing `status` back in the next `POST /clinics` or `PATCH /clinics/:clinicId` call (see the note on those endpoints above).
+
+**Body:** `{ "trade_license_number": "SSNOCJRKJ30370340N" }`
+
+**Response `200`** (always `200` — a rejected/not-found license and a network failure both come back as a normal response, not an HTTP error, so the client doesn't need special-case error handling for the "expected to sometimes fail" cases)
+
+Validated:
+```json
+{
+  "success": true,
+  "validated": true,
+  "status": "VALID",
+  "trade_license_number": "SSNOCJRKJ30370340N",
+  "message": "Trade License Number validated successfully."
+}
+```
+
+Rejected by PRDEODB:
+```json
+{
+  "success": true,
+  "validated": false,
+  "status": "INVALID",
+  "trade_license_number": "SSNOCJRKJ30370340N",
+  "message": "Trade License Number could not be validated."
+}
+```
+
+PRDEODB unreachable or returned something unparseable:
+```json
+{
+  "success": false,
+  "validated": false,
+  "status": "PENDING",
+  "message": "Unable to validate Trade License Number at this time. Please try again."
+}
+```
+
+**Errors:** `400 VALIDATION_ERROR` (missing `trade_license_number`), `401 UNAUTHORIZED`, `403 INSUFFICIENT_ROLE`, `429 RATE_LIMITED`.
 
 ### DELETE /clinics/:clinicId
 

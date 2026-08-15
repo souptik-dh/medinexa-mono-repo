@@ -57,6 +57,10 @@ const createSchema = z.object({
   state: z.string().trim().max(255).optional().nullable(),
   post_office: z.string().trim().max(255).optional().nullable(),
   trade_license_number: z.string().trim().min(1).max(100),
+  // Set only via a prior POST /clinics/validate-trade-license call — the client echoes
+  // that response's `status` back here so a freshly-validated number is stored as such
+  // instead of reverting to PENDING. Omitted (or anything but "VALID") means PENDING.
+  trade_license_validation_status: z.enum(["PENDING", "VALID", "INVALID"]).optional(),
   drug_license_number: z.string().trim().max(100).optional().nullable(),
   clinical_establishment_reg_number: z.string().trim().max(100).optional().nullable(),
 });
@@ -65,10 +69,17 @@ export const POST = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   const body = parseBody(createSchema, await readJson(ctx.request));
 
+  const validationStatus = body.trade_license_validation_status ?? "PENDING";
+  const validated = validationStatus === "VALID";
+
   const id = newId();
   await pool.query(
-    `INSERT INTO clinics (id, name, description, nearby_location, city, district, pin_code, state, post_office, owner_user_id, trade_license_number, drug_license_number, clinical_establishment_reg_number)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO clinics (
+       id, name, description, nearby_location, city, district, pin_code, state, post_office,
+       owner_user_id, trade_license_number, trade_license_validated, trade_license_validation_status,
+       trade_license_validated_at, drug_license_number, clinical_establishment_reg_number
+     )
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       body.name,
@@ -81,6 +92,9 @@ export const POST = api(undefined, async (ctx) => {
       body.post_office ?? null,
       auth.userId,
       body.trade_license_number,
+      validated,
+      validationStatus,
+      validated ? new Date() : null,
       body.drug_license_number ?? null,
       body.clinical_establishment_reg_number ?? null,
     ],
@@ -100,6 +114,9 @@ export const POST = api(undefined, async (ctx) => {
       owner_id: auth.userId,
       trade_license_number: body.trade_license_number,
       trade_license_url: null,
+      trade_license_validated: validated,
+      trade_license_validation_status: validationStatus,
+      trade_license_validated_at: validated ? new Date().toISOString() : null,
       drug_license_number: body.drug_license_number ?? null,
       drug_license_url: null,
       clinical_establishment_reg_number: body.clinical_establishment_reg_number ?? null,

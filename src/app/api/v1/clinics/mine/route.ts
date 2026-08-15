@@ -1,7 +1,7 @@
 import { api, json } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
-import { licenseFields } from "@/lib/licenses";
+import { licenseFields, tradeLicenseValidationFields } from "@/lib/licenses";
 
 export const GET = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
@@ -38,6 +38,7 @@ export const GET = api(undefined, async (ctx) => {
       post_office: clinic.post_office,
       owner_id: clinic.owner_user_id,
       ...licenseFields(clinic),
+      ...tradeLicenseValidationFields(clinic),
       created_at: clinic.created_at,
       updated_at: clinic.updated_at,
       branches: (branchesByClinic.get(clinic.id) ?? []).map((b) => ({
