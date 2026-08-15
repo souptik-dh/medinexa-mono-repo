@@ -657,7 +657,7 @@ Auth: `clinic_owner`.
 | Field | Type | Notes |
 |---|---|---|
 | `trade_license_number` | string | **required**, issued by the local municipality, 1–100 |
-| `trade_license_validation_status` | string? | optional, `PENDING` \| `VALID` \| `INVALID` — set this only to the `status` a just-prior `POST /clinics/validate-trade-license` call returned **for this exact number**; omit it (defaults to `PENDING`) if the number hasn't been validated in this session. See [Trade license validation](#trade-license-validation). |
+| `trade_license_validation_status` | string | **required, must be `"VALID"`** — the `status` a prior `POST /clinics/validate-trade-license` call returned for this exact number. A clinic cannot be created at all until that number has been validated; `PENDING`/`INVALID`/omitted all fail the same way. See [Trade license validation](#trade-license-validation). |
 | `drug_license_number` | string? | optional — only if selling/stocking medicines, max 100 |
 | `clinical_establishment_reg_number` | string? | optional — Clinical Establishment Registration, max 100 |
 
@@ -690,7 +690,7 @@ Auth: `clinic_owner`.
 
 License document URLs are `null` until uploaded via `POST /clinics/:clinicId/licenses/:type` (see [Clinic & branch licenses](#clinic--branch-licenses)).
 
-**Errors:** `400 VALIDATION_ERROR` (missing `trade_license_number`).
+**Errors:** `400 VALIDATION_ERROR` (missing `trade_license_number`), `422 TRADE_LICENSE_NOT_VALIDATED` (`trade_license_validation_status` isn't `"VALID"`).
 
 ### GET /clinics/:clinicId
 
@@ -770,7 +770,7 @@ Auth: `clinic_owner`, must own the clinic.
 
 ### Trade license validation
 
-A clinic's `trade_license_number` is checked against the West Bengal PRDEODB acknowledgement service via `POST /clinics/validate-trade-license`, called from both the create-clinic and edit-clinic forms. That endpoint is a stateless proxy — it never touches a clinic row — so the client is responsible for persisting the outcome by passing `trade_license_validation_status` back in the following `POST /clinics` (create) or `PATCH /clinics/:clinicId` (edit) call. Entering a number is never itself validation: `trade_license_validation_status` defaults to `PENDING` on create, and a clinic stays `PENDING` until a validate call for that exact number comes back `VALID` (or `INVALID`) and gets echoed into a save. Changing an already-validated number resets it to `PENDING` — enforced server-side on `PATCH /clinics/:clinicId`, see below.
+A clinic's `trade_license_number` is checked against the West Bengal PRDEODB acknowledgement service via `POST /clinics/validate-trade-license`, called from both the create-clinic and edit-clinic forms. That endpoint is a stateless proxy — it never touches a clinic row — so the client is responsible for persisting the outcome by passing `trade_license_validation_status` back in the following `POST /clinics` (create) or `PATCH /clinics/:clinicId` (edit) call. Entering a number is never itself validation: **`POST /clinics` hard-requires `trade_license_validation_status: "VALID"` and rejects the request with `422 TRADE_LICENSE_NOT_VALIDATED` otherwise** — a clinic simply cannot exist without a validated trade license. `PATCH /clinics/:clinicId` is less strict (existing clinics can still be edited while `PENDING`/`INVALID`), but changing an already-validated number resets it to `PENDING` server-side, see below.
 
 ### POST /clinics/validate-trade-license
 
@@ -2960,6 +2960,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `APPOINTMENT_NOT_YET_PAID` | 409 | Prescription scan before payment |
 | `APPOINTMENT_NOT_COMPLETED` | 409 | Tried to rate a doctor before the appointment was completed |
 | `OUTSIDE_DOCTOR_AVAILABILITY` / `DATE_IN_PAST` | 422 | Booking rules violated |
+| `TRADE_LICENSE_NOT_VALIDATED` | 422 | `POST /clinics` without a `trade_license_validation_status: "VALID"` from a prior validate call |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
 
 ---

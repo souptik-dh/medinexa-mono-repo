@@ -6,6 +6,7 @@ import { decodeCursor } from "@/lib/http";
 import { fetchPage } from "@/lib/pagination";
 import { requireRoles } from "@/lib/auth";
 import { newId } from "@/lib/ids";
+import { unprocessable } from "@/lib/errors";
 
 export const GET = api(undefined, async (ctx) => {
   const { limit, cursor } = parsePagination(ctx.request.nextUrl.searchParams);
@@ -57,9 +58,9 @@ const createSchema = z.object({
   state: z.string().trim().max(255).optional().nullable(),
   post_office: z.string().trim().max(255).optional().nullable(),
   trade_license_number: z.string().trim().min(1).max(100),
-  // Set only via a prior POST /clinics/validate-trade-license call — the client echoes
-  // that response's `status` back here so a freshly-validated number is stored as such
-  // instead of reverting to PENDING. Omitted (or anything but "VALID") means PENDING.
+  // Must be "VALID" — the client echoes back the `status` a prior
+  // POST /clinics/validate-trade-license call returned for this exact number. A clinic
+  // can't be created at all until that number has been validated; see the check below.
   trade_license_validation_status: z.enum(["PENDING", "VALID", "INVALID"]).optional(),
   drug_license_number: z.string().trim().max(100).optional().nullable(),
   clinical_establishment_reg_number: z.string().trim().max(100).optional().nullable(),
@@ -69,8 +70,18 @@ export const POST = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   const body = parseBody(createSchema, await readJson(ctx.request));
 
-  const validationStatus = body.trade_license_validation_status ?? "PENDING";
-  const validated = validationStatus === "VALID";
+  // Entering a number is never itself validation (see "Trade license validation" in
+  // API.md) — a clinic may not be created until POST /clinics/validate-trade-license
+  // has actually returned VALID for this number.
+  if (body.trade_license_validation_status !== "VALID") {
+    throw unprocessable(
+      "TRADE_LICENSE_NOT_VALIDATED",
+      "Trade License Number must be validated before creating a clinic.",
+      "trade_license_number",
+    );
+  }
+
+  const validatedAt = new Date();
 
   const id = newId();
   await pool.query(
@@ -92,9 +103,9 @@ export const POST = api(undefined, async (ctx) => {
       body.post_office ?? null,
       auth.userId,
       body.trade_license_number,
-      validated,
-      validationStatus,
-      validated ? new Date() : null,
+      true,
+      "VALID",
+      validatedAt,
       body.drug_license_number ?? null,
       body.clinical_establishment_reg_number ?? null,
     ],
@@ -114,9 +125,9 @@ export const POST = api(undefined, async (ctx) => {
       owner_id: auth.userId,
       trade_license_number: body.trade_license_number,
       trade_license_url: null,
-      trade_license_validated: validated,
-      trade_license_validation_status: validationStatus,
-      trade_license_validated_at: validated ? new Date().toISOString() : null,
+      trade_license_validated: true,
+      trade_license_validation_status: "VALID",
+      trade_license_validated_at: validatedAt.toISOString(),
       drug_license_number: body.drug_license_number ?? null,
       drug_license_url: null,
       clinical_establishment_reg_number: body.clinical_establishment_reg_number ?? null,
