@@ -2,12 +2,27 @@ import { cert, getApps, initializeApp } from "firebase-admin/app";
 import { getMessaging } from "firebase-admin/messaging";
 import { pool, type Row } from "@/lib/db";
 
+/**
+ * Host env var UIs (Render, etc.) store whatever was pasted verbatim — unlike a local
+ * .env file, they don't strip a wrapping quote pair or expand escaped "\n" into real
+ * newlines the way dotenv does. Normalize both cases so the same value works whether
+ * it arrives already-parsed (local dev) or raw (deployed).
+ */
+function normalizePrivateKey(raw: string): string {
+  const trimmed = raw.trim();
+  const unquoted =
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))
+      ? trimmed.slice(1, -1)
+      : trimmed;
+  return unquoted.replace(/\\n/g, "\n");
+}
+
 function app() {
   if (getApps().length > 0) return getApps()[0];
 
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
-  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY ? normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY) : undefined;
   if (!projectId || !clientEmail || !privateKey) return null;
 
   return initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
