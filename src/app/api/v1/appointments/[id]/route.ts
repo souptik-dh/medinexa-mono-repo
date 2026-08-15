@@ -16,11 +16,17 @@ export const GET = api(undefined, async (ctx) => {
             u.email AS patient_email,
             u.phone AS patient_phone,
             u.address AS patient_address,
-            u.photo_url AS patient_photo_url
+            u.photo_url AS patient_photo_url,
+            ap.relationship AS visitor_relationship,
+            ap.name AS visitor_name,
+            ap.phone AS visitor_phone,
+            ap.age AS visitor_age,
+            ap.gender AS visitor_gender
        FROM appointments a
        JOIN doctors d ON d.id = a.doctor_id
        JOIN branches b ON b.id = a.branch_id
        JOIN users u ON u.id = a.patient_id
+       LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
       WHERE a.id = ? AND ${where}`,
     [ctx.params.id, ...params],
   );

@@ -2,6 +2,7 @@ import { api, json } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
 import { notFound } from "@/lib/errors";
 import { getActiveLeaves, getAvailabilityPeriods, nextAvailableSlot, todayInTz } from "@/lib/availability";
+import { getDoctorSpecializations, specializationDisplayName } from "@/lib/specializations";
 
 export const GET = api(undefined, async (ctx) => {
   const branchId = ctx.params.id;
@@ -20,7 +21,7 @@ export const GET = api(undefined, async (ctx) => {
   const tz = branch.timezone as string;
 
   const [rows] = await pool.query<Row[]>(
-    `SELECT d.id, d.name, d.specialization, d.smc_name, d.doctor_degree, d.phone, d.certificate_url, d.photo_url,
+    `SELECT d.id, d.name, d.smc_name, d.doctor_degree, d.phone, d.certificate_url, d.photo_url,
             dba.id AS assignment_id, dba.fee_amount, dba.currency, dba.branch_id, dba.slot_type
        FROM doctor_branch_assignments dba
        JOIN doctors d ON d.id = dba.doctor_id AND d.deleted_at IS NULL
@@ -35,6 +36,7 @@ export const GET = api(undefined, async (ctx) => {
   // Leave ranges are stored natively as { start_date, end_date } rows now, so no
   // client-side merging of adjacent single-day rows is needed here anymore.
   const unavailableByAssignment = await getActiveLeaves(pool, assignmentIds, { from: todayInTz(tz) });
+  const specializationsByDoctor = await getDoctorSpecializations(pool, rows.map((r) => String(r.id)));
 
   const items = [];
   for (const r of rows) {
@@ -45,11 +47,13 @@ export const GET = api(undefined, async (ctx) => {
       end_date: l.end_date,
       reason: l.reason,
     }));
+    const specializations = specializationsByDoctor.get(String(r.id)) ?? [];
     items.push({
       id: r.id,
       assignment_id: r.assignment_id,
       name: r.name,
-      specialization: r.specialization,
+      specialization: specializationDisplayName(specializations),
+      specializations,
       smc_name: r.smc_name,
       doctor_degree: r.doctor_degree,
       phone: r.phone,

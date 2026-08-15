@@ -1,13 +1,14 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
-import { pool, type Row } from "@/lib/db";
-import { parseBody, emailSchema } from "@/lib/validators";
+import { pool, withTransaction, type Row } from "@/lib/db";
+import { parseBody, emailSchema, idSchema } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
-import { conflict, isUniqueViolation, notFound } from "@/lib/errors";
+import { conflict, isUniqueViolation, notFound, unprocessable } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { generateInviteCode, hashToken } from "@/lib/auth";
 import { sendEmail } from "@/lib/notifications";
 import { requireBranchAccess } from "@/lib/permissions";
+import { getInviteSpecializations } from "@/lib/specializations";
 
 const slotTemplateSchema = z
   .object({
@@ -31,7 +32,7 @@ const slotTemplateSchema = z
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(255),
-  specialization: z.string().trim().max(255).optional().nullable(),
+  specialization_ids: z.array(idSchema).min(1).max(10),
   email: emailSchema,
   phone: z.string().trim().max(32).optional().nullable(),
   reg_no: z.string().trim().max(64).optional().nullable(),
@@ -55,6 +56,17 @@ export const POST = api(undefined, async (ctx) => {
   const branch = branchRows[0];
   if (!branch) throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
   const body = parseBody(createSchema, await readJson(ctx.request));
+
+  const [specializationRows] = await pool.query<Row[]>(
+    `SELECT id, name FROM doctor_specializations WHERE id IN (?) AND status = 'active'`,
+    [body.specialization_ids],
+  );
+  if (specializationRows.length !== body.specialization_ids.length) {
+    throw unprocessable(
+      "SPECIALIZATION_NOT_FOUND",
+      "One or more specializations were not found or inactive.",
+    );
+  }
 
   const [existing] = await pool.query<Row[]>(
     `SELECT status FROM doctor_invites WHERE branch_id = ? AND email = ? ORDER BY created_at DESC LIMIT 1`,
@@ -88,30 +100,37 @@ export const POST = api(undefined, async (ctx) => {
     .replace("T", " ");
 
   try {
-    await pool.query(
-      `INSERT INTO doctor_invites
-         (id, branch_id, email, name, specialization, phone, fee_amount, currency, certificate_url, slot_template, slot_type, invite_code_hash, reg_no, smc_name, doctor_degree, status, invited_by, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-      [
-        id,
-        branchId,
-        body.email,
-        body.name,
-        body.specialization ?? null,
-        body.phone ?? null,
-        body.fee_amount,
-        body.currency,
-        body.certificate ?? null,
-        JSON.stringify(body.slot_template),
-        body.slot_type,
-        hashToken(inviteCode),
-        body.reg_no ?? null,
-        body.smc_name ?? null,
-        body.doctor_degree ?? null,
-        auth.userId,
-        expiresAt,
-      ],
-    );
+    await withTransaction(async (conn) => {
+      await conn.query(
+        `INSERT INTO doctor_invites
+           (id, branch_id, email, name, phone, fee_amount, currency, certificate_url, slot_template, slot_type, invite_code_hash, reg_no, smc_name, doctor_degree, status, invited_by, expires_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+        [
+          id,
+          branchId,
+          body.email,
+          body.name,
+          body.phone ?? null,
+          body.fee_amount,
+          body.currency,
+          body.certificate ?? null,
+          JSON.stringify(body.slot_template),
+          body.slot_type,
+          hashToken(inviteCode),
+          body.reg_no ?? null,
+          body.smc_name ?? null,
+          body.doctor_degree ?? null,
+          auth.userId,
+          expiresAt,
+        ],
+      );
+      for (const specializationId of body.specialization_ids) {
+        await conn.query(
+          `INSERT INTO doctor_invite_specializations (id, doctor_invite_id, specialization_id) VALUES (?, ?, ?)`,
+          [newId(), id, specializationId],
+        );
+      }
+    });
   } catch (err) {
     if (isUniqueViolation(err)) {
       throw conflict("INVITE_ALREADY_PENDING", "A pending invite already exists for this doctor.");
@@ -137,6 +156,7 @@ export const POST = api(undefined, async (ctx) => {
       reg_no: body.reg_no ?? null,
       smc_name: body.smc_name ?? null,
       doctor_degree: body.doctor_degree ?? null,
+      specializations: specializationRows.map((r) => ({ id: r.id, name: r.name })),
       status: "pending",
       expires_at: `${expiresAt}Z`.replace(" ", "T"),
     },
@@ -154,12 +174,14 @@ export const GET = api(undefined, async (ctx) => {
        FROM doctor_invites WHERE branch_id = ? ORDER BY created_at DESC`,
     [branchId],
   );
+  const specializationsByInvite = await getInviteSpecializations(pool, rows.map((r) => String(r.id)));
   return json({
     items: rows.map((r) => ({
       id: r.id,
       name: r.name,
       email: r.email,
       reg_no: r.reg_no,
+      specializations: specializationsByInvite.get(String(r.id)) ?? [],
       smc_name: r.smc_name,
       doctor_degree: r.doctor_degree,
       status: r.status,

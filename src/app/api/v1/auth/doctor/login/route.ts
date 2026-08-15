@@ -3,6 +3,7 @@ import { api, json, readJson } from "@/lib/http";
 import { parseBody, emailSchema } from "@/lib/validators";
 import { loginWithPassword, loadRoleBindings } from "@/lib/auth-flows";
 import { pool, type Row } from "@/lib/db";
+import { getDoctorSpecializations } from "@/lib/specializations";
 
 const schema = z.object({
   email: emailSchema,
@@ -15,10 +16,11 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
 
   const { doctorId } = await loadRoleBindings(result.user.id, "doctor");
   const [doctors] = await pool.query<Row[]>(
-    `SELECT id, name, specialization, phone, certificate_url, bio FROM doctors WHERE id = ? AND deleted_at IS NULL`,
+    `SELECT id, name, phone, certificate_url, bio FROM doctors WHERE id = ? AND deleted_at IS NULL`,
     [doctorId],
   );
   const doc = doctors[0];
+  const specializationsByDoctor = doc ? await getDoctorSpecializations(pool, [String(doc.id)]) : null;
 
   return json({
     access_token: result.access_token,
@@ -27,7 +29,7 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
       ? {
           id: doc.id,
           name: doc.name,
-          specialization: doc.specialization,
+          specializations: specializationsByDoctor?.get(String(doc.id)) ?? [],
           phone: doc.phone,
           certificate_url: doc.certificate_url,
           bio: doc.bio,

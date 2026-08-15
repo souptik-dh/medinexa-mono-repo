@@ -54,13 +54,22 @@ export const GET = api(undefined, async (ctx) => {
     params.push(dateTo);
   }
 
+  // Filters live inside the derived table (rather than as fetchPage's `where`) so the
+  // outer query only ever sees one set of `created_at`/`id` columns — appointment_patients
+  // has its own `id`/`created_at`, which would otherwise make the cursor clause ambiguous.
   const { rows, nextCursor } = await fetchPage({
     db: pool,
-    select: `SELECT a.*,
-                    (SELECT d.name FROM doctors d WHERE d.id = a.doctor_id) AS doctor_name,
-                    (SELECT b.name FROM branches b WHERE b.id = a.branch_id) AS branch_name`,
-    from: "FROM appointments a",
-    where: whereParts.join(" AND "),
+    select: "SELECT *",
+    from: `FROM (
+        SELECT a.*,
+               (SELECT d.name FROM doctors d WHERE d.id = a.doctor_id) AS doctor_name,
+               (SELECT b.name FROM branches b WHERE b.id = a.branch_id) AS branch_name,
+               ap.relationship AS visitor_relationship, ap.name AS visitor_name,
+               ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender
+          FROM appointments a
+          LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
+         WHERE ${whereParts.join(" AND ")}
+      ) t`,
     params,
     cursor: decodeCursor(cursor),
     limit,
@@ -72,11 +81,21 @@ export const GET = api(undefined, async (ctx) => {
   });
 });
 
+const patientDetailsSchema = z.object({
+  relationship: z.enum(["self", "spouse", "child", "parent", "sibling", "friend", "other"]).default("self"),
+  name: z.string().trim().min(1).max(255),
+  phone: z.string().trim().max(32).optional().nullable(),
+  age: z.number().int().min(0).max(150).optional().nullable(),
+  gender: z.enum(["male", "female", "other", "prefer_not_to_say"]).optional().nullable(),
+});
+
 const schema = z.object({
   doctor_id: idSchema,
   branch_id: idSchema,
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
   time: timeSchema.optional(),
+  // Omit entirely to book for the account holder — defaults to their own name/phone below.
+  patient_details: patientDetailsSchema.optional(),
 });
 
 export const POST = api({ rateLimit: 20 }, async (ctx) => {
@@ -203,6 +222,15 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
     const assignment = assignments[0];
     if (!assignment) throw notFound("DOCTOR_NOT_FOUND", "Doctor is not assigned to this branch.");
 
+    // Defaults to the account holder's own name/phone when patient_details is omitted
+    // (the common "booking for myself" case).
+    let patientDetails = body.patient_details;
+    if (!patientDetails) {
+      const [selfRows] = await pool.query<Row[]>(`SELECT name, phone FROM users WHERE id = ?`, [auth.userId]);
+      const self = selfRows[0];
+      patientDetails = { relationship: "self", name: self?.name ?? "Self", phone: self?.phone ?? null, age: null, gender: null };
+    }
+
     const id = newId();
     const triedTimes = new Set<string>();
     let attemptsLeft = isSequential ? 25 : 1;
@@ -226,12 +254,27 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
               assignment.currency,
             ],
           );
+          await conn.query(
+            `INSERT INTO appointment_patients (id, appointment_id, relationship, name, phone, age, gender)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+              newId(),
+              id,
+              patientDetails.relationship,
+              patientDetails.name,
+              patientDetails.phone ?? null,
+              patientDetails.age ?? null,
+              patientDetails.gender ?? null,
+            ],
+          );
           const payload = {
             appointment_id: id,
             doctor_id: body.doctor_id,
             patient_id: auth.userId,
             date: body.date,
             time: scheduledTime,
+            visitor_name: patientDetails.name,
+            visitor_relationship: patientDetails.relationship,
           };
           await notifyBranchStaff(conn, body.branch_id, "new_booking", payload);
           await createNotification(conn, branch.owner_user_id, "new_booking", payload, body.branch_id);
@@ -261,7 +304,14 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
       }
     }
 
-    const [rows] = await pool.query<Row[]>(`SELECT * FROM appointments WHERE id = ?`, [id]);
+    const [rows] = await pool.query<Row[]>(
+      `SELECT a.*, ap.relationship AS visitor_relationship, ap.name AS visitor_name,
+              ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender
+         FROM appointments a
+         LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
+        WHERE a.id = ?`,
+      [id],
+    );
 
     const [details] = await pool.query<Row[]>(
       `SELECT u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
@@ -276,13 +326,18 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
     const info = details[0];
     if (info) {
       const recipients = await branchContactEmails(pool, body.branch_id);
-      const subject = `New appointment booked — ${info.patient_name ?? "Patient"} with Dr. ${info.doctor_name}`;
+      const isForSelf = patientDetails.relationship === "self";
+      const subject = `New appointment booked — ${patientDetails.name} with Dr. ${info.doctor_name}`;
       const emailBody = [
         `A new appointment has been booked at ${info.branch_name}.`,
         "",
-        `Patient: ${info.patient_name ?? "-"}`,
+        `Visiting patient: ${patientDetails.name}${isForSelf ? "" : ` (${patientDetails.relationship} of ${info.patient_name ?? "the account holder"})`}`,
+        ...(patientDetails.phone ? [`Visiting patient phone: ${patientDetails.phone}`] : []),
+        "",
+        `Booked by: ${info.patient_name ?? "-"}`,
         `Email: ${info.patient_email ?? "-"}`,
         `Phone: ${info.patient_phone ?? "-"}`,
+        "",
         `Doctor: Dr. ${info.doctor_name}`,
         `Date: ${body.date} at ${scheduledTime}`,
       ].join("\n");

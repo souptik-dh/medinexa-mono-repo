@@ -1,7 +1,16 @@
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { createConnection } from 'mysql2/promise';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+function slugify(name) {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const url = process.env.DATABASE_URL;
@@ -643,6 +652,85 @@ try {
       ) ENGINE=InnoDB
     `);
     console.log('Applied migration: branch_closures table');
+  }
+
+  const [apptPatientTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'appointment_patients'`,
+  );
+  if (Number(apptPatientTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE appointment_patients (
+        id CHAR(36) NOT NULL,
+        appointment_id CHAR(36) NOT NULL,
+        relationship ENUM('self','spouse','child','parent','sibling','friend','other') NOT NULL DEFAULT 'self',
+        name VARCHAR(255) NOT NULL,
+        phone VARCHAR(32) NULL,
+        age TINYINT UNSIGNED NULL,
+        gender ENUM('male','female','other','prefer_not_to_say') NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_appointment_patient (appointment_id),
+        CONSTRAINT fk_appt_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: appointment_patients table');
+  }
+
+  const [specMapRows] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM doctor_specialization_map`,
+  );
+  if (Number(specMapRows[0].cnt) === 0) {
+    const [legacyValues] = await conn.query(`
+      SELECT specialization FROM doctors WHERE specialization IS NOT NULL AND specialization != ''
+      UNION
+      SELECT specialization FROM doctor_invites WHERE specialization IS NOT NULL AND specialization != ''
+    `);
+    const slugToId = new Map();
+    for (const { specialization } of legacyValues) {
+      const slug = slugify(specialization);
+      if (!slug || slugToId.has(slug)) continue;
+      const [existing] = await conn.query(
+        `SELECT id FROM doctor_specializations WHERE slug = ?`,
+        [slug],
+      );
+      if (existing[0]) {
+        slugToId.set(slug, existing[0].id);
+      } else {
+        const id = randomUUID();
+        await conn.query(
+          `INSERT INTO doctor_specializations (id, name, slug, status) VALUES (?, ?, ?, 'active')`,
+          [id, specialization.trim(), slug],
+        );
+        slugToId.set(slug, id);
+      }
+    }
+
+    const [doctorRows] = await conn.query(
+      `SELECT id, specialization FROM doctors WHERE specialization IS NOT NULL AND specialization != ''`,
+    );
+    for (const d of doctorRows) {
+      const specializationId = slugToId.get(slugify(d.specialization));
+      if (!specializationId) continue;
+      await conn.query(
+        `INSERT IGNORE INTO doctor_specialization_map (id, doctor_id, specialization_id) VALUES (?, ?, ?)`,
+        [randomUUID(), d.id, specializationId],
+      );
+    }
+
+    const [inviteRows] = await conn.query(
+      `SELECT id, specialization FROM doctor_invites WHERE specialization IS NOT NULL AND specialization != ''`,
+    );
+    for (const i of inviteRows) {
+      const specializationId = slugToId.get(slugify(i.specialization));
+      if (!specializationId) continue;
+      await conn.query(
+        `INSERT IGNORE INTO doctor_invite_specializations (id, doctor_invite_id, specialization_id) VALUES (?, ?, ?)`,
+        [randomUUID(), i.id, specializationId],
+      );
+    }
+
+    console.log(`Applied migration: doctor_specializations backfill (${slugToId.size} specializations)`);
   }
 
   console.log('Schema applied successfully.');

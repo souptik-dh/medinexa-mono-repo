@@ -215,6 +215,18 @@ CREATE TABLE IF NOT EXISTS branch_gallery_images (
   CONSTRAINT fk_gallery_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS doctor_specializations (
+  id CHAR(36) NOT NULL,
+  name VARCHAR(150) NOT NULL,
+  slug VARCHAR(160) NOT NULL,
+  description VARCHAR(500) NULL,
+  status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_specialization_slug (slug)
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS doctor_invites (
   id CHAR(36) NOT NULL,
   branch_id CHAR(36) NOT NULL,
@@ -241,6 +253,20 @@ CREATE TABLE IF NOT EXISTS doctor_invites (
   CONSTRAINT fk_invite_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+-- What a clinic selected for a pending invite (an invite has no `doctors` row yet to
+-- attach doctor_specialization_map to). Copied into doctor_specialization_map on accept.
+CREATE TABLE IF NOT EXISTS doctor_invite_specializations (
+  id CHAR(36) NOT NULL,
+  doctor_invite_id CHAR(36) NOT NULL,
+  specialization_id CHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_invite_specialization (doctor_invite_id, specialization_id),
+  KEY idx_invite_spec_specialization (specialization_id),
+  CONSTRAINT fk_invite_spec_invite FOREIGN KEY (doctor_invite_id) REFERENCES doctor_invites(id) ON DELETE CASCADE,
+  CONSTRAINT fk_invite_spec_specialization FOREIGN KEY (specialization_id) REFERENCES doctor_specializations(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS doctors (
   id CHAR(36) NOT NULL,
   user_id CHAR(36) NOT NULL,
@@ -260,6 +286,21 @@ CREATE TABLE IF NOT EXISTS doctors (
   UNIQUE KEY uniq_doctors_user (user_id),
   UNIQUE KEY uniq_doctors_reg_no (reg_no),
   CONSTRAINT fk_doctors_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- A doctor may hold multiple specializations (many-to-many against the
+-- doctor_specializations master list); doctors.specialization above is legacy free text,
+-- kept only for pre-existing rows and no longer written by the app.
+CREATE TABLE IF NOT EXISTS doctor_specialization_map (
+  id CHAR(36) NOT NULL,
+  doctor_id CHAR(36) NOT NULL,
+  specialization_id CHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_doctor_specialization (doctor_id, specialization_id),
+  KEY idx_map_specialization (specialization_id),
+  CONSTRAINT fk_map_doctor FOREIGN KEY (doctor_id) REFERENCES doctors(id) ON DELETE CASCADE,
+  CONSTRAINT fk_map_specialization FOREIGN KEY (specialization_id) REFERENCES doctor_specializations(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS doctor_branch_assignments (
@@ -339,6 +380,24 @@ CREATE TABLE IF NOT EXISTS appointments (
   CONSTRAINT fk_appt_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
   CONSTRAINT fk_appt_branch FOREIGN KEY (branch_id) REFERENCES branches(id),
   CONSTRAINT fk_appt_doctor FOREIGN KEY (doctor_id) REFERENCES doctors(id)
+) ENGINE=InnoDB;
+
+-- Who the appointment is actually for — a patient account can book on behalf of a
+-- family member/friend, so this can differ from the booking account (appointments.patient_id).
+-- One row per appointment, always present (relationship defaults to 'self', copying the
+-- account holder's own name/phone, when the client omits patient_details entirely).
+CREATE TABLE IF NOT EXISTS appointment_patients (
+  id CHAR(36) NOT NULL,
+  appointment_id CHAR(36) NOT NULL,
+  relationship ENUM('self','spouse','child','parent','sibling','friend','other') NOT NULL DEFAULT 'self',
+  name VARCHAR(255) NOT NULL,
+  phone VARCHAR(32) NULL,
+  age TINYINT UNSIGNED NULL,
+  gender ENUM('male','female','other','prefer_not_to_say') NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_appointment_patient (appointment_id),
+  CONSTRAINT fk_appt_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS appointment_status_log (

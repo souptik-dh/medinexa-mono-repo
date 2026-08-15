@@ -6,6 +6,7 @@ import { hashPassword, hashToken, issueTokens } from "@/lib/auth";
 import { newId } from "@/lib/ids";
 import { ApiError, conflict, notFound, isUniqueViolation } from "@/lib/errors";
 import { createNotification, sendEmail } from "@/lib/notifications";
+import { getInviteSpecializations } from "@/lib/specializations";
 import type { ResultSetHeader } from "mysql2/promise";
 
 const schema = z.object({
@@ -68,10 +69,20 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
       [userId, invite.name, body.email, invite.phone ?? null, passwordHash],
     );
     await conn.query(
-      `INSERT INTO doctors (id, user_id, name, specialization, reg_no, smc_name, doctor_degree, phone, certificate_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [doctorId, userId, invite.name, invite.specialization ?? null, regNo, smcName, doctorDegree, invite.phone ?? null, invite.certificate_url ?? null],
+      `INSERT INTO doctors (id, user_id, name, reg_no, smc_name, doctor_degree, phone, certificate_url)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [doctorId, userId, invite.name, regNo, smcName, doctorDegree, invite.phone ?? null, invite.certificate_url ?? null],
     );
+    const [inviteSpecializations] = await conn.query<Row[]>(
+      `SELECT specialization_id FROM doctor_invite_specializations WHERE doctor_invite_id = ?`,
+      [invite.id],
+    );
+    for (const s of inviteSpecializations) {
+      await conn.query(
+        `INSERT INTO doctor_specialization_map (id, doctor_id, specialization_id) VALUES (?, ?, ?)`,
+        [newId(), doctorId, s.specialization_id],
+      );
+    }
     await conn.query(
       `INSERT INTO doctor_branch_assignments (id, doctor_id, branch_id, fee_amount, currency, is_active, slot_type)
        VALUES (?, ?, ?, ?, ?, 1, ?)`,
@@ -134,13 +145,15 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
     doctorId,
   });
 
+  const specializationsByInvite = await getInviteSpecializations(pool, [invite.id]);
+
   return json({
     access_token,
     refresh_token,
     doctor: {
       id: doctorId,
       name: invite.name,
-      specialization: invite.specialization ?? null,
+      specializations: specializationsByInvite.get(invite.id) ?? [],
       reg_no: regNo,
       smc_name: smcName,
       doctor_degree: doctorDegree,

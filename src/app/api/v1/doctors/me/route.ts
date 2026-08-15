@@ -4,20 +4,22 @@ import { pool, type Row } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
+import { getDoctorSpecializations } from "@/lib/specializations";
 
 export const GET = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["doctor"]);
   const [rows] = await pool.query<Row[]>(
-    `SELECT id, name, specialization, reg_no, smc_name, doctor_degree, phone, certificate_url, photo_url, bio
+    `SELECT id, name, reg_no, smc_name, doctor_degree, phone, certificate_url, photo_url, bio
        FROM doctors WHERE id = ? AND deleted_at IS NULL`,
     [auth.doctorId],
   );
   const doc = rows[0];
   if (!doc) throw notFound("DOCTOR_NOT_FOUND", "Doctor profile not found.");
+  const specializationsByDoctor = await getDoctorSpecializations(pool, [String(doc.id)]);
   return json({
     id: doc.id,
     name: doc.name,
-    specialization: doc.specialization,
+    specializations: specializationsByDoctor.get(String(doc.id)) ?? [],
     reg_no: doc.reg_no,
     smc_name: doc.smc_name,
     doctor_degree: doc.doctor_degree,
@@ -59,15 +61,16 @@ export const PATCH = api(undefined, async (ctx) => {
   }
 
   const [updated] = await pool.query<Row[]>(
-    `SELECT id, name, specialization, reg_no, smc_name, doctor_degree, phone, certificate_url, photo_url, bio
+    `SELECT id, name, reg_no, smc_name, doctor_degree, phone, certificate_url, photo_url, bio
        FROM doctors WHERE id = ? AND deleted_at IS NULL`,
     [auth.doctorId],
   );
   const doc = updated[0];
+  const specializationsByDoctor = await getDoctorSpecializations(pool, [String(doc.id)]);
   return json({
     id: doc.id,
     name: doc.name,
-    specialization: doc.specialization,
+    specializations: specializationsByDoctor.get(String(doc.id)) ?? [],
     reg_no: doc.reg_no,
     smc_name: doc.smc_name,
     doctor_degree: doc.doctor_degree,

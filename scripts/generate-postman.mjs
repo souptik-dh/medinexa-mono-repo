@@ -416,12 +416,20 @@ const requests = [
   // ── Doctors, Invites & Assignments ──────────────────────────────────────
   req({
     folder: "Doctors, Invites & Assignments",
+    name: "Create/Get Doctor Specialization",
+    method: "POST",
+    url: "/doctors/specializations",
+    body: rawJson({ name: "Cardiology" }),
+    test: ['const j = pm.response.json();', 'if (j.id) pm.collectionVariables.set("specializationId", j.id);'],
+  }),
+  req({
+    folder: "Doctors, Invites & Assignments",
     name: "Create Doctor Invite",
     method: "POST",
     url: "/branches/:branchId/doctor-invites",
     body: rawJson({
       name: "Dr. Smith",
-      specialization: "Cardiologist",
+      specialization_ids: ["{{specializationId}}"],
       email: "dr.smith@example.com",
       phone: "+919900000001",
       fee_amount: 500,
@@ -539,7 +547,7 @@ const requests = [
     url: "/doctors",
     auth: false,
     query: [
-      { key: "specialization", value: "", description: "Exact match" },
+      { key: "specialization_id", value: "", description: "doctor_specializations.id, exact match" },
       { key: "city", value: "", description: "Exact match" },
       { key: "q", value: "", description: "Name substring" },
       { key: "limit", value: "20" },
@@ -552,6 +560,7 @@ const requests = [
     method: "GET",
     url: "/doctors/specializations",
     auth: false,
+    query: [{ key: "q", value: "", description: "Name substring, for the search-as-you-type picker" }],
   }),
   req({
     folder: "Doctors, Invites & Assignments",
@@ -582,6 +591,11 @@ const requests = [
       branch_id: "{{branchId}}",
       date: "2026-08-10",
       time: "09:20",
+      patient_details: {
+        relationship: "self",
+        name: "Aisha Verma",
+        phone: "+919876543210",
+      },
     }),
     test: [
       "const j = pm.response.json();",
@@ -877,6 +891,7 @@ const variables = [
   { key: "doctorId", value: "" },
   { key: "assignmentId", value: "" },
   { key: "exceptionId", value: "" },
+  { key: "specializationId", value: "" },
   { key: "inviteId", value: "" },
   { key: "staffId", value: "" },
   { key: "patientId", value: "" },

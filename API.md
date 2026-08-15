@@ -317,7 +317,7 @@ For the email-change flow, `message` is `"Your email address has been updated."`
   "doctor": {
     "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
     "name": "Dr. Smith",
-    "specialization": "Cardiologist",
+    "specializations": [{ "id": "a1b2c3d4-...", "name": "Cardiology" }],
     "phone": "+919900000001",
     "certificate_url": null,
     "bio": null
@@ -365,7 +365,7 @@ On success, an in-app `doctor_invite_accepted` notification is created for whoev
   "doctor": {
     "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
     "name": "Dr. Smith",
-    "specialization": "Cardiologist",
+    "specializations": [{ "id": "a1b2c3d4-...", "name": "Cardiology" }],
     "reg_no": "MC-123456",
     "smc_name": "Medical Council of India",
     "doctor_degree": "MBBS, MD",
@@ -1316,7 +1316,7 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
 ```json
 {
   "name": "Dr. Smith",
-  "specialization": "Cardiologist",
+  "specialization_ids": ["a1b2c3d4-..."],
   "email": "dr.smith@example.com",
   "phone": "+919900000001",
   "reg_no": "MC-123456",
@@ -1350,7 +1350,7 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
 | Field | Type | Notes |
 |---|---|---|
 | `name` | string | required |
-| `specialization` | string? | max 255 |
+| `specialization_ids` | string[] | required, 1–10 `doctor_specializations.id` values (see `GET /doctors/specializations`; use `POST /doctors/specializations` first if the one you need doesn't exist yet) |
 | `email` | string | required |
 | `phone` | string? | max 32 |
 | `reg_no` | string? | max 64, optional — pre-fill the doctor's registration number; if omitted, the doctor supplies it on accept |
@@ -1385,12 +1385,13 @@ A doctor's booking behavior for a branch is controlled by `slot_type` on the ass
   "reg_no": "MC-123456",
   "smc_name": "Medical Council of India",
   "doctor_degree": "MBBS, MD",
+  "specializations": [{ "id": "a1b2c3d4-...", "name": "Cardiology" }],
   "status": "pending",
   "expires_at": "2026-08-16T10:00:00Z"
 }
 ```
 
-**Errors:** `409 INVITE_ALREADY_PENDING`, `409 DOCTOR_ALREADY_ASSIGNED`.
+**Errors:** `409 INVITE_ALREADY_PENDING`, `409 DOCTOR_ALREADY_ASSIGNED`, `422 SPECIALIZATION_NOT_FOUND`.
 
 ### GET /branches/:id/doctor-invites
 
@@ -1406,6 +1407,7 @@ Auth: `clinic_owner` **or** `branch_staff` with `doctors:manage`.
       "name": "Dr. Smith",
       "email": "dr.smith@example.com",
       "reg_no": "MC-123456",
+      "specializations": [{ "id": "a1b2c3d4-...", "name": "Cardiology" }],
       "smc_name": "Medical Council of India",
       "doctor_degree": "MBBS, MD",
       "status": "pending",
@@ -1440,7 +1442,8 @@ Public. Returns only **accepted** doctors assigned to the branch.
       "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
       "assignment_id": "e4f5a6b7-8c9d-0e1f-2a3b-4c5d6e7f8a9b",
       "name": "Dr. Smith",
-      "specialization": "Cardiologist",
+      "specialization": "Cardiology",
+      "specializations": [{ "id": "a1b2c3d4-...", "name": "Cardiology" }],
       "smc_name": "Medical Council of India",
       "doctor_degree": "MBBS, MD",
       "phone": "+919900000001",
@@ -1462,7 +1465,7 @@ Public. Returns only **accepted** doctors assigned to the branch.
 }
 ```
 
-`total` is the count of doctors in `items` (this endpoint is not paginated). `id` is the doctor's own id. `assignment_id` is the id of this doctor's assignment to the branch — use it for `PATCH /doctor-assignments/:id` and `DELETE /doctor-assignments/:id`, not `id`. `start_date`/`end_date` are derived from the assignment's `slot_template` rows (`doctor_slot_templates`, set via `POST /branches/:id/doctor-invites` or `PATCH /doctor-assignments/:id`): `start_date` is the earliest `slot_template[].start_date` across all of the assignment's weekly entries, and `end_date` is the latest `slot_template[].end_date` — but `null` if **any** entry has no `end_date` (i.e. repeats indefinitely), since that makes the assignment's overall end open-ended. Both are `null` if the assignment has no slot template rows. `unavailable_dates` lists the assignment's upcoming active leaves (`doctor_slot_exceptions`, see `GET /doctor-assignments/:id/exceptions`) as `{ start_date, end_date, reason }` — a leave is a genuine inclusive date range now (`start_date` and `end_date` can differ), not always a single day. `next_available_slot` is a localized `YYYY-MM-DDTHH:MM:00` string or `null`. `slot_type` ∈ `fixed | sequential` — see [Slot types](#slot-types); when `sequential`, the client should offer a "book next available" action instead of a time picker.
+`total` is the count of doctors in `items` (this endpoint is not paginated). `id` is the doctor's own id. `assignment_id` is the id of this doctor's assignment to the branch — use it for `PATCH /doctor-assignments/:id` and `DELETE /doctor-assignments/:id`, not `id`. `start_date`/`end_date` are derived from the assignment's `slot_template` rows (`doctor_slot_templates`, set via `POST /branches/:id/doctor-invites` or `PATCH /doctor-assignments/:id`): `start_date` is the earliest `slot_template[].start_date` across all of the assignment's weekly entries, and `end_date` is the latest `slot_template[].end_date` — but `null` if **any** entry has no `end_date` (i.e. repeats indefinitely), since that makes the assignment's overall end open-ended. Both are `null` if the assignment has no slot template rows. `unavailable_dates` lists the assignment's upcoming active leaves (`doctor_slot_exceptions`, see `GET /doctor-assignments/:id/exceptions`) as `{ start_date, end_date, reason }` — a leave is a genuine inclusive date range now (`start_date` and `end_date` can differ), not always a single day. `next_available_slot` is a localized `YYYY-MM-DDTHH:MM:00` string or `null`. `slot_type` ∈ `fixed | sequential` — see [Slot types](#slot-types); when `sequential`, the client should offer a "book next available" action instead of a time picker. `specialization` is a comma-joined display string derived from `specializations` (kept for backward compatibility); `specializations` is the doctor's full, possibly-multiple set of master-list specializations (see `GET /doctors/specializations`).
 
 ### GET /doctors
 
@@ -1471,10 +1474,11 @@ prerequisite search term or known branch — unlike `GET /doctors/search` (auth-
 `q` required) or `GET /branches/:id/doctors` (requires a branch id). Drives a
 patient-facing "browse all doctors" view (e.g. a home screen's "Top doctors" section).
 
-**Query:** `?specialization=&city=&q=&limit=&cursor=` — `specialization` and `city` are
-exact matches (see `GET /doctors/specializations` for the canonical specialization list;
-`city` typically comes from the patient's own saved profile); `q` is an optional `name`
-substring match. All filters are optional and combine with AND.
+**Query:** `?specialization_id=&city=&q=&limit=&cursor=` — `specialization_id` (a
+`doctor_specializations.id`, see `GET /doctors/specializations` for the canonical list)
+and `city` are exact matches (`city` typically comes from the patient's own saved
+profile); `q` is an optional `name` substring match. All filters are optional and
+combine with AND.
 
 **Response `200`**
 
@@ -1485,7 +1489,8 @@ substring match. All filters are optional and combine with AND.
       "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
       "assignment_id": "e4f5a6b7-8c9d-0e1f-2a3b-4c5d6e7f8a9b",
       "name": "Dr. Smith",
-      "specialization": "Cardiologist",
+      "specialization": "Cardiology",
+      "specializations": [{ "id": "a1b2c3d4-...", "name": "Cardiology" }],
       "smc_name": "Medical Council of India",
       "doctor_degree": "MBBS, MD",
       "phone": "+919900000001",
@@ -1511,22 +1516,51 @@ One item per active doctor↔branch assignment (a doctor at two branches appears
 each with its own `assignment_id`/fee/availability) — same field semantics as
 `GET /branches/:id/doctors`'s items. `limit` is capped at 50 regardless of the
 `?limit=` value, since `next_available_slot` costs one extra query per row.
+`specialization` is a comma-joined display string derived from `specializations`
+(kept for backward compatibility); `specializations` is the doctor's full,
+possibly-multiple set of master-list specializations.
 
 ### GET /doctors/specializations
 
-Public. Not paginated. Distinct `specialization` values currently in use across active
-doctor assignments, most common first — drives category/filter chips on a browse screen.
-`specialization` is free text (no fixed enum), so this reflects whatever clinic owners
-have actually entered.
+Public. Not paginated. The platform-level master list of doctor specializations
+(`doctor_specializations` table), most-assigned first — drives category/filter chips
+on a browse screen and the searchable specialization picker on a clinic's doctor-invite
+form. Only `status = 'active'` specializations are returned. Optional `?q=` does a
+substring match on `name`, for the invite form's search-as-you-type box.
 
 **Response `200`**
 
 ```json
 {
   "items": [
-    { "specialization": "Cardiologist", "doctor_count": 12 },
-    { "specialization": "General Physician", "doctor_count": 8 }
+    { "id": "a1b2c3d4-...", "name": "Cardiology", "slug": "cardiology", "description": null, "doctor_count": 12 },
+    { "id": "b2c3d4e5-...", "name": "General Physician", "slug": "general-physician", "description": null, "doctor_count": 8 }
   ]
+}
+```
+
+### POST /doctors/specializations
+
+Auth: `clinic_owner`, `branch_staff`, or `sys_admin`. Lets a clinic add a specialization
+directly from the doctor-invite form when the one they need isn't in the master list
+yet. Dedup is case-insensitive via a slug derived from `name` (lowercased, non-alphanumerics
+collapsed to `-`): if a specialization with the same slug already exists — created by this
+clinic or any other — that existing row is returned (`200`) instead of creating a
+duplicate; otherwise a new row is created (`201`).
+
+**Body:** `{ "name": "Interventional Cardiology", "description": "optional, max 500 chars" }`
+
+**Response `200`/`201`**
+
+```json
+{
+  "id": "c3d4e5f6-...",
+  "name": "Interventional Cardiology",
+  "slug": "interventional-cardiology",
+  "description": null,
+  "status": "active",
+  "created_at": "2026-08-15T10:00:00.000Z",
+  "updated_at": "2026-08-15T10:00:00.000Z"
 }
 ```
 
@@ -1680,7 +1714,7 @@ Auth: `doctor`.
 {
   "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
   "name": "Dr. Smith",
-  "specialization": "Cardiologist",
+  "specializations": [{ "id": "a1b2c3d4-...", "name": "Cardiology" }],
   "reg_no": "MC-123456",
   "smc_name": "Medical Council of India",
   "doctor_degree": "MBBS, MD",
@@ -1755,7 +1789,7 @@ Auth: any authenticated user (`patient`, `clinic_owner`, `branch_staff`, `doctor
 
 **Query:** `?q=<query>&limit=<1..50>` — `q` is required.
 
-Searches `reg_no` (prefix), `name` (contains), and `specialization` (contains). Results ordered by exact `reg_no` match first.
+Searches `reg_no` (prefix), `name` (contains), and each doctor's master-list specialization names (contains). Results ordered by exact `reg_no` match first.
 
 **Response `200`**
 
@@ -1765,7 +1799,8 @@ Searches `reg_no` (prefix), `name` (contains), and `specialization` (contains). 
     {
       "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
       "name": "Dr. Smith",
-      "specialization": "Cardiologist",
+      "specialization": "Cardiology",
+      "specializations": [{ "id": "a1b2c3d4-...", "name": "Cardiology" }],
       "reg_no": "MC-123456",
       "smc_name": "Medical Council of India",
       "doctor_degree": "MBBS, MD",
@@ -2240,22 +2275,37 @@ Auth: `clinic_owner` (owns branch) **or** `branch_staff` with `patients:view`. *
   "currency": "INR",
   "payment_method": null,
   "created_at": "2026-08-09T10:05:00Z",
-  "updated_at": "2026-08-09T10:05:00Z"
+  "updated_at": "2026-08-09T10:05:00Z",
+  "patient_details": {
+    "relationship": "self",
+    "name": "Aisha Verma",
+    "phone": "+919876543210",
+    "age": null,
+    "gender": null
+  }
 }
 ```
 
 `status` ∈ `pending | confirmed | paid | completed | cancelled | no_show`
 
+`patient_details` identifies who the visit is actually **for** — a patient account can book on
+behalf of a family member or friend, so this can differ from the booking account
+(`patient_id`, the logged-in user who made the booking). It's always present on every
+appointment (list and detail alike): `relationship` ∈ `self | spouse | child | parent | sibling | friend | other`,
+defaulting to `self` with the account holder's own `name`/`phone` when `patient_details` is
+omitted from `POST /appointments`. `age` and `gender` are optional free-form details the
+booking patient can supply for the visitor and are `null` unless given.
+
 List and detail responses enrich this base object:
 
 - `GET /appointments` items additionally include `doctor_name` and `branch_name`.
-- `GET /appointments/:id` additionally includes `doctor_name`, `branch_name`, and a nested `patient` object: `{ id, name, email, phone, address, photo_url }`.
+- `GET /appointments/:id` additionally includes `doctor_name`, `branch_name`, and a nested `patient` object: `{ id, name, email, phone, address, photo_url }` — this is always the **booking account holder**, not necessarily the visiting patient in `patient_details`.
 
 ### POST /appointments
 
 Auth: `patient`. Header `Idempotency-Key` **required**.
 
-On success, an in-app notification (`new_booking`) is created for every branch staff member **and** the clinic owner, and each of them is emailed the patient's name/email/phone and the doctor's name.
+On success, an in-app notification (`new_booking`) is created for every branch staff member **and** the clinic owner, and each of them is emailed the account holder's name/email/phone, the visiting patient's name/relationship (from `patient_details`) if booked for someone else, and the doctor's name.
 
 Behavior depends on the doctor's assignment `slot_type` for `branch_id` (see [Slot types](#slot-types)):
 
@@ -2269,7 +2319,14 @@ Behavior depends on the doctor's assignment `slot_type` for `branch_id` (see [Sl
   "doctor_id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
   "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
   "date": "2026-08-10",
-  "time": "09:20"
+  "time": "09:20",
+  "patient_details": {
+    "relationship": "child",
+    "name": "Rohan Verma",
+    "phone": "+919876500000",
+    "age": 8,
+    "gender": "male"
+  }
 }
 ```
 
@@ -2279,6 +2336,12 @@ Behavior depends on the doctor's assignment `slot_type` for `branch_id` (see [Sl
 | `branch_id` | string (UUID) | required |
 | `date` | string | required, `YYYY-MM-DD`, not in the past |
 | `time` | string? | required and must be an aligned slot when the doctor's `slot_type` is `fixed`; omit for `sequential` doctors |
+| `patient_details` | object? | optional — omit to book for yourself (defaults to `relationship: "self"` using your own account name/phone) |
+| `patient_details.relationship` | string? | `self` \| `spouse` \| `child` \| `parent` \| `sibling` \| `friend` \| `other`, defaults to `self` |
+| `patient_details.name` | string | required if `patient_details` is present, 1–255 chars |
+| `patient_details.phone` | string? | max 32 |
+| `patient_details.age` | number? | 0–150 |
+| `patient_details.gender` | string? | one of `male`, `female`, `other`, `prefer_not_to_say` |
 
 **Response `201`** — Appointment object (`status: "pending"`, `scheduled_time` is the server-assigned time for `sequential` bookings).
 
@@ -2737,7 +2800,7 @@ Any other transition returns `409 INVALID_STATUS_TRANSITION`.
 POST /auth/clinic-owner/register
 POST /clinics                       {name, trade_license_number}
 POST /clinics/:clinicId/branches    {name, address, phone, timezone, trade_license_number}
-POST /branches/:id/doctor-invites   {name, specialization, email, fee_amount, currency, slot_type, slot_template}
+POST /branches/:id/doctor-invites   {name, specialization_ids, email, fee_amount, currency, slot_type, slot_template}
   → invite code emailed to the doctor
 POST /auth/doctor/accept-invite     {email, invite_code, password, reg_no}
 GET  /branches/:id/doctors          → doctor now listed

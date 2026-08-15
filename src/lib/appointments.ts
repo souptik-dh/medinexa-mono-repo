@@ -35,9 +35,26 @@ export function serializeAppointment(r: Row) {
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
-  if (r.doctor_name === undefined && r.branch_name === undefined) return base;
-  return {
+  const withPatientDetails = {
     ...base,
+    // Who the visit is actually for — may differ from the booking account (patient_id)
+    // when booked on behalf of a family member/friend. Always present once joined,
+    // since every appointment gets a row (defaulting to relationship "self").
+    ...(r.visitor_name !== undefined
+      ? {
+          patient_details: {
+            relationship: r.visitor_relationship ?? "self",
+            name: r.visitor_name,
+            phone: r.visitor_phone ?? null,
+            age: r.visitor_age !== null && r.visitor_age !== undefined ? Number(r.visitor_age) : null,
+            gender: r.visitor_gender ?? null,
+          },
+        }
+      : {}),
+  };
+  if (r.doctor_name === undefined && r.branch_name === undefined) return withPatientDetails;
+  return {
+    ...withPatientDetails,
     doctor_name: r.doctor_name ?? null,
     branch_name: r.branch_name ?? null,
     ...(r.patient_name !== undefined

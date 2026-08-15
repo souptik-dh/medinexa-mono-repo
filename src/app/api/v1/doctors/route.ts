@@ -3,6 +3,7 @@ import { pool } from "@/lib/db";
 import { parsePagination } from "@/lib/validators";
 import { fetchPage } from "@/lib/pagination";
 import { getAvailabilityPeriods, nextAvailableSlot } from "@/lib/availability";
+import { getDoctorSpecializations, specializationDisplayName } from "@/lib/specializations";
 
 function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
@@ -17,15 +18,17 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
   const sp = ctx.request.nextUrl.searchParams;
   const { limit: rawLimit, cursor } = parsePagination(sp);
   const limit = Math.min(rawLimit, 50); // nextAvailableSlot below is one extra query per row
-  const specialization = sp.get("specialization")?.trim() || null;
+  const specializationId = sp.get("specialization_id")?.trim() || null;
   const city = sp.get("city")?.trim() || null;
   const q = sp.get("q")?.trim() || null;
 
   const filters: string[] = [];
   const params: unknown[] = [];
-  if (specialization) {
-    filters.push("AND d.specialization = ?");
-    params.push(specialization);
+  if (specializationId) {
+    filters.push(
+      "AND EXISTS (SELECT 1 FROM doctor_specialization_map dsm WHERE dsm.doctor_id = d.id AND dsm.specialization_id = ?)",
+    );
+    params.push(specializationId);
   }
   if (city) {
     filters.push("AND b.city = ?");
@@ -43,7 +46,7 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
     select: "SELECT *",
     from: `FROM (
         SELECT dba.id AS id, dba.created_at AS created_at, dba.fee_amount, dba.currency, dba.slot_type,
-               d.id AS doctor_id, d.name AS doctor_name, d.specialization, d.smc_name, d.doctor_degree,
+               d.id AS doctor_id, d.name AS doctor_name, d.smc_name, d.doctor_degree,
                d.phone, d.photo_url,
                b.id AS branch_id, b.name AS branch_name, b.city AS branch_city, b.timezone AS branch_timezone,
                c.id AS clinic_id, c.name AS clinic_name
@@ -61,16 +64,19 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
 
   const assignmentIds = rows.map((r) => String(r.id));
   const datesByAssignment = await getAvailabilityPeriods(pool, assignmentIds);
+  const specializationsByDoctor = await getDoctorSpecializations(pool, rows.map((r) => String(r.doctor_id)));
 
   const items = [];
   for (const r of rows) {
     const next_available_slot = await nextAvailableSlot(pool, String(r.id), r.branch_timezone as string);
     const dates = datesByAssignment.get(String(r.id)) ?? { start_date: null, end_date: null };
+    const specializations = specializationsByDoctor.get(String(r.doctor_id)) ?? [];
     items.push({
       id: r.doctor_id,
       assignment_id: r.id,
       name: r.doctor_name,
-      specialization: r.specialization,
+      specialization: specializationDisplayName(specializations),
+      specializations,
       smc_name: r.smc_name,
       doctor_degree: r.doctor_degree,
       phone: r.phone,
