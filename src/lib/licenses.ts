@@ -42,7 +42,7 @@ export function licenseFields(row: Row) {
   };
 }
 
-// Clinics only (not branches) — the PRDEODB trade-license validation state.
+// The PRDEODB trade-license validation state — tracked on both clinics and branches.
 export function tradeLicenseValidationFields(row: Row) {
   return {
     trade_license_validated: !!row.trade_license_validated,

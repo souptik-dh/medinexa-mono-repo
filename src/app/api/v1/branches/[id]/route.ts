@@ -5,7 +5,7 @@ import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { getOwnedBranch } from "@/lib/scope";
 import { conflict } from "@/lib/errors";
-import { licenseFields } from "@/lib/licenses";
+import { licenseFields, tradeLicenseValidationFields } from "@/lib/licenses";
 
 function isTimezone(tz: string): boolean {
   try {
@@ -36,6 +36,9 @@ const patchSchema = z.object({
     .refine(isTimezone, "Invalid IANA timezone.")
     .optional(),
   trade_license_number: z.string().trim().min(1).max(100).optional(),
+  // Set only via a prior POST /clinics/validate-trade-license call for this same
+  // number — see the reset-on-change note below.
+  trade_license_validation_status: z.enum(["PENDING", "VALID", "INVALID"]).optional(),
   drug_license_number: z.string().trim().max(100).nullable().optional(),
   clinical_establishment_reg_number: z.string().trim().max(100).nullable().optional(),
 });
@@ -66,6 +69,29 @@ export const PATCH = api(undefined, async (ctx) => {
     params.push(body.clinical_establishment_reg_number);
   }
 
+  // The client always echoes its current trade_license_validation_status on every save
+  // (not just right after clicking Validate), so only treat this as a genuine validation
+  // event — and bump trade_license_validated_at — when the number is changing or the
+  // status itself differs from what's stored; an unrelated save that just re-sends the
+  // branch's already-current status leaves these columns untouched entirely. If the
+  // number is changing and no fresh status came with it, force a reset to PENDING —
+  // the "re-validation required" rule from the spec shouldn't rely on the client
+  // remembering to do it.
+  const numberChanging =
+    body.trade_license_number !== undefined && body.trade_license_number !== branch.trade_license_number;
+  const statusChanging =
+    body.trade_license_validation_status !== undefined &&
+    body.trade_license_validation_status !== branch.trade_license_validation_status;
+
+  if (body.trade_license_validation_status !== undefined && (numberChanging || statusChanging)) {
+    const validated = body.trade_license_validation_status === "VALID";
+    fields.push("trade_license_validated = ?", "trade_license_validation_status = ?", "trade_license_validated_at = ?");
+    params.push(validated, body.trade_license_validation_status, validated ? new Date() : null);
+  } else if (body.trade_license_validation_status === undefined && numberChanging) {
+    fields.push("trade_license_validated = ?", "trade_license_validation_status = ?", "trade_license_validated_at = ?");
+    params.push(false, "PENDING", null);
+  }
+
   if (fields.length > 0) {
     await pool.query(`UPDATE branches SET ${fields.join(", ")} WHERE id = ?`, [...params, branch.id]);
   }
@@ -92,6 +118,7 @@ export const PATCH = api(undefined, async (ctx) => {
     timezone: b.timezone,
     photo_url: b.photo_url,
     ...licenseFields(b),
+    ...tradeLicenseValidationFields(b),
     created_at: b.created_at,
   });
 });
