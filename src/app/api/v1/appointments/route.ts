@@ -63,6 +63,7 @@ export const GET = api(undefined, async (ctx) => {
     from: `FROM (
         SELECT a.*,
                (SELECT d.name FROM doctors d WHERE d.id = a.doctor_id) AS doctor_name,
+               (SELECT d.photo_url FROM doctors d WHERE d.id = a.doctor_id) AS doctor_photo_url,
                (SELECT b.name FROM branches b WHERE b.id = a.branch_id) AS branch_name,
                ap.relationship AS visitor_relationship, ap.name AS visitor_name,
                ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender

@@ -2461,8 +2461,8 @@ booking patient can supply for the visitor and are `null` unless given.
 
 List and detail responses enrich this base object:
 
-- `GET /appointments` items additionally include `doctor_name` and `branch_name`.
-- `GET /appointments/:id` additionally includes `doctor_name`, `branch_name`, and a nested `patient` object: `{ id, name, email, phone, address, photo_url }` — this is always the **booking account holder**, not necessarily the visiting patient in `patient_details`.
+- `GET /appointments` items additionally include `doctor_name`, `doctor_photo_url`, and `branch_name`.
+- `GET /appointments/:id` additionally includes `doctor_name`, `doctor_photo_url`, `branch_name`, and a nested `patient` object: `{ id, name, email, phone, address, photo_url }` — this is always the **booking account holder**, not necessarily the visiting patient in `patient_details`.
 
 ### POST /appointments
 

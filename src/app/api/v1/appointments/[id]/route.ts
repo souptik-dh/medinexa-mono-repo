@@ -11,6 +11,7 @@ export const GET = api(undefined, async (ctx) => {
   const [rows] = await pool.query<Row[]>(
     `SELECT a.*,
             d.name AS doctor_name,
+            d.photo_url AS doctor_photo_url,
             b.name AS branch_name,
             u.name AS patient_name,
             u.email AS patient_email,
