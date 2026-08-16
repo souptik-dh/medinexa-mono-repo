@@ -42,11 +42,14 @@ export interface ImageUploadSignature {
   signature: string;
 }
 
-export function createImageUploadSignature(folder: string): ImageUploadSignature {
+export function createImageUploadSignature(
+  folder: string,
+  allowedFormats: readonly string[] = UPLOAD_ALLOWED_FORMATS,
+): ImageUploadSignature {
   const { cloudName, apiKey, apiSecret } = getCloudinary();
   const public_id = `${folder}/${randomUUID()}`;
   const timestamp = Math.floor(Date.now() / 1000);
-  const allowed_formats = UPLOAD_ALLOWED_FORMATS.join(",");
+  const allowed_formats = allowedFormats.join(",");
   const toSign = `allowed_formats=${allowed_formats}&public_id=${public_id}&timestamp=${timestamp}`;
   const signature = createHash("sha1").update(`${toSign}${apiSecret}`).digest("hex");
   return {
@@ -55,7 +58,7 @@ export function createImageUploadSignature(folder: string): ImageUploadSignature
     api_key: apiKey,
     timestamp,
     public_id,
-    allowed_formats: [...UPLOAD_ALLOWED_FORMATS],
+    allowed_formats: [...allowedFormats],
     signature,
   };
 }
