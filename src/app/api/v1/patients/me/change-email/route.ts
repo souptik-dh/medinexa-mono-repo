@@ -48,7 +48,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     [newId(), auth.userId, hash, body.new_email, expiresAt],
   );
 
-  const verifyUrl = process.env.VERIFY_EMAIL_URL ?? "https://medinexa-clinic.onrender.com";
+  const verifyUrl = process.env.VERIFY_EMAIL_URL ?? "https://healthcare.jido.co.in";
   const link = `${verifyUrl}/verify_email?token=${raw}`;
   await sendEmail(
     body.new_email,

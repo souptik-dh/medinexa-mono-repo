@@ -23,7 +23,7 @@ async function sendVerificationEmail(userId: string, email: string, name: string
     [newId(), userId, hash, expiresAt],
   );
 
-  const verifyUrl = process.env.VERIFY_EMAIL_URL ?? "https://medinexa-clinic.onrender.com";
+  const verifyUrl = process.env.VERIFY_EMAIL_URL ?? "https://healthcare.jido.co.in";
   const link = `${verifyUrl}/verify_email?token=${raw}`;
 
   await sendEmail(

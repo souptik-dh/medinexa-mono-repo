@@ -281,7 +281,7 @@ Public. Rate limited 10/min per IP. Single-use, 24h-expiry token; shared by two 
 1. **Signup verification** — activates a `clinic_owner` account (`status: 'pending'` → `'active'`) using the token from the welcome email sent by `POST /auth/clinic-owner/register`.
 2. **Email change** — confirms a pending email change requested via `POST /patients/me/change-email`; on success, updates `users.email` to the new address instead of touching `status`.
 
-The verification link is emailed as `{VERIFY_EMAIL_URL}/verify_email?token={VERIFICATION_TOKEN}` — `VERIFY_EMAIL_URL` defaults to `https://medinexa-clinic.onrender.com`.
+The verification link is emailed as `{VERIFY_EMAIL_URL}/verify_email?token={VERIFICATION_TOKEN}` — `VERIFY_EMAIL_URL` defaults to `https://healthcare.jido.co.in`.
 
 **Request body**
 
