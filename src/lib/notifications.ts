@@ -10,7 +10,12 @@ export type NotificationType =
   | "prescription_ready"
   | "doctor_invited"
   | "doctor_invite_accepted"
-  | "appointment_cancelled";
+  | "appointment_cancelled"
+  | "lab_test_booking_created"
+  | "lab_test_booking_approved"
+  | "lab_test_booking_rejected"
+  | "lab_test_booking_cancelled"
+  | "lab_test_payment_success";
 
 export async function createNotification(
   db: Pick<PoolConnection, "query">,
@@ -79,6 +84,39 @@ export function pushContentFor(
       return {
         title: "Appointment cancelled",
         body: `Your appointment${when ? ` on ${when}` : ""} has been cancelled.`,
+      };
+    case "lab_test_booking_created":
+      return {
+        title: "Lab test booked",
+        body: when
+          ? `Your lab test booking for ${when} has been submitted.`
+          : "Your lab test booking has been submitted.",
+      };
+    case "lab_test_booking_approved":
+      return {
+        title: "Lab test confirmed",
+        body: when
+          ? `Your lab test appointment for ${when} has been confirmed.`
+          : "Your lab test appointment has been confirmed.",
+      };
+    case "lab_test_booking_rejected":
+      return {
+        title: "Lab test booking rejected",
+        body: when
+          ? `Your lab test booking for ${when} has been rejected.`
+          : "Your lab test booking has been rejected.",
+      };
+    case "lab_test_booking_cancelled":
+      return {
+        title: "Lab test cancelled",
+        body: when
+          ? `Your lab test appointment for ${when} has been cancelled.`
+          : "Your lab test appointment has been cancelled.",
+      };
+    case "lab_test_payment_success":
+      return {
+        title: "Payment received",
+        body: `Payment for your lab test${when ? ` on ${when}` : ""} has been received.`,
       };
     default:
       return {

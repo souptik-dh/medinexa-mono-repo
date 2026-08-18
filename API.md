@@ -23,13 +23,15 @@ Live implementation reference for the MediBook API. Every endpoint below documen
 10. [Reviews & ratings](#reviews--ratings)
 11. [Patients](#patients)
 12. [Appointments](#appointments)
-13. [Payment ledger](#payment-ledger)
-14. [Prescriptions](#prescriptions)
-15. [Medical documents](#medical-documents)
-16. [Notifications](#notifications)
-17. [Files (signed URLs)](#files-signed-urls)
-18. [Error codes](#error-codes)
-19. [Status transition table](#status-transition-table)
+13. [Lab tests](#lab-tests)
+14. [Payment ledger](#payment-ledger)
+15. [Prescriptions](#prescriptions)
+16. [Medical documents](#medical-documents)
+17. [Notifications](#notifications)
+18. [Files (signed URLs)](#files-signed-urls)
+19. [Error codes](#error-codes)
+20. [Status transition table](#status-transition-table)
+21. [Lab test status transitions](#lab-test-status-transitions)
 
 ---
 
@@ -2622,6 +2624,623 @@ Auth: any authenticated role, scope as `GET /appointments/:id`.
 
 ---
 
+## Lab tests
+
+Clinics define **lab tests** (e.g. ECG, blood panel) at the clinic level, then configure price/availability per branch via **branch lab tests**. Patients browse a branch's tests, check time-slot availability, and book **lab test appointments**. Appointments follow a separate state machine from doctor appointments.
+
+### Lab test categories
+
+`category` ∈ `blood_test | cardiology | diabetes | urine_test | imaging | general_diagnostics | health_check | other`
+
+### Lab test appointment statuses
+
+`status` ∈ `PENDING | APPROVED | REJECTED | CANCELLED | COMPLETED`
+
+### Payment statuses
+
+`payment_status` ∈ `UNPAID | PENDING | PAID | FAILED | REFUNDED`
+
+### Service modes
+
+`service_mode` ∈ `CLINIC | HOME` — `HOME` triggers home collection and requires address fields on the appointment.
+
+### Serialized objects
+
+#### LabTest
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+  "name": "ECG",
+  "code": "ECG",
+  "description": "Electrocardiogram test",
+  "category": "cardiology",
+  "instructions": "Avoid heavy exercise 1 hour before",
+  "default_precautions": ["Remove metallic jewelry"],
+  "status": "active",
+  "created_at": "2026-08-01T09:30:00Z",
+  "updated_at": "2026-08-01T09:30:00Z"
+}
+```
+
+#### BranchLabTest
+
+```json
+{
+  "id": "b2c3d4e5-...",
+  "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+  "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+  "test_id": "a1b2c3d4-...",
+  "test_name": "ECG",
+  "test_code": "ECG",
+  "test_category": "cardiology",
+  "test_description": "Electrocardiogram test",
+  "price": 800,
+  "currency": "INR",
+  "duration_minutes": 30,
+  "clinic_available": true,
+  "home_collection_available": false,
+  "prescription_required": false,
+  "status": "active",
+  "created_at": "2026-08-02T11:00:00Z",
+  "updated_at": "2026-08-02T11:00:00Z"
+}
+```
+
+#### LabTestAppointment
+
+```json
+{
+  "id": "c3d4e5f6-...",
+  "appointment_number": "LAB20260818ABC123",
+  "patient_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+  "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+  "branch_lab_test_id": "b2c3d4e5-...",
+  "test_id": "a1b2c3d4-...",
+  "service_mode": "CLINIC",
+  "appointment_date": "2026-08-25",
+  "start_time": "09:00",
+  "end_time": "09:30",
+  "duration_minutes": 30,
+  "price": 800,
+  "currency": "INR",
+  "payment_method": "PAY_AT_CLINIC",
+  "payment_status": "UNPAID",
+  "prescription_required": false,
+  "prescription_id": null,
+  "patient_notes": "Fasting since last night",
+  "clinic_notes": null,
+  "precautions": ["Remove metallic jewelry"],
+  "status": "PENDING",
+  "approved_by": null,
+  "approved_at": null,
+  "rejected_by": null,
+  "rejected_at": null,
+  "rejection_reason": null,
+  "completed_at": null,
+  "cancelled_at": null,
+  "created_at": "2026-08-18T10:00:00Z",
+  "updated_at": "2026-08-18T10:00:00Z"
+}
+```
+
+When `service_mode` is `HOME`, the response additionally includes `home_address`, `home_lat`, `home_lng`, `home_contact_phone`, and `home_notes`. When joined data is present (list/detail endpoints), the response may include nested `test`, `branch`, `patient`, and `clinic` objects. Clinic detail responses additionally include `prescriptions[]` and `payments[]` arrays.
+
+### Patient-facing: browse tests & availability
+
+#### GET /branches/:id/lab-tests
+
+Auth: any authenticated user. Lists active lab tests configured for the branch. Rate limited 60/min.
+
+**Query:** `?category=&search=&service_mode=` — `category` filters by test category; `search` matches test name/code; `service_mode` filters by `CLINIC` or `HOME` availability. All optional.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "b2c3d4e5-...",
+      "clinic_id": "9d2f4c8a-...",
+      "branch_id": "5e8f6c7a-...",
+      "test_id": "a1b2c3d4-...",
+      "test_name": "ECG",
+      "test_code": "ECG",
+      "test_category": "cardiology",
+      "test_description": "Electrocardiogram test",
+      "price": 800,
+      "currency": "INR",
+      "duration_minutes": 30,
+      "clinic_available": true,
+      "home_collection_available": false,
+      "prescription_required": false,
+      "status": "active",
+      "created_at": "2026-08-02T11:00:00Z",
+      "updated_at": "2026-08-02T11:00:00Z"
+    }
+  ]
+}
+```
+
+**Errors:** `404 BRANCH_NOT_FOUND`.
+
+#### GET /branches/:id/lab-tests/:branchTestId
+
+Auth: any authenticated user. Returns a single branch lab test. Rate limited 60/min.
+
+**Response `200`** — BranchLabTest object.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `404 TEST_NOT_FOUND`.
+
+#### GET /branches/:id/lab-tests/:branchTestId/availability
+
+Auth: any authenticated user. Returns available time slots for a given date. Rate limited 60/min.
+
+**Query:** `?date=2026-08-25` (required, `YYYY-MM-DD`, not in the past).
+
+**Response `200`**
+
+```json
+{
+  "date": "2026-08-25",
+  "slots": [
+    { "start": "09:00", "end": "09:30", "available": true },
+    { "start": "09:30", "end": "10:00", "available": false },
+    { "start": "10:00", "end": "10:30", "available": true }
+  ]
+}
+```
+
+Slots are generated from `lab_test_schedules` for the branch, filtered against branch closures and existing non-cancelled appointments. Each slot's `duration_minutes` comes from the branch lab test config.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `404 TEST_NOT_FOUND`, `400 VALIDATION_ERROR` (missing/invalid `date`), `422 DATE_IN_PAST`.
+
+### Patient-facing: book, view, cancel & pay
+
+#### POST /lab-test-appointments
+
+Auth: `patient`. Rate limited 10/min. Header `Idempotency-Key` **required**. Creates a new lab test appointment. Double-booking is prevented at the database level via a unique constraint on `(branch_id, branch_lab_test_id, appointment_date, slot_key)` excluding cancelled slots.
+
+On success, an in-app `lab_test_booked` notification is created for every branch staff member and the clinic owner.
+
+**Request body**
+
+```json
+{
+  "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+  "branch_lab_test_id": "b2c3d4e5-...",
+  "service_mode": "CLINIC",
+  "appointment_date": "2026-08-25",
+  "start_time": "09:00",
+  "prescription_id": null,
+  "patient_notes": "Fasting since last night",
+  "payment_method": "PAY_AT_CLINIC"
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `branch_id` | string (UUID) | required |
+| `branch_lab_test_id` | string (UUID) | required |
+| `service_mode` | string | `CLINIC` or `HOME`, defaults to `CLINIC` |
+| `appointment_date` | string | required, `YYYY-MM-DD`, not in the past |
+| `start_time` | string | required, `HH:MM`, must be an available slot |
+| `prescription_id` | string (UUID)? | required when `prescription_required` is `true` on the branch lab test |
+| `patient_notes` | string? | max 1000 |
+| `payment_method` | string | `PAY_AT_CLINIC` or `ONLINE`, defaults to `PAY_AT_CLINIC` |
+| `home_address` | string? | required when `service_mode` is `HOME` |
+| `home_lat` | number? | -90…90 |
+| `home_lng` | number? | -180…180 |
+| `home_contact_phone` | string? | max 32 |
+| `home_notes` | string? | max 500 |
+
+**Response `201`** — LabTestAppointment object (`status: "PENDING"`). A `lab_test_payment` record is also created with the appointment's price.
+
+**Errors:** `400 IDEMPOTENCY_KEY_REQUIRED`, `400 VALIDATION_ERROR`, `404 BRANCH_NOT_FOUND`, `404 TEST_NOT_FOUND`, `409 SLOT_ALREADY_BOOKED`, `422 DATE_IN_PAST`, `422 OUTSIDE_SCHEDULE`, `422 PRESCRIPTION_REQUIRED`.
+
+#### GET /patient/lab-test-appointments
+
+Auth: `patient`. Cursor-paginated. Lists the caller's own lab test appointments.
+
+**Query:** `?status=&upcoming=true&past=true&limit=&cursor=` — `status` filters by appointment status; `upcoming=true` returns future appointments only; `past=true` returns past appointments only. All optional.
+
+**Response `200`**
+
+```json
+{
+  "items": [ /* LabTestAppointment objects */ ],
+  "next_cursor": null
+}
+```
+
+#### GET /patient/lab-test-appointments/:id
+
+Auth: `patient` (own) or any clinic staff/owner. Returns a single lab test appointment.
+
+**Response `200`** — LabTestAppointment object with nested `test`, `branch`, `patient`, `clinic` objects when applicable.
+
+**Errors:** `404 APPOINTMENT_NOT_FOUND`.
+
+#### POST /lab-test-appointments/:id/cancel
+
+Auth: `patient` (own) or `clinic_owner`/`branch_staff` (with `lab_appointments:cancel`). Rate limited 10/min. Patients can only cancel their own appointments. Transitions the appointment to `CANCELLED` via the state machine and sets `cancelled_at`.
+
+On success, an in-app `lab_test_cancelled` notification is sent to the relevant parties.
+
+**Request body**
+
+```json
+{ "reason": "Patient requested cancellation" }
+```
+
+**Response `200`** — LabTestAppointment object (`status: "CANCELLED"`).
+
+**Errors:** `404 APPOINTMENT_NOT_FOUND`, `409 INVALID_STATUS_TRANSITION`.
+
+#### POST /lab-test-appointments/:id/payment
+
+Auth: `patient` (own). Rate limited 10/min. Initiates payment for a lab test appointment. Validates the appointment is in `PENDING` or `APPROVED` status.
+
+**Request body**
+
+```json
+{
+  "payment_method": "PAY_AT_CLINIC"
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `payment_method` | string | required, `PAY_AT_CLINIC` or `ONLINE` |
+
+**Response `200`**
+
+```json
+{
+  "id": "d4e5f6a7-...",
+  "appointment_id": "c3d4e5f6-...",
+  "amount": 800,
+  "currency": "INR",
+  "payment_method": "PAY_AT_CLINIC",
+  "payment_status": "PENDING",
+  "created_at": "2026-08-18T10:00:00Z"
+}
+```
+
+**Errors:** `404 APPOINTMENT_NOT_FOUND`, `409 INVALID_STATUS_TRANSITION`.
+
+### Clinic management: lab test CRUD
+
+#### GET /clinic/lab-tests
+
+Auth: `clinic_owner` (own clinics) or `branch_staff` (read-only) or `sys_admin`. Cursor-paginated. Lists all lab tests for the clinic.
+
+**Query:** `?status=&category=&search=&limit=&cursor=` — all optional.
+
+**Response `200`**
+
+```json
+{
+  "items": [ /* LabTest objects */ ],
+  "next_cursor": null
+}
+```
+
+#### POST /clinic/lab-tests
+
+Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Creates a new lab test for the clinic.
+
+**Request body**
+
+```json
+{
+  "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+  "name": "ECG",
+  "code": "ECG",
+  "description": "Electrocardiogram test",
+  "category": "cardiology",
+  "instructions": "Avoid heavy exercise 1 hour before",
+  "default_precautions": ["Remove metallic jewelry"]
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `clinic_id` | string (UUID) | required |
+| `name` | string | required, 1–255 |
+| `code` | string | required, 1–50, unique per clinic |
+| `description` | string? | max 2000 |
+| `category` | string | required, one of the [categories](#lab-test-categories) |
+| `instructions` | string? | max 2000 |
+| `default_precautions` | string[]? | array of strings, max 50 items, each max 255 chars |
+
+**Response `201`** — LabTest object.
+
+**Errors:** `400 VALIDATION_ERROR`, `409 TEST_CODE_ALREADY_EXISTS`.
+
+#### PUT /clinic/lab-tests/:id
+
+Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Updates a lab test. Full replace on optional fields.
+
+**Request body** (any subset of the create body fields, excluding `clinic_id`)
+
+```json
+{ "name": "12-Lead ECG", "description": "Standard 12-lead electrocardiogram" }
+```
+
+**Response `200`** — LabTest object.
+
+**Errors:** `404 TEST_NOT_FOUND`, `400 VALIDATION_ERROR`, `409 TEST_CODE_ALREADY_EXISTS`.
+
+#### PATCH /clinic/lab-tests/:id/status
+
+Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Toggles a lab test between active and inactive. Inactive tests are hidden from patients and cannot be booked.
+
+**Request body**
+
+```json
+{ "status": "inactive" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `status` | string | required, `active` or `inactive` |
+
+**Response `200`** — LabTest object.
+
+**Errors:** `404 TEST_NOT_FOUND`, `400 VALIDATION_ERROR`.
+
+### Clinic management: branch test configuration
+
+#### GET /clinic/branches/:branchId/lab-tests
+
+Auth: `clinic_owner` (owns branch) or `branch_staff` (own branch, requires `lab_tests:manage`) or `sys_admin`. Lists branch lab test configurations.
+
+**Query:** `?status=` (optional).
+
+**Response `200`**
+
+```json
+{
+  "items": [ /* BranchLabTest objects */ ]
+}
+```
+
+**Errors:** `404 BRANCH_NOT_FOUND`.
+
+#### POST /clinic/branches/:branchId/lab-tests
+
+Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Configures an existing lab test for a specific branch with pricing and availability settings.
+
+**Request body**
+
+```json
+{
+  "test_id": "a1b2c3d4-...",
+  "price": 800,
+  "currency": "INR",
+  "duration_minutes": 30,
+  "clinic_available": true,
+  "home_collection_available": false,
+  "prescription_required": false
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `test_id` | string (UUID) | required, must be a lab test belonging to the branch's clinic |
+| `price` | number | required, > 0, ≤ 1,000,000 |
+| `currency` | string | required, 3-letter code |
+| `duration_minutes` | number | 5–240, defaults to 30 |
+| `clinic_available` | boolean | defaults to `true` |
+| `home_collection_available` | boolean | defaults to `false` |
+| `prescription_required` | boolean | defaults to `false` |
+
+**Response `201`** — BranchLabTest object.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `404 TEST_NOT_FOUND`, `400 VALIDATION_ERROR`, `409 TEST_ALREADY_CONFIGURED_FOR_BRANCH`.
+
+#### PUT /clinic/branches/:branchId/lab-tests/:id
+
+Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Updates a branch lab test configuration.
+
+**Request body** (partial — any subset of the create body fields, excluding `test_id`)
+
+```json
+{ "price": 900, "home_collection_available": true }
+```
+
+**Response `200`** — BranchLabTest object.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `404 TEST_NOT_FOUND`, `400 VALIDATION_ERROR`.
+
+### Clinic management: lab test schedules
+
+#### GET /clinic/branches/:branchId/lab-test-schedules
+
+Auth: `clinic_owner` (owns branch) or `branch_staff` (own branch) or `sys_admin`. Lists the branch's weekly lab test schedules. Not paginated.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "e5f6a7b8-...",
+      "branch_id": "5e8f6c7a-...",
+      "weekday": 1,
+      "start_time": "09:00",
+      "end_time": "17:00",
+      "is_active": true,
+      "created_at": "2026-08-02T11:00:00Z",
+      "updated_at": "2026-08-02T11:00:00Z"
+    }
+  ]
+}
+```
+
+**Errors:** `404 BRANCH_NOT_FOUND`.
+
+#### POST /clinic/branches/:branchId/lab-test-schedules
+
+Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Creates a weekly schedule entry for the branch. Multiple entries per weekday are allowed (e.g. morning + evening slots).
+
+**Request body**
+
+```json
+{
+  "weekday": 1,
+  "start_time": "09:00",
+  "end_time": "17:00",
+  "is_active": true
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `weekday` | number | required, 0 (Sun) – 6 (Sat) |
+| `start_time` | string | required, `HH:MM` (24h) |
+| `end_time` | string | required, `HH:MM`, must be after `start_time` |
+| `is_active` | boolean | defaults to `true` |
+
+**Response `201`** — schedule entry object.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `400 VALIDATION_ERROR` (`end_time` not after `start_time`).
+
+#### PUT /clinic/branches/:branchId/lab-test-schedules/:id
+
+Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Updates a schedule entry.
+
+**Request body** (partial — any subset of `weekday`, `start_time`, `end_time`, `is_active`)
+
+```json
+{ "end_time": "18:00" }
+```
+
+**Response `200`** — schedule entry object.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `404 SCHEDULE_NOT_FOUND`, `400 VALIDATION_ERROR`.
+
+### Clinic management: appointment management
+
+#### GET /clinic/lab-test-appointments
+
+Auth: `clinic_owner` (own clinics) or `branch_staff` (own branch, with `lab_appointments:view`) or `sys_admin`. Cursor-paginated. Lists all lab test appointments for the clinic.
+
+**Query:** `?branch_id=&status=&test_id=&service_mode=&payment_status=&patient_name=&appointment_number=&date_from=&date_to=&limit=&cursor=` — all optional.
+
+Sorted by status priority (`PENDING` first, then `APPROVED`, then others) then by `appointment_date`/`start_time` descending.
+
+**Response `200`**
+
+```json
+{
+  "items": [ /* LabTestAppointment objects with nested test, branch, patient */ ],
+  "next_cursor": null
+}
+```
+
+**Errors:** `403 PERMISSION_DENIED` (branch_staff without `lab_appointments:view`).
+
+#### GET /clinic/lab-test-appointments/:id
+
+Auth: `clinic_owner` (own clinics) or `branch_staff` (own branch, with `lab_appointments:view`) or `sys_admin`. Returns a single appointment with full detail including nested `prescriptions[]` and `payments[]` arrays.
+
+**Response `200`** — LabTestAppointment object with `prescriptions` and `payments`.
+
+**Errors:** `404 APPOINTMENT_NOT_FOUND`.
+
+#### POST /clinic/lab-test-appointments/:id/approve
+
+Auth: `clinic_owner` or `branch_staff` with `lab_appointments:approve` or `sys_admin`. Rate limited 10/min. Approves a `PENDING` appointment. Merges the branch test's `default_precautions` with any custom `precautions` passed in the request body.
+
+On success, an in-app `lab_test_approved` notification is sent to the patient and an email is sent with the appointment details.
+
+**Request body**
+
+```json
+{
+  "precautions": ["Fasting required for 8 hours"],
+  "clinic_notes": "Patient has a pacemaker — use limb leads only"
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `precautions` | string[]? | optional, merged with the test's `default_precautions` |
+| `clinic_notes` | string? | max 2000 |
+
+**Response `200`** — LabTestAppointment object (`status: "APPROVED"`, `precautions` and `clinic_notes` set).
+
+**Errors:** `404 APPOINTMENT_NOT_FOUND`, `409 INVALID_STATUS_TRANSITION`.
+
+#### POST /clinic/lab-test-appointments/:id/reject
+
+Auth: `clinic_owner` or `branch_staff` with `lab_appointments:reject` or `sys_admin`. Rate limited 10/min. Rejects a `PENDING` appointment. A reason is required.
+
+On success, an in-app `lab_test_rejected` notification is sent to the patient and an email is sent with the rejection reason.
+
+**Request body**
+
+```json
+{ "reason": "Required specialist not available on this date" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `reason` | string | required, max 500 |
+
+**Response `200`** — LabTestAppointment object (`status: "REJECTED"`, `rejection_reason` set).
+
+**Errors:** `404 APPOINTMENT_NOT_FOUND`, `409 INVALID_STATUS_TRANSITION`.
+
+#### POST /clinic/lab-test-appointments/:id/complete
+
+Auth: `clinic_owner` or `branch_staff` with `lab_appointments:complete` or `sys_admin`. Rate limited 10/min. Marks an `APPROVED` appointment as completed. Sets `completed_at`.
+
+On success, an in-app `lab_test_completed` notification is sent to the patient and an email is sent confirming the test is done.
+
+**Response `200`** — LabTestAppointment object (`status: "COMPLETED"`).
+
+**Errors:** `404 APPOINTMENT_NOT_FOUND`, `409 INVALID_STATUS_TRANSITION`.
+
+#### POST /clinic/lab-test-appointments/:id/payment/collect
+
+Auth: `clinic_owner` or `branch_staff` with `lab_payments:collect` or `sys_admin`. Rate limited 10/min. Collects a pay-at-clinic payment. Only valid for appointments with `payment_method = "PAY_AT_CLINIC"`.
+
+**Request body**
+
+```json
+{ "reference_no": "CASH-00123" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `reference_no` | string? | max 255 |
+
+**Response `200`**
+
+```json
+{
+  "id": "d4e5f6a7-...",
+  "appointment_id": "c3d4e5f6-...",
+  "amount": 800,
+  "currency": "INR",
+  "payment_method": "PAY_AT_CLINIC",
+  "payment_status": "PAID",
+  "collected_by": "1a2b3c4d-...",
+  "collected_at": "2026-08-25T09:30:00Z",
+  "reference_no": "CASH-00123",
+  "paid_at": "2026-08-25T09:30:00Z"
+}
+```
+
+**Errors:** `404 APPOINTMENT_NOT_FOUND`, `409 INVALID_STATUS_TRANSITION`, `409 PAYMENT_ALREADY_COLLECTED`.
+
+---
+
 ## Payment ledger
 
 Every successful `PATCH /appointments/:id/payment` accumulates into a per-clinic, per-branch, per-month running total (`clinic_payment_ledger`), keyed on `(clinic_id, branch_id, period_month, currency)`.
@@ -2837,7 +3456,7 @@ Auth: `doctor` **only**, and only with a non-cancelled appointment relationship 
 }
 ```
 
-`type` ∈ `new_booking | booking_confirmed | payment_received | consultation_completed | prescription_ready | doctor_invited | doctor_invite_accepted | appointment_cancelled`
+`type` ∈ `new_booking | booking_confirmed | payment_received | consultation_completed | prescription_ready | doctor_invited | doctor_invite_accepted | appointment_cancelled | lab_test_booked | lab_test_approved | lab_test_rejected | lab_test_cancelled | lab_test_completed`
 
 **Delivery:** notifications are stored in-app and polled via the endpoints below. Patient-facing events (`booking_confirmed`, `payment_received`, `consultation_completed`, `prescription_ready`, and patient-cancelled/`appointment_cancelled` by staff) additionally fan out a **push** notification via Firebase Cloud Messaging to every device the patient is registered on (see [Device tokens](#device-tokens) below). Push failures never fail the triggering request.
 
@@ -2938,7 +3557,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `NO_APPOINTMENT_RELATIONSHIP` | 403 | No appointment link with the patient |
 | `FEE_OWNER_CONTROLLED` | 403 | Doctor tried to change the fee |
 | `INVALID_SIGNED_URL` | 403 | Bad/expired file URL signature |
-| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` / `EXCEPTION_NOT_FOUND` / `CLOSURE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
+| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` / `EXCEPTION_NOT_FOUND` / `CLOSURE_NOT_FOUND` / `TEST_NOT_FOUND` / `SCHEDULE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
 | `INVITE_EXPIRED` / `OTP_EXPIRED` / `RESET_TOKEN_EXPIRED` | 410 | Expired one-time code |
 | `FILE_TOO_LARGE` | 413 | Upload exceeds size limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Upload has a disallowed MIME type |
@@ -2959,8 +3578,12 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `CLINIC_HAS_ACTIVE_APPOINTMENTS` | 409 | Clinic/branch has non-terminal appointments |
 | `APPOINTMENT_NOT_YET_PAID` | 409 | Prescription scan before payment |
 | `APPOINTMENT_NOT_COMPLETED` | 409 | Tried to rate a doctor before the appointment was completed |
-| `OUTSIDE_DOCTOR_AVAILABILITY` / `DATE_IN_PAST` | 422 | Booking rules violated |
+| `TEST_CODE_ALREADY_EXISTS` | 409 | Lab test code already exists for this clinic |
+| `TEST_ALREADY_CONFIGURED_FOR_BRANCH` | 409 | Lab test is already configured for this branch |
+| `PAYMENT_ALREADY_COLLECTED` | 409 | Lab test payment was already collected |
+| `OUTSIDE_DOCTOR_AVAILABILITY` / `DATE_IN_PAST` / `OUTSIDE_SCHEDULE` | 422 | Booking rules violated |
 | `TRADE_LICENSE_NOT_VALIDATED` | 422 | `POST /clinics` without a `trade_license_validation_status: "VALID"` from a prior validate call |
+| `PRESCRIPTION_REQUIRED` | 422 | Lab test requires a prescription but none was provided |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
 
 ---
@@ -2976,6 +3599,19 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `confirmed` | `cancelled` | `PATCH /appointments/:id/cancel` | patient, branch_staff, clinic_owner |
 | `paid` | `completed` | `PATCH /appointments/:id/complete` | branch_staff, clinic_owner |
 | `paid` | `cancelled` | `PATCH /appointments/:id/cancel` | branch_staff, clinic_owner |
+
+Any other transition returns `409 INVALID_STATUS_TRANSITION`.
+
+### Lab test status transitions
+
+| From | To | Endpoint | Allowed roles |
+|---|---|---|---|
+| — | `PENDING` | `POST /lab-test-appointments` | patient |
+| `PENDING` | `APPROVED` | `POST /clinic/lab-test-appointments/:id/approve` | clinic_owner, branch_staff |
+| `PENDING` | `REJECTED` | `POST /clinic/lab-test-appointments/:id/reject` | clinic_owner, branch_staff |
+| `PENDING` | `CANCELLED` | `POST /lab-test-appointments/:id/cancel` | patient, clinic_owner, branch_staff |
+| `APPROVED` | `COMPLETED` | `POST /clinic/lab-test-appointments/:id/complete` | clinic_owner, branch_staff |
+| `APPROVED` | `CANCELLED` | `POST /lab-test-appointments/:id/cancel` | patient, clinic_owner, branch_staff |
 
 Any other transition returns `409 INVALID_STATUS_TRANSITION`.
 
@@ -3009,4 +3645,20 @@ PATCH /appointments/:id/payment     {fee_amount, method}   [Idempotency-Key]
 PUT   /appointments/:id/prescription {text}
 PATCH /appointments/:id/complete
 GET   /appointments/:id/prescription/pdf
+```
+
+### Lab test booking → approval → completion
+
+```
+POST /auth/patient/login                     {email, password}
+GET  /branches/:branchId/lab-tests           ?category=blood_test
+GET  /branches/:branchId/lab-tests/:testId   (detail + price, duration)
+GET  /branches/:branchId/lab-tests/:testId/availability?date=2026-08-25
+POST /lab-test-appointments                  {branch_id, branch_lab_test_id, appointment_date, start_time, payment_method}   [Idempotency-Key]
+POST /lab-test-appointments/:id/payment      {payment_method}
+GET  /patient/lab-test-appointments          ?status=PENDING
+POST /clinic/lab-test-appointments/:id/approve   {precautions: ["Fasting required"]}
+POST /clinic/lab-test-appointments/:id/payment/collect   {reference_no: "CASH-001"}
+POST /clinic/lab-test-appointments/:id/complete
+GET  /patient/lab-test-appointments/:id      (final status: COMPLETED)
 ```
