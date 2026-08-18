@@ -172,22 +172,31 @@ function emailShell(imgTag: string, bodyHtml: string): string {
 // the app deployment is down or hasn't served /public assets yet.
 const LOGO_URL =
   process.env.EMAIL_LOGO_URL ??
-  "https://res.cloudinary.com/p274ocjz/image/upload/v1787035846/medinexa/email-logo.png";
+  "https://res.cloudinary.com/p274ocjz/image/upload/v1787036452/medinexa/email-logo.png";
 const APP_ICON_URL =
   process.env.EMAIL_APP_ICON_URL ??
   "https://res.cloudinary.com/p274ocjz/image/upload/v1787035848/medinexa/email-app-icon.png";
 
 function logoImg(): string {
-  return `<img src="${LOGO_URL}" alt="Jido Healthcare" width="180" style="display:block;margin:0 auto;"/>`;
+  return `<img src="${LOGO_URL}" alt="Jido Healthcare" width="130" style="display:block;margin:0 auto;"/>`;
 }
 
 function appIconImg(): string {
-  return `<img src="${APP_ICON_URL}" alt="Jido Healthcare" width="80" style="display:block;margin:0 auto;"/>`;
+  return `<img src="${APP_ICON_URL}" alt="Jido Healthcare" width="64" style="display:block;margin:0 auto;"/>`;
 }
 
 /** Branded HTML email with the centered logo (non-patient recipients). */
 export function emailHtml(body: string): string {
   return emailShell(logoImg(), textToHtml(body));
+}
+
+/** Branded HTML email for a login OTP, with the code rendered large and bold. */
+export function otpEmailHtml(otp: string, expiryMinutes: number): string {
+  const body = `
+<p style="margin:0 0 16px;">Your one-time login code is:</p>
+<div style="text-align:center;font-size:36px;font-weight:700;letter-spacing:10px;color:#111111;margin:0 0 16px;">${escapeHtml(otp)}</div>
+<p style="margin:0;color:#666666;font-size:13px;">This code expires in ${expiryMinutes} minutes.</p>`;
+  return emailShell(logoImg(), body);
 }
 
 /** Branded HTML email with the centered app icon (patient recipients). */
