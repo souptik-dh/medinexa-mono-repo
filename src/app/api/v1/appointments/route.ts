@@ -33,6 +33,11 @@ export const GET = api(undefined, async (ctx) => {
   whereParts.push(scope.where);
   params.push(...scope.params);
 
+  const clinicId = sp.get("clinic_id");
+  if (clinicId) {
+    whereParts.push("a.clinic_id = ?");
+    params.push(clinicId);
+  }
   const status = sp.get("status");
   if (status) {
     if (!(APPT_STATUSES as readonly string[]).includes(status)) {
