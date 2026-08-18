@@ -150,8 +150,6 @@ function textToHtml(text: string): string {
   return escapeHtml(text).replace(/\n/g, "<br/>");
 }
 
-const BASE_URL = process.env.APP_URL ?? "https://medinexa-clinic.onrender.com";
-
 function emailShell(imgTag: string, bodyHtml: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -170,12 +168,21 @@ function emailShell(imgTag: string, bodyHtml: string): string {
 </body></html>`;
 }
 
+// Hosted on Cloudinary (not APP_URL) so the logo renders in emails even if
+// the app deployment is down or hasn't served /public assets yet.
+const LOGO_URL =
+  process.env.EMAIL_LOGO_URL ??
+  "https://res.cloudinary.com/p274ocjz/image/upload/v1787035846/medinexa/email-logo.png";
+const APP_ICON_URL =
+  process.env.EMAIL_APP_ICON_URL ??
+  "https://res.cloudinary.com/p274ocjz/image/upload/v1787035848/medinexa/email-app-icon.png";
+
 function logoImg(): string {
-  return `<img src="${BASE_URL}/logo.png" alt="Jido Healthcare" width="180" style="display:block;margin:0 auto;"/>`;
+  return `<img src="${LOGO_URL}" alt="Jido Healthcare" width="180" style="display:block;margin:0 auto;"/>`;
 }
 
 function appIconImg(): string {
-  return `<img src="${BASE_URL}/app_icon.png" alt="Jido Healthcare" width="80" style="display:block;margin:0 auto;"/>`;
+  return `<img src="${APP_ICON_URL}" alt="Jido Healthcare" width="80" style="display:block;margin:0 auto;"/>`;
 }
 
 /** Branded HTML email with the centered logo (non-patient recipients). */
