@@ -47,7 +47,11 @@ export function serializeLabTest(r: Row) {
     description: r.description ?? null,
     category: r.category,
     instructions: r.instructions ?? null,
-    default_precautions: r.default_precautions ? JSON.parse(r.default_precautions) : [],
+    default_precautions: r.default_precautions
+      ? typeof r.default_precautions === "string"
+        ? JSON.parse(r.default_precautions)
+        : r.default_precautions
+      : [],
     status: r.status,
     created_at: r.created_at,
     updated_at: r.updated_at,
