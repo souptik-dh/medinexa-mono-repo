@@ -65,9 +65,9 @@ const createSchema = z.object({
   clinic_id: z.string().uuid(),
   name: z.string().min(1).max(255),
   code: z.string().min(1).max(50),
-  description: z.string().max(2000).optional(),
+  description: z.string().max(2000).nullable().optional(),
   category: z.enum(LAB_TEST_CATEGORIES),
-  instructions: z.string().max(2000).optional(),
+  instructions: z.string().max(2000).nullable().optional(),
   default_precautions: z.array(z.string().max(500)).optional(),
 });
 

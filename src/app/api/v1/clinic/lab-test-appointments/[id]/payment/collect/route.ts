@@ -32,6 +32,13 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     throw badRequest("INVALID_PAYMENT_METHOD", "Can only collect payment for pay-at-clinic appointments.");
   }
 
+  if (!["APPROVED", "COMPLETED"].includes(appointment.status)) {
+    throw conflict(
+      "INVALID_APPOINTMENT_STATUS",
+      "Payment can only be collected for approved or completed appointments.",
+    );
+  }
+
   await withTransaction(async (conn) => {
     await conn.query(
       `UPDATE lab_test_payments SET

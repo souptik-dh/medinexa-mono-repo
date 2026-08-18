@@ -2,9 +2,10 @@ import { api, json } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool } from "@/lib/db";
 import { newId } from "@/lib/ids";
-import { parseBody } from "@/lib/validators";
+import { parseBody, timeSchema } from "@/lib/validators";
 import { requireBranchAccess } from "@/lib/permissions";
 import { auditLabAction } from "@/lib/lab-tests";
+import { badRequest } from "@/lib/errors";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
 
@@ -33,8 +34,8 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
 
 const scheduleSchema = z.object({
   weekday: z.number().int().min(0).max(6),
-  start_time: z.string().regex(/^\d{2}:\d{2}$/),
-  end_time: z.string().regex(/^\d{2}:\d{2}$/),
+  start_time: timeSchema,
+  end_time: timeSchema,
   is_active: z.boolean().default(true),
 });
 
@@ -46,7 +47,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
   await requireBranchAccess(pool, auth, branchId, "lab_tests:manage");
 
   if (body.start_time >= body.end_time) {
-    throw new Error("start_time must be before end_time.");
+    throw badRequest("VALIDATION_ERROR", "start_time must be before end_time.", "end_time");
   }
 
   const id = newId();
