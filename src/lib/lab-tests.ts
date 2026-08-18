@@ -179,6 +179,26 @@ export function labTestScopeWhere(auth: AuthContext): { where: string; params: u
   }
 }
 
+// Scope for queries against `lab_tests lt JOIN clinics c` directly (no
+// `branches b` join) — labTestScopeWhere's `b.*` aliases don't exist there.
+export function labTestOwnerScopeWhere(auth: AuthContext): { where: string; params: unknown[] } {
+  switch (auth.role) {
+    case "patient":
+      return { where: "1 = 1", params: [] };
+    case "branch_staff":
+      return {
+        where: "lt.clinic_id IN (SELECT clinic_id FROM branches WHERE id = ?)",
+        params: [auth.branchId ?? "__none__"],
+      };
+    case "clinic_owner":
+      return { where: "c.owner_user_id = ?", params: [auth.userId] };
+    case "sys_admin":
+      return { where: "1 = 1", params: [] };
+    default:
+      return { where: "1 = 0", params: [] };
+  }
+}
+
 export function labApptScopeWhere(auth: AuthContext): { where: string; params: unknown[] } {
   switch (auth.role) {
     case "patient":
@@ -202,11 +222,11 @@ export async function getLabTestInScope(
   id: string,
   auth: AuthContext,
 ): Promise<Row> {
-  const { where, params } = labTestScopeWhere(auth);
+  const { where, params } = labTestOwnerScopeWhere(auth);
   const [rows] = await db.query<Row[]>(
     `SELECT lt.* FROM lab_tests lt
        JOIN clinics c ON c.id = lt.clinic_id
-     WHERE lt.id = ? AND ${where} AND lt.deleted_at IS NULL`,
+     WHERE lt.id = ? AND ${where}`,
     [id, ...params],
   );
   const row = rows[0];
