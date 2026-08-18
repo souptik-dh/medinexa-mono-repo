@@ -6,7 +6,7 @@ import { badRequest, notFound } from "@/lib/errors";
 
 export const GET = api({ rateLimit: 60 }, async (ctx) => {
   requireRoles(ctx.auth, ["patient", "clinic_owner", "branch_staff", "sys_admin"]);
-  const { branchId } = ctx.params;
+  const { id: branchId } = ctx.params;
   const sp = ctx.request.nextUrl.searchParams;
   const category = sp.get("category");
   const search = sp.get("search");
