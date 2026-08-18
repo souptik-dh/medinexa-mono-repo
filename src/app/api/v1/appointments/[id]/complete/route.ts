@@ -4,6 +4,7 @@ import { requireRoles } from "@/lib/auth";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
 import { createPatientNotification } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
+import { notFound } from "@/lib/errors";
 
 export const PATCH = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["branch_staff", "clinic_owner"]);
@@ -18,5 +19,7 @@ export const PATCH = api(undefined, async (ctx) => {
   });
 
   const [rows] = await pool.query<Row[]>(`SELECT * FROM appointments WHERE id = ?`, [ctx.params.id]);
-  return json(serializeAppointment(rows[0]));
+  const appointment = rows[0];
+  if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
+  return json(serializeAppointment(appointment));
 });

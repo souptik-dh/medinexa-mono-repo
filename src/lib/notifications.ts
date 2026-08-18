@@ -150,6 +150,44 @@ function textToHtml(text: string): string {
   return escapeHtml(text).replace(/\n/g, "<br/>");
 }
 
+const BASE_URL = process.env.APP_URL ?? "https://medinexa-clinic.onrender.com";
+
+function emailShell(imgTag: string, bodyHtml: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
+<body style="margin:0;padding:0;background-color:#f4f6f9;font-family:Arial,Helvetica,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f9;padding:40px 0;">
+<tr><td align="center">
+<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+<tr><td style="padding:32px 32px 0;text-align:center;">${imgTag}</td></tr>
+<tr><td style="padding:24px 32px 32px;color:#333333;font-size:15px;line-height:1.6;">${bodyHtml}</td></tr>
+<tr><td style="padding:16px 32px;background-color:#f9fafb;border-top:1px solid #eee;text-align:center;font-size:12px;color:#999999;">
+&copy; ${new Date().getFullYear()} Jido Healthcare. All rights reserved.
+</td></tr>
+</table>
+</td></tr></table>
+</body></html>`;
+}
+
+function logoImg(): string {
+  return `<img src="${BASE_URL}/logo.png" alt="Jido Healthcare" width="180" style="display:block;margin:0 auto;"/>`;
+}
+
+function appIconImg(): string {
+  return `<img src="${BASE_URL}/app_icon.png" alt="Jido Healthcare" width="80" style="display:block;margin:0 auto;"/>`;
+}
+
+/** Branded HTML email with the centered logo (non-patient recipients). */
+export function emailHtml(body: string): string {
+  return emailShell(logoImg(), textToHtml(body));
+}
+
+/** Branded HTML email with the centered app icon (patient recipients). */
+export function patientEmailHtml(body: string): string {
+  return emailShell(appIconImg(), textToHtml(body));
+}
+
 /**
  * Sends email through the Brevo SMTP API (credentials in .env). Falls back to
  * a console log in local dev when BREVO_API_KEY is not configured. Never logs

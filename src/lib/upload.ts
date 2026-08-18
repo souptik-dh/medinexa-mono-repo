@@ -1,4 +1,4 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { badRequest, tooLarge, unsupported } from "@/lib/errors";
@@ -68,7 +68,9 @@ export function verifyFileUrl(
   const expected = createHmac("sha256", SIGNING_SECRET)
     .update(`${fileName}:${exp}`)
     .digest("hex");
-  return expected === sig;
+  const expectedBuf = Buffer.from(expected, "hex");
+  const sigBuf = Buffer.from(sig, "hex");
+  return expectedBuf.length === sigBuf.length && timingSafeEqual(expectedBuf, sigBuf);
 }
 
 export function mimeFromFileName(fileName: string): string {

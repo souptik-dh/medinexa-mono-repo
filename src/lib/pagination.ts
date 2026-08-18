@@ -31,7 +31,9 @@ export async function fetchPage(opts: {
   cursor: Record<string, unknown> | null;
   limit: number;
 }): Promise<{ rows: Row[]; nextCursor: string | null }> {
-  const orderBy = opts.orderBy ?? "created_at DESC, id DESC";
+  const orderBy = (opts.orderBy ?? "created_at DESC, id DESC")
+    .replace(/[^a-z0-9_,\s.]/gi, "")
+    .trim() || "created_at DESC, id DESC";
   const cursor = cursorClause(opts.cursor);
   const whereSql = opts.where
     ? `WHERE ${opts.where}${cursor.sql}`

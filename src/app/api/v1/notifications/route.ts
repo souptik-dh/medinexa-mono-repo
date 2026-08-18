@@ -9,6 +9,9 @@ function notifScope(auth: { role: string; userId: string; branchId: string | nul
   params: unknown[];
 } {
   if (auth.role === "branch_staff") {
+    if (!auth.branchId) {
+      return { where: "n.user_id = ?", params: [auth.userId] };
+    }
     return { where: "(n.user_id = ? OR n.branch_id = ?)", params: [auth.userId, auth.branchId] };
   }
   return { where: "n.user_id = ?", params: [auth.userId] };

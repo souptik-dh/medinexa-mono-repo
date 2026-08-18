@@ -5,9 +5,9 @@ import {
   verifyPassword,
   generateVerificationToken,
 } from "@/lib/auth";
-import { conflict, forbidden, unauthorized, isUniqueViolation } from "@/lib/errors";
+import { conflict, forbidden, unauthorized, badRequest, isUniqueViolation } from "@/lib/errors";
 import { newId, type Role } from "@/lib/ids";
-import { sendEmail } from "@/lib/notifications";
+import { sendEmail, emailHtml } from "@/lib/notifications";
 
 const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -26,10 +26,12 @@ async function sendVerificationEmail(userId: string, email: string, name: string
   const verifyUrl = process.env.VERIFY_EMAIL_URL ?? "https://healthcare.jido.co.in";
   const link = `${verifyUrl}/verify_email?token=${raw}`;
 
+  const verifyBody = `Hi ${name},\n\nWelcome to Jido Healthcare! Please verify your email address to activate your clinic account and log in:\n\n${link}\n\nThis link expires in 24 hours. If you didn't create this account, you can safely ignore this email.`;
   await sendEmail(
     email,
     "Welcome to Jido Healthcare — verify your email",
-    `Hi ${name},\n\nWelcome to Jido Healthcare! Please verify your email address to activate your clinic account and log in:\n\n${link}\n\nThis link expires in 24 hours. If you didn't create this account, you can safely ignore this email.`,
+    verifyBody,
+    emailHtml(verifyBody),
   );
 }
 
@@ -102,7 +104,7 @@ export async function registerUser(input: RegisterInput) {
       );
       if (input.role === "clinic_owner") {
         if (!input.clinicName) {
-          throw new Error("clinicName is required to register a clinic owner.");
+          throw badRequest("CLINIC_NAME_REQUIRED", "clinicName is required to register a clinic owner.");
         }
         const clinicId = newId();
         const clinicName = input.clinicName;

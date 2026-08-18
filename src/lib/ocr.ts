@@ -21,16 +21,20 @@ export async function createOcrJob(
   const draft = `[OCR DRAFT] Digitized prescription for appointment ${appointmentId}.\nGenerated ${new Date().toISOString()} — review and edit before publishing to the patient.`;
   const confidence = 94.2;
 
-  setTimeout(() => {
-    pool
-      .query(
-        `UPDATE prescription_scan_jobs
-            SET status = 'done', draft_text = ?, confidence = ?, completed_at = UTC_TIMESTAMP(3)
-          WHERE id = ?`,
-        [draft, confidence, id],
-      )
-      .catch((err) => console.error("OCR job completion failed:", err));
-  }, 6000);
+  await pool
+    .query(
+      `UPDATE prescription_scan_jobs
+          SET status = 'done', draft_text = ?, confidence = ?, completed_at = UTC_TIMESTAMP(3)
+        WHERE id = ?`,
+      [draft, confidence, id],
+    )
+    .catch(async (err) => {
+      console.error("OCR job completion failed:", err);
+      await pool.query(
+        `UPDATE prescription_scan_jobs SET status = 'failed' WHERE id = ?`,
+        [id],
+      );
+    });
 
   return id;
 }

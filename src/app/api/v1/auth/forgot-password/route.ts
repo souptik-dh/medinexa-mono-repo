@@ -4,7 +4,7 @@ import { parseBody, emailSchema } from "@/lib/validators";
 import { pool, type Row } from "@/lib/db";
 import { generateResetToken } from "@/lib/auth";
 import { newId } from "@/lib/ids";
-import { sendEmail } from "@/lib/notifications";
+import { sendEmail, patientEmailHtml } from "@/lib/notifications";
 
 const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 
@@ -34,10 +34,12 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
     const resetUrl = process.env.RESET_PASSWORD_URL ?? "https://medinexa-clinic.onrender.com";
     const link = `${resetUrl}/new_password?token=${raw}`;
 
+    const resetBody = `We received a request to reset your password. Click the link below to choose a new one:\n\n${link}\n\nThis link expires in 1 hour. If you didn't request this, you can safely ignore this email.`;
     await sendEmail(
       body.email,
       "Reset your password",
-      `We received a request to reset your password. Click the link below to choose a new one:\n\n${link}\n\nThis link expires in 1 hour. If you didn't request this, you can safely ignore this email.`,
+      resetBody,
+      patientEmailHtml(resetBody),
     );
   }
 

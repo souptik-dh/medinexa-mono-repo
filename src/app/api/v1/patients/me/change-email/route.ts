@@ -5,7 +5,7 @@ import { parseBody, emailSchema } from "@/lib/validators";
 import { requireRoles, verifyPassword, generateVerificationToken } from "@/lib/auth";
 import { conflict, unauthorized } from "@/lib/errors";
 import { newId } from "@/lib/ids";
-import { sendEmail } from "@/lib/notifications";
+import { sendEmail, patientEmailHtml } from "@/lib/notifications";
 
 const EMAIL_CHANGE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -50,15 +50,19 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
 
   const verifyUrl = process.env.VERIFY_EMAIL_URL ?? "https://healthcare.jido.co.in";
   const link = `${verifyUrl}/verify_email?token=${raw}`;
+  const confirmBody = `Hi ${user.name ?? "there"},\n\nClick the link below to confirm this as your new Jido Healthcare account email:\n\n${link}\n\nThis link expires in 24 hours. If you didn't request this change, you can safely ignore this email.`;
   await sendEmail(
     body.new_email,
     "Confirm your new email address",
-    `Hi ${user.name ?? "there"},\n\nClick the link below to confirm this as your new Jido Healthcare account email:\n\n${link}\n\nThis link expires in 24 hours. If you didn't request this change, you can safely ignore this email.`,
+    confirmBody,
+    patientEmailHtml(confirmBody),
   );
+  const notifyBody = `Hi ${user.name ?? "there"},\n\nWe received a request to change your account email to ${body.new_email}. If this wasn't you, please change your password immediately.`;
   await sendEmail(
     user.email,
     "Email change requested",
-    `Hi ${user.name ?? "there"},\n\nWe received a request to change your account email to ${body.new_email}. If this wasn't you, please change your password immediately.`,
+    notifyBody,
+    patientEmailHtml(notifyBody),
   );
 
   return json({

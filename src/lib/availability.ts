@@ -30,7 +30,9 @@ export function weekdayInTz(date: string, tz: string): number {
     weekday: "short",
   }).formatToParts(dt);
   const weekday = parts.find((p) => p.type === "weekday")?.value;
-  return Math.max(0, WEEKDAYS.indexOf(weekday ?? ""));
+  const idx = WEEKDAYS.indexOf(weekday ?? "");
+  if (idx === -1) throw new Error(`Unrecognized weekday "${weekday}" for tz "${tz}"`);
+  return idx;
 }
 
 export function weekdayNameInTz(date: string, tz: string, style: "long" | "short" = "long"): string {

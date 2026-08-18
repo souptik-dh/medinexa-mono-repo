@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, randomInt } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import { pool, type Row } from "@/lib/db";
@@ -34,7 +34,7 @@ export function verifyPassword(pw: string, hash: string | null): Promise<boolean
 }
 
 export function generateOtp(): string {
-  return String(Math.floor(100000 + Math.random() * 900000));
+  return String(randomInt(100000, 1000000));
 }
 
 export function generateInviteCode(): string {
@@ -136,7 +136,7 @@ export async function rotateRefreshToken(raw: string): Promise<{ access_token: s
     const row = rows[0];
     if (!row) throw unauthorized("REFRESH_TOKEN_INVALID", "Refresh token is invalid.");
     if (row.revoked_at) throw unauthorized("REFRESH_TOKEN_INVALID", "Refresh token has been revoked.");
-    if (new Date(row.expires_at).getTime() <= Date.now())
+    if (new Date(String(row.expires_at).replace(" ", "T") + "Z").getTime() <= Date.now())
       throw unauthorized("REFRESH_TOKEN_INVALID", "Refresh token has expired.");
 
     const user = await loadUser(row.user_id);

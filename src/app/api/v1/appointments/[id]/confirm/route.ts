@@ -2,8 +2,9 @@ import { api, json } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createPatientNotification, sendEmail } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, patientEmailHtml } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
+import { notFound } from "@/lib/errors";
 
 export const PATCH = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["branch_staff", "clinic_owner"]);
@@ -21,6 +22,7 @@ export const PATCH = api(undefined, async (ctx) => {
 
   const [rows] = await pool.query<Row[]>(`SELECT * FROM appointments WHERE id = ?`, [ctx.params.id]);
   const appointment = rows[0];
+  if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
 
   const [details] = await pool.query<Row[]>(
     `SELECT u.name AS patient_name, u.email AS patient_email, d.name AS doctor_name, b.name AS branch_name
@@ -33,10 +35,12 @@ export const PATCH = api(undefined, async (ctx) => {
   );
   const info = details[0];
   if (info?.patient_email) {
+    const confirmBody = `Hi ${info.patient_name ?? "there"},\n\nYour appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
     await sendEmail(
       info.patient_email,
       "Your appointment is confirmed",
-      `Hi ${info.patient_name ?? "there"},\n\nYour appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`,
+      confirmBody,
+      patientEmailHtml(confirmBody),
     );
   }
 
