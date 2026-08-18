@@ -7,7 +7,7 @@ import { badRequest, conflict, notFound, unprocessable, isUniqueViolation } from
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { scopeWhere, serializeAppointment, APPT_STATUSES } from "@/lib/appointments";
-import { notifyBranchStaff, createNotification, branchContactEmails, sendEmail, emailHtml } from "@/lib/notifications";
+import { notifyBranchStaff, createNotification, branchContactEmails, sendEmail, detailsEmailHtml } from "@/lib/notifications";
 import {
   todayInTz,
   weekdayInTz,
@@ -342,7 +342,29 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
         `Doctor: Dr. ${info.doctor_name}`,
         `Date: ${body.date} at ${scheduledTime}`,
       ].join("\n");
-      await Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody, emailHtml(emailBody))));
+      const emailHtmlBody = detailsEmailHtml({
+        heading: "New Appointment Booked",
+        intro: `A new appointment has been confirmed at ${info.branch_name}.`,
+        rows: [
+          { label: "Doctor", value: `Dr. ${info.doctor_name}` },
+          { label: "Date & Time", value: `${body.date} at ${scheduledTime}` },
+          {
+            label: "Visiting Patient",
+            value: patientDetails.name,
+            sub: isForSelf
+              ? patientDetails.phone
+                ? `Phone: ${patientDetails.phone}`
+                : undefined
+              : `${patientDetails.relationship} of ${info.patient_name ?? "the account holder"}${patientDetails.phone ? ` · Phone: ${patientDetails.phone}` : ""}`,
+          },
+          {
+            label: "Booked By",
+            value: info.patient_name ?? "-",
+            sub: `${info.patient_email ?? "-"} · Phone: ${info.patient_phone ?? "-"}`,
+          },
+        ],
+      });
+      await Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody, emailHtmlBody)));
     }
 
     return { status: 201, body: serializeAppointment(rows[0]) };
