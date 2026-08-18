@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { pool, type Row } from "@/lib/db";
-import { ApiError, conflict, unprocessable } from "@/lib/errors";
+import { ApiError, conflict, unprocessable, isUniqueViolation } from "@/lib/errors";
 
 export interface IdempotentResult<T> {
   status: number;
@@ -36,7 +36,8 @@ export async function runIdempotent<T>(
       [scope, key, requestHash],
     );
     claimed = (res as { affectedRows: number }).affectedRows === 1;
-  } catch {
+  } catch (err) {
+    if (!isUniqueViolation(err)) throw err;
     claimed = false;
   }
 

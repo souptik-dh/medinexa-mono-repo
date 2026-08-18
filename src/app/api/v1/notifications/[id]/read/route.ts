@@ -15,7 +15,11 @@ export const PATCH = api(undefined, async (ctx) => {
 
   if (!notification.read_at) {
     await pool.query(`UPDATE notifications SET read_at = UTC_TIMESTAMP(3) WHERE id = ?`, [ctx.params.id]);
-    notification.read_at = new Date().toISOString().slice(0, 19).replace("T", " ");
+    const [updated] = await pool.query<Row[]>(
+      `SELECT read_at FROM notifications WHERE id = ?`,
+      [ctx.params.id],
+    );
+    notification.read_at = updated[0]?.read_at ?? notification.read_at;
   }
 
   return json({

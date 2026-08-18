@@ -4,7 +4,7 @@ import { pool, type Row } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { getAppointmentInScope } from "@/lib/appointments";
-import { conflict, isUniqueViolation } from "@/lib/errors";
+import { conflict, isUniqueViolation, notFound } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 
 const reviewSchema = z.object({
@@ -63,5 +63,7 @@ export const POST = api(undefined, async (ctx) => {
     `SELECT * FROM reviews WHERE patient_id = ? AND doctor_id = ?`,
     [auth.userId, appt.doctor_id],
   );
-  return json(serializeReview(rows[0]), status);
+  const review = rows[0];
+  if (!review) throw notFound("REVIEW_NOT_FOUND", "Review not found.");
+  return json(serializeReview(review), status);
 });

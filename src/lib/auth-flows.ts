@@ -5,7 +5,7 @@ import {
   verifyPassword,
   generateVerificationToken,
 } from "@/lib/auth";
-import { conflict, forbidden, unauthorized, isUniqueViolation } from "@/lib/errors";
+import { conflict, forbidden, unauthorized, badRequest, isUniqueViolation } from "@/lib/errors";
 import { newId, type Role } from "@/lib/ids";
 import { sendEmail } from "@/lib/notifications";
 
@@ -102,7 +102,7 @@ export async function registerUser(input: RegisterInput) {
       );
       if (input.role === "clinic_owner") {
         if (!input.clinicName) {
-          throw new Error("clinicName is required to register a clinic owner.");
+          throw badRequest("CLINIC_NAME_REQUIRED", "clinicName is required to register a clinic owner.");
         }
         const clinicId = newId();
         const clinicName = input.clinicName;

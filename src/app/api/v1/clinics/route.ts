@@ -8,6 +8,10 @@ import { requireRoles } from "@/lib/auth";
 import { newId } from "@/lib/ids";
 import { unprocessable } from "@/lib/errors";
 
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
 export const GET = api(undefined, async (ctx) => {
   const { limit, cursor } = parsePagination(ctx.request.nextUrl.searchParams);
   const search = ctx.request.nextUrl.searchParams.get("search")?.trim() ?? "";
@@ -16,7 +20,7 @@ export const GET = api(undefined, async (ctx) => {
   const params: unknown[] = [];
   if (search) {
     conditions.push("c.name LIKE ?");
-    params.push(`%${search}%`);
+    params.push(`%${escapeLike(search)}%`);
   }
   if (ctx.auth?.role === "clinic_owner") {
     conditions.push("c.owner_user_id = ?");

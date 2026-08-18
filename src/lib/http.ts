@@ -18,7 +18,7 @@ interface ApiOptions {
 const DATETIME_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/;
 
 function toIsoReviver(_key: string, value: unknown): unknown {
-  if (typeof value === "string" && DATETIME_RE.test(value)) {
+  if (typeof value === "string" && value.length >= 19 && DATETIME_RE.test(value)) {
     return `${value.replace(" ", "T")}Z`;
   }
   return value;
@@ -42,10 +42,21 @@ export function clientIp(request: NextRequest): string {
 }
 
 const hits = new Map<string, number[]>();
+let lastCleanup = Date.now();
 
 export function checkRateLimit(key: string, limitPerMin: number): void {
   const now = Date.now();
-  const arr = (hits.get(key) ?? []).filter((t) => now - t < 60_000);
+
+  if (now - lastCleanup > 60_000) {
+    for (const [k, arr] of hits) {
+      const fresh = arr.filter((t) => now - t < 60_000);
+      if (fresh.length === 0) hits.delete(k);
+      else hits.set(k, fresh);
+    }
+    lastCleanup = now;
+  }
+
+  const arr = hits.get(key) ?? [];
   if (arr.length >= limitPerMin) throw rateLimited();
   arr.push(now);
   hits.set(key, arr);

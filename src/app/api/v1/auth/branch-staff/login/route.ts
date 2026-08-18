@@ -23,7 +23,7 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
   if (!users[0]) {
     throw forbidden(
       "NOT_BRANCH_STAFF",
-      "Access Denied: This email address is not registered as Branch Staff.",
+      "Access Denied: If an account exists for this email, it is not registered as Branch Staff.",
     );
   }
 

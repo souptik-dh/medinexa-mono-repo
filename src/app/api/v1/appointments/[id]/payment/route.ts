@@ -3,7 +3,7 @@ import { api, json } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
-import { badRequest } from "@/lib/errors";
+import { badRequest, notFound } from "@/lib/errors";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
 import { createNotification, createPatientNotification, clinicOwnerContact, sendEmail } from "@/lib/notifications";
 import { newId } from "@/lib/ids";
@@ -90,6 +90,7 @@ export const PATCH = api({ rateLimit: 20 }, async (ctx) => {
 
     const [rows] = await pool.query<Row[]>(`SELECT * FROM appointments WHERE id = ?`, [ctx.params.id]);
     const appointment = rows[0];
+    if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
 
     const [details] = await pool.query<Row[]>(
       `SELECT u.name AS patient_name, co.email AS owner_email, b.name AS branch_name

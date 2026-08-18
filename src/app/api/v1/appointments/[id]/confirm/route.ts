@@ -4,6 +4,7 @@ import { requireRoles } from "@/lib/auth";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
 import { createPatientNotification, sendEmail } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
+import { notFound } from "@/lib/errors";
 
 export const PATCH = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["branch_staff", "clinic_owner"]);
@@ -21,6 +22,7 @@ export const PATCH = api(undefined, async (ctx) => {
 
   const [rows] = await pool.query<Row[]>(`SELECT * FROM appointments WHERE id = ?`, [ctx.params.id]);
   const appointment = rows[0];
+  if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
 
   const [details] = await pool.query<Row[]>(
     `SELECT u.name AS patient_name, u.email AS patient_email, d.name AS doctor_name, b.name AS branch_name

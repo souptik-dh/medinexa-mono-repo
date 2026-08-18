@@ -3,7 +3,8 @@ import { api, json, readJson } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
-import { conflict } from "@/lib/errors";
+import { notFound } from "@/lib/errors";
+
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
 import { createPatientNotification, notifyBranchStaff } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
@@ -23,27 +24,12 @@ export const PATCH = api(undefined, async (ctx) => {
       await assertBranchStaffPermission(conn, auth, appt.branch_id, "appointments:cancel");
     }
 
-    if (auth.role === "patient") {
-      if (appt.status === "paid") {
-        throw conflict(
-          "CANNOT_CANCEL_PAID_APPOINTMENT",
-          "A paid appointment cannot be cancelled by the patient. Contact the clinic for a refund.",
-        );
-      }
-      if (!["pending", "confirmed"].includes(appt.status)) {
-        throw conflict(
-          "INVALID_STATUS_TRANSITION",
-          `Cannot cancel appointment in status '${appt.status}'.`,
-        );
-      }
-    } else if (!["pending", "confirmed", "paid"].includes(appt.status)) {
-      throw conflict(
-        "INVALID_STATUS_TRANSITION",
-        `Cannot cancel appointment in status '${appt.status}'.`,
-      );
-    }
+    const allowedFrom =
+      auth.role === "patient"
+        ? ["pending", "confirmed"]
+        : ["pending", "confirmed", "paid"];
 
-    await transition(conn, appt, "cancelled", auth.userId, ["pending", "confirmed", "paid"], body.reason ?? null);
+    await transition(conn, appt, "cancelled", auth.userId, allowedFrom, body.reason ?? null);
 
     if (auth.role === "patient") {
       await notifyBranchStaff(conn, appt.branch_id, "appointment_cancelled", {
@@ -63,5 +49,7 @@ export const PATCH = api(undefined, async (ctx) => {
   });
 
   const [rows] = await pool.query<Row[]>(`SELECT * FROM appointments WHERE id = ?`, [ctx.params.id]);
-  return json(serializeAppointment(rows[0]));
+  const appointment = rows[0];
+  if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
+  return json(serializeAppointment(appointment));
 });

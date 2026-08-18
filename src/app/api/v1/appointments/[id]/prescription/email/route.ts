@@ -4,6 +4,7 @@ import { requireRoles } from "@/lib/auth";
 import { requireAssignedDoctor } from "@/lib/prescriptions";
 import { getAppointmentInScope } from "@/lib/appointments";
 import { sendEmail } from "@/lib/notifications";
+import { notFound } from "@/lib/errors";
 
 export const POST = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["doctor", "patient"]);
@@ -20,8 +21,11 @@ export const POST = api(undefined, async (ctx) => {
     [appointment.patient_id],
   );
   const patient = rows[0];
+  if (!patient) {
+    throw notFound("PATIENT_NOT_FOUND", "Patient account not found.");
+  }
 
-  sendEmail(
+  await sendEmail(
     patient.email,
     "Your prescription",
     `Your prescription for appointment ${appointment.id} is ready. Download it from the app.`,

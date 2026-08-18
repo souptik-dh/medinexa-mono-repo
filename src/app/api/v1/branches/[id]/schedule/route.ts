@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
-import { pool, type Row } from "@/lib/db";
+import { pool, type Row, withTransaction } from "@/lib/db";
 import { requireRoles, type AuthContext } from "@/lib/auth";
 import { requireBranchAccess } from "@/lib/permissions";
 import { notFound, forbidden } from "@/lib/errors";
@@ -79,14 +79,16 @@ export const PATCH = api(undefined, async (ctx) => {
   await requireBranchAccess(pool, auth, branchId, "branch:settings");
 
   const body = parseBody(updateSchema, await readJson(ctx.request));
-  for (const day of body.operating_days) {
-    await pool.query(
-      `INSERT INTO branch_operating_days (id, branch_id, weekday, is_open)
-       VALUES (?, ?, ?, ?)
-       ON DUPLICATE KEY UPDATE is_open = VALUES(is_open)`,
-      [newId(), branchId, day.weekday, day.is_open ? 1 : 0],
-    );
-  }
+  await withTransaction(async (conn) => {
+    for (const day of body.operating_days) {
+      await conn.query(
+        `INSERT INTO branch_operating_days (id, branch_id, weekday, is_open)
+         VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE is_open = VALUES(is_open)`,
+        [newId(), branchId, day.weekday, day.is_open ? 1 : 0],
+      );
+    }
+  });
 
   const overrides = await getBranchOperatingDays(pool, branchId);
   return json({ branch_id: branchId, operating_days: fullWeek(overrides) });

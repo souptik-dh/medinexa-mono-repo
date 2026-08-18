@@ -1,7 +1,7 @@
 import { api, json } from "@/lib/http";
 import { pool } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
-import { conflict } from "@/lib/errors";
+import { conflict, notFound } from "@/lib/errors";
 import { requireAssignedDoctor } from "@/lib/prescriptions";
 import { saveUpload, signFileUrl } from "@/lib/upload";
 import { createOcrJob } from "@/lib/ocr";
@@ -24,6 +24,7 @@ export const POST = api(undefined, async (ctx) => {
   const saved = await saveUpload(form.get("file"), "prescription-scan", MAX_BYTES, SCAN_MIMES);
   const scanUrl = signFileUrl(saved.fileName);
 
-  const jobId = await createOcrJob(appointment.id, auth.doctorId!, scanUrl);
+  if (!auth.doctorId) throw notFound("DOCTOR_NOT_FOUND", "Doctor profile not found.");
+  const jobId = await createOcrJob(appointment.id, auth.doctorId, scanUrl);
   return json({ job_id: jobId, status: "processing" }, 202);
 });

@@ -25,6 +25,7 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
   return json({
     access_token: result.access_token,
     refresh_token: result.refresh_token,
+    user: result.user,
     doctor: doc
       ? {
           id: doc.id,
@@ -34,6 +35,13 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
           certificate_url: doc.certificate_url,
           bio: doc.bio,
         }
-      : { id: result.user.id, name: result.user.name, email: result.user.email },
+      : {
+          id: result.user.id,
+          name: result.user.name,
+          specializations: [],
+          phone: null,
+          certificate_url: null,
+          bio: null,
+        },
   });
 });

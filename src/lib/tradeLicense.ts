@@ -54,12 +54,15 @@ function postForm(url: string, body: string): Promise<{ status: number; text: st
   });
 }
 
-// Fixed bypass docket number — always reports as validated without hitting PRDEODB.
-// Used for demos/testing since PRDEODB is a flaky legacy government portal.
+// Fixed bypass docket number — only active in development for demos/testing
+// since PRDEODB is a flaky legacy government portal.
 const BYPASS_TRADE_LICENSE_NUMBER = "DDROCJERJ47540346U";
 
 export async function checkTradeLicense(tradeLicenseNumber: string): Promise<TradeLicenseCheckResult> {
-  if (tradeLicenseNumber === BYPASS_TRADE_LICENSE_NUMBER) {
+  if (
+    process.env.NODE_ENV !== "production" &&
+    tradeLicenseNumber === BYPASS_TRADE_LICENSE_NUMBER
+  ) {
     return { validated: true, message: "Application found" };
   }
 
