@@ -5,7 +5,7 @@ import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { badRequest, notFound } from "@/lib/errors";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createNotification, createPatientNotification, clinicOwnerContact, sendEmail } from "@/lib/notifications";
+import { createNotification, createPatientNotification, clinicOwnerContact, sendEmail, emailHtml } from "@/lib/notifications";
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { assertBranchStaffPermission } from "@/lib/permissions";
@@ -104,10 +104,12 @@ export const PATCH = api({ rateLimit: 20 }, async (ctx) => {
     );
     const info = details[0];
     if (info?.owner_email) {
+      const paymentBody = `A payment of ${body.fee_amount} ${appointment.currency} was collected via ${body.method} from ${info.patient_name ?? "a patient"} at ${info.branch_name}.${body.reference_no ? `\nReference: ${body.reference_no}` : ""}`;
       await sendEmail(
         info.owner_email,
         `Payment received — ${info.patient_name ?? "Patient"}`,
-        `A payment of ${body.fee_amount} ${appointment.currency} was collected via ${body.method} from ${info.patient_name ?? "a patient"} at ${info.branch_name}.${body.reference_no ? `\nReference: ${body.reference_no}` : ""}`,
+        paymentBody,
+        emailHtml(paymentBody),
       );
     }
 

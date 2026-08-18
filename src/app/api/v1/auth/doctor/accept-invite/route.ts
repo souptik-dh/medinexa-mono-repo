@@ -5,7 +5,7 @@ import { pool, withTransaction, type Row } from "@/lib/db";
 import { hashPassword, hashToken, issueTokens } from "@/lib/auth";
 import { newId } from "@/lib/ids";
 import { ApiError, conflict, notFound, isUniqueViolation } from "@/lib/errors";
-import { createNotification, sendEmail } from "@/lib/notifications";
+import { createNotification, sendEmail, emailHtml } from "@/lib/notifications";
 import { getInviteSpecializations } from "@/lib/specializations";
 import type { ResultSetHeader } from "mysql2/promise";
 
@@ -131,10 +131,12 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
   });
 
   if (owner) {
+    const acceptedBody = `Dr. ${invite.name} (${body.email}) has accepted your invitation and joined your branch.`;
     await sendEmail(
       owner.owner_email,
       "Doctor invite accepted",
-      `Dr. ${invite.name} (${body.email}) has accepted your invitation and joined your branch.`,
+      acceptedBody,
+      emailHtml(acceptedBody),
     );
   }
 

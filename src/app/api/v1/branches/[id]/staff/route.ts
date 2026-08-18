@@ -6,7 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { getOwnedBranch } from "@/lib/scope";
 import { conflict, isUniqueViolation } from "@/lib/errors";
 import { newId } from "@/lib/ids";
-import { sendEmail } from "@/lib/notifications";
+import { sendEmail, emailHtml } from "@/lib/notifications";
 import {
   BRANCH_STAFF_PERMISSIONS,
   DEFAULT_BRANCH_STAFF_PERMISSIONS,
@@ -96,10 +96,12 @@ export const POST = api(undefined, async (ctx) => {
     throw err;
   }
 
+  const staffBody = "You can now log in to Jido Healthcare using the email-based OTP flow. Use the OTP sent to your email at login.";
   await sendEmail(
     body.email,
     "You've been added as branch staff",
-    "You can now log in to Jido Healthcare using the email-based OTP flow. Use the OTP sent to your email at login.",
+    staffBody,
+    emailHtml(staffBody),
   );
 
   return json(

@@ -4,7 +4,7 @@ import { parseBody, emailSchema } from "@/lib/validators";
 import { pool, type Row } from "@/lib/db";
 import { generateOtp, hashToken } from "@/lib/auth";
 import { newId } from "@/lib/ids";
-import { sendEmail } from "@/lib/notifications";
+import { sendEmail, emailHtml } from "@/lib/notifications";
 import { forbidden } from "@/lib/errors";
 
 const schema = z.object({ email: emailSchema });
@@ -34,10 +34,12 @@ export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
      VALUES (?, ?, 'branch_staff_login', ?, ?)`,
     [newId(), body.email, hashToken(`${body.email}:${otp}`), expiresAt],
   );
+  const otpBody = `Your one-time login code is ${otp}. It expires in 10 minutes.`;
   await sendEmail(
     body.email,
     "Your Jido Healthcare login code",
-    `Your one-time login code is ${otp}. It expires in 10 minutes.`,
+    otpBody,
+    emailHtml(otpBody),
   );
 
   return json({ message: "If an account exists for this email, an OTP has been sent." });

@@ -6,7 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { conflict, isUniqueViolation, notFound, unprocessable } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { generateInviteCode, hashToken } from "@/lib/auth";
-import { sendEmail } from "@/lib/notifications";
+import { sendEmail, emailHtml } from "@/lib/notifications";
 import { requireBranchAccess } from "@/lib/permissions";
 import { getInviteSpecializations } from "@/lib/specializations";
 
@@ -142,10 +142,12 @@ export const POST = api(undefined, async (ctx) => {
   if (body.reg_no) acceptUrlParams.set("reg_no", body.reg_no);
   const acceptUrl = `${process.env.APP_URL ?? ""}/doctor/accept-invite?${acceptUrlParams.toString()}`;
 
+  const inviteBody = `You've been invited to join ${branch.name} on MediBook.\n\nAccept your invitation here: ${acceptUrl}\n\nYour one-time invite code is: ${inviteCode}\n\nThis code expires in 7 days.`;
   await sendEmail(
     body.email,
     `Dr. ${body.name}, you've been invited to ${branch.name}`,
-    `You've been invited to join ${branch.name} on MediBook.\n\nAccept your invitation here: ${acceptUrl}\n\nYour one-time invite code is: ${inviteCode}\n\nThis code expires in 7 days.`,
+    inviteBody,
+    emailHtml(inviteBody),
   );
 
   return json(

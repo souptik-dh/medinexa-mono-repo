@@ -7,7 +7,7 @@ import { badRequest, conflict, notFound, unprocessable, isUniqueViolation } from
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { scopeWhere, serializeAppointment, APPT_STATUSES } from "@/lib/appointments";
-import { notifyBranchStaff, createNotification, branchContactEmails, sendEmail } from "@/lib/notifications";
+import { notifyBranchStaff, createNotification, branchContactEmails, sendEmail, emailHtml } from "@/lib/notifications";
 import {
   todayInTz,
   weekdayInTz,
@@ -342,7 +342,7 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
         `Doctor: Dr. ${info.doctor_name}`,
         `Date: ${body.date} at ${scheduledTime}`,
       ].join("\n");
-      await Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody)));
+      await Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody, emailHtml(emailBody))));
     }
 
     return { status: 201, body: serializeAppointment(rows[0]) };
