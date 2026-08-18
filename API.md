@@ -2518,7 +2518,7 @@ The server never trusts the client's disabled-calendar rendering — every check
 
 Auth: any authenticated role. Scope auto-applied: `patient` → own; `branch_staff` → own branch; `doctor` → own; `clinic_owner` → own clinics. Paginated.
 
-**Query:** `?status=&date_from=&date_to=&limit=&cursor=` (`status` must be one of the enum values).
+**Query:** `?clinic_id=&status=&date_from=&date_to=&limit=&cursor=` (`status` must be one of the enum values). `clinic_id` narrows to one clinic, on top of whatever scope already applies.
 
 **Response `200`**
 
