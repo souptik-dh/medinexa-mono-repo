@@ -7,7 +7,7 @@ import { badRequest } from "@/lib/errors";
 
 export const GET = api({ rateLimit: 60 }, async (ctx) => {
   requireRoles(ctx.auth, ["patient", "clinic_owner", "branch_staff", "sys_admin"]);
-  const { branchId, branchTestId } = ctx.params;
+  const { id: branchId, branchTestId } = ctx.params;
   const sp = ctx.request.nextUrl.searchParams;
   const date = sp.get("date");
 
