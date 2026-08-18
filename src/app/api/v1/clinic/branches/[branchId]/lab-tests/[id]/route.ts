@@ -2,7 +2,7 @@ import { api, json } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
-import { serializeBranchLabTest, getBranchLabTestInScope, auditLabAction } from "@/lib/lab-tests";
+import { serializeBranchLabTest, getBranchLabTestForManagement, auditLabAction } from "@/lib/lab-tests";
 import { requireBranchAccess } from "@/lib/permissions";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
@@ -24,7 +24,7 @@ export const PUT = api({ rateLimit: 10 }, async (ctx) => {
 
   await requireBranchAccess(pool, auth, branchId, "lab_tests:manage");
 
-  const existing = await getBranchLabTestInScope(pool, id, auth);
+  const existing = await getBranchLabTestForManagement(pool, id, auth);
 
   const updates: string[] = [];
   const params: unknown[] = [];

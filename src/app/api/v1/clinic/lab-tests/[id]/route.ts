@@ -10,9 +10,9 @@ import type { RowDataPacket } from "mysql2/promise";
 const updateSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   code: z.string().min(1).max(50).optional(),
-  description: z.string().max(2000).optional(),
+  description: z.string().max(2000).nullable().optional(),
   category: z.enum(["blood_test", "cardiology", "diabetes", "urine_test", "imaging", "general_diagnostics", "health_check", "other"]).optional(),
-  instructions: z.string().max(2000).optional(),
+  instructions: z.string().max(2000).nullable().optional(),
   default_precautions: z.array(z.string().max(500)).optional(),
 });
 

@@ -231,6 +231,32 @@ export async function getBranchLabTestInScope(
   return row;
 }
 
+// Same scope check as getBranchLabTestInScope but without the active-only
+// filter, for clinic-management routes that must be able to look up (and
+// therefore reactivate) a branch lab test that's currently inactive. The
+// active-only variant is for patient-facing routes where an inactive test
+// should behave as if it doesn't exist.
+export async function getBranchLabTestForManagement(
+  db: Db,
+  id: string,
+  auth: AuthContext,
+): Promise<Row> {
+  const { where, params } = labTestScopeWhere(auth);
+  const [rows] = await db.query<Row[]>(
+    `SELECT blt.*, lt.name AS test_name, lt.code AS test_code, lt.category AS test_category,
+            lt.description AS test_description, lt.default_precautions
+       FROM branch_lab_tests blt
+       JOIN lab_tests lt ON lt.id = blt.test_id
+       JOIN branches b ON b.id = blt.branch_id
+       JOIN clinics c ON c.id = blt.clinic_id
+     WHERE blt.id = ? AND ${where}`,
+    [id, ...params],
+  );
+  const row = rows[0];
+  if (!row) throw notFound("BRANCH_TEST_NOT_FOUND", "Branch lab test not found.");
+  return row;
+}
+
 export async function getLabTestAppointmentInScope(
   db: Db,
   id: string,
