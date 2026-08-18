@@ -2915,9 +2915,9 @@ Auth: `patient` (own). Rate limited 10/min. Initiates payment for a lab test app
 
 #### GET /clinic/lab-tests
 
-Auth: `clinic_owner` (own clinics) or `branch_staff` (read-only) or `sys_admin`. Cursor-paginated. Lists all lab tests for the clinic.
+Auth: `clinic_owner` (own clinics) or `branch_staff` (own clinic, read-only) or `sys_admin`. Cursor-paginated. Lists lab tests — for `clinic_owner` and `branch_staff`, scoped to their own clinic(s) unless narrowed further by `clinic_id`.
 
-**Query:** `?status=&category=&search=&limit=&cursor=` — all optional.
+**Query:** `?clinic_id=&status=&category=&search=&limit=&cursor=` — all optional. `clinic_id` narrows to one clinic (useful when an owner has more than one); omitting it returns tests across every clinic the caller can see.
 
 **Response `200`**
 
@@ -2964,7 +2964,9 @@ Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Creates a new lab test
 
 #### GET /clinic/lab-tests/categories
 
-Auth: `clinic_owner`, `branch_staff` (read-only), or `sys_admin`. Rate limited 60/min. Distinct `category` values already used across the clinic's lab tests, for suggesting/autocompleting on create — not an exhaustive or fixed list.
+Auth: `clinic_owner`, `branch_staff` (read-only), or `sys_admin`. Rate limited 60/min. Distinct `category` values already used across the caller's lab tests, for suggesting/autocompleting on create — not an exhaustive or fixed list.
+
+**Query:** `?clinic_id=` — optional, narrows to one clinic.
 
 **Response `200`**
 

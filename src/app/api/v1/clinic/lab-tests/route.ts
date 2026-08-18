@@ -13,6 +13,7 @@ import type { RowDataPacket } from "mysql2/promise";
 export const GET = api({ rateLimit: 60 }, async (ctx) => {
   requireRoles(ctx.auth, ["clinic_owner", "branch_staff", "sys_admin"]);
   const sp = ctx.request.nextUrl.searchParams;
+  const clinicId = sp.get("clinic_id");
   const status = sp.get("status");
   const category = sp.get("category");
   const search = sp.get("search");
@@ -24,8 +25,15 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
   if (ctx.auth!.role === "sys_admin") {
     conditions[0] = "1 = 1";
     params.length = 0;
+  } else if (ctx.auth!.role === "branch_staff") {
+    conditions[0] = "lt.clinic_id = (SELECT clinic_id FROM branches WHERE id = ?)";
+    params[0] = ctx.auth!.branchId ?? "__none__";
   }
 
+  if (clinicId) {
+    conditions.push("lt.clinic_id = ?");
+    params.push(clinicId);
+  }
   if (status) {
     conditions.push("lt.status = ?");
     params.push(status);

@@ -8,6 +8,7 @@ import type { RowDataPacket } from "mysql2/promise";
 // values while still allowing an arbitrary new one.
 export const GET = api({ rateLimit: 60 }, async (ctx) => {
   requireRoles(ctx.auth, ["clinic_owner", "branch_staff", "sys_admin"]);
+  const clinicId = ctx.request.nextUrl.searchParams.get("clinic_id");
 
   const conditions = ["clinic_id IN (SELECT id FROM clinics WHERE owner_user_id = ?)"];
   const params: unknown[] = [ctx.auth!.userId];
@@ -15,6 +16,14 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
   if (ctx.auth!.role === "sys_admin") {
     conditions[0] = "1 = 1";
     params.length = 0;
+  } else if (ctx.auth!.role === "branch_staff") {
+    conditions[0] = "clinic_id = (SELECT clinic_id FROM branches WHERE id = ?)";
+    params[0] = ctx.auth!.branchId ?? "__none__";
+  }
+
+  if (clinicId) {
+    conditions.push("clinic_id = ?");
+    params.push(clinicId);
   }
 
   const [rows] = await pool.query<RowDataPacket[]>(
