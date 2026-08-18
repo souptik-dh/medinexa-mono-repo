@@ -146,25 +146,63 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+const BRAND_GRADIENT = "linear-gradient(135deg, #7C3AED 0%, #00C6FF 100%)";
+const BUTTON_GRADIENT = "linear-gradient(135deg, #7C3AED 0%, #2563EB 100%)";
+const BRAND_PURPLE = "#6D28D9";
+
+/**
+ * Turns plain text into email-safe HTML. A line that is nothing but a URL is
+ * rendered as a prominent CTA button (with the raw link kept underneath as a
+ * fallback); URLs embedded inline stay as plain anchors.
+ */
 function textToHtml(text: string): string {
-  return escapeHtml(text).replace(/\n/g, "<br/>");
+  return text
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (/^https?:\/\/\S+$/.test(trimmed)) {
+        const url = escapeHtml(trimmed);
+        return `<div style="margin:8px 0 16px;">
+<a href="${url}" target="_blank" style="background:${BUTTON_GRADIENT};color:#ffffff;padding:14px 28px;text-decoration:none;font-size:15px;font-weight:600;border-radius:8px;display:inline-block;box-shadow:0 4px 12px rgba(124,58,237,0.3);">Continue</a>
+</div>
+<p style="color:#94a3b8;font-size:12px;word-break:break-all;margin:0 0 16px;">${url}</p>`;
+      }
+      if (trimmed === "") return "";
+      return line
+        .split(/(https?:\/\/\S+)/g)
+        .map((part) =>
+          /^https?:\/\//.test(part)
+            ? `<a href="${escapeHtml(part)}" style="color:${BRAND_PURPLE};">${escapeHtml(part)}</a>`
+            : escapeHtml(part),
+        )
+        .join("");
+    })
+    .join("<br/>\n");
 }
 
 function emailShell(imgTag: string, bodyHtml: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/></head>
-<body style="margin:0;padding:0;background-color:#f4f6f9;font-family:Arial,Helvetica,sans-serif;">
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color:#f4f6f9;padding:40px 0;">
-<tr><td align="center">
-<table width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#ffffff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
-<tr><td style="padding:32px 32px 0;text-align:center;">${imgTag}</td></tr>
-<tr><td style="padding:24px 32px 32px;color:#333333;font-size:15px;line-height:1.6;">${bodyHtml}</td></tr>
-<tr><td style="padding:16px 32px;background-color:#f9fafb;border-top:1px solid #eee;text-align:center;font-size:12px;color:#999999;">
-&copy; ${new Date().getFullYear()} Jido Healthcare. All rights reserved.
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Jido Healthcare</title></head>
+<body style="margin:0;padding:0;background-color:#f4f6f9;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" style="table-layout:fixed;">
+<tr><td align="center" style="padding:40px 10px;">
+<table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width:540px;background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 10px 25px rgba(0,0,0,0.08);">
+<tr>
+<td align="center" style="background:${BRAND_GRADIENT};padding:36px 20px;">
+${imgTag}
+<h1 style="color:#ffffff;font-size:22px;margin:12px 0 0;font-weight:700;letter-spacing:-0.5px;">Jido Healthcare</h1>
+</td>
+</tr>
+<tr><td style="padding:40px 30px;text-align:center;color:#333333;font-size:15px;line-height:1.6;">${bodyHtml}</td></tr>
+<tr>
+<td style="background-color:#f8fafc;padding:20px;text-align:center;border-top:1px solid #f1f5f9;">
+<p style="color:#94a3b8;font-size:12px;margin:0;">&copy; ${new Date().getFullYear()} Jido Healthcare. All rights reserved.</p>
+</td>
+</tr>
+</table>
 </td></tr>
 </table>
-</td></tr></table>
 </body></html>`;
 }
 
@@ -172,17 +210,17 @@ function emailShell(imgTag: string, bodyHtml: string): string {
 // the app deployment is down or hasn't served /public assets yet.
 const LOGO_URL =
   process.env.EMAIL_LOGO_URL ??
-  "https://res.cloudinary.com/p274ocjz/image/upload/v1787035846/medinexa/email-logo.png";
+  "https://res.cloudinary.com/p274ocjz/image/upload/v1787036452/medinexa/email-logo.png";
 const APP_ICON_URL =
   process.env.EMAIL_APP_ICON_URL ??
   "https://res.cloudinary.com/p274ocjz/image/upload/v1787035848/medinexa/email-app-icon.png";
 
 function logoImg(): string {
-  return `<img src="${LOGO_URL}" alt="Jido Healthcare" width="180" style="display:block;margin:0 auto;"/>`;
+  return `<img src="${LOGO_URL}" alt="Jido Healthcare" style="display:block;margin:0 auto;border:0;max-height:56px;width:auto;filter:drop-shadow(0 4px 10px rgba(0,0,0,0.15));"/>`;
 }
 
 function appIconImg(): string {
-  return `<img src="${APP_ICON_URL}" alt="Jido Healthcare" width="80" style="display:block;margin:0 auto;"/>`;
+  return `<img src="${APP_ICON_URL}" alt="Jido Healthcare" width="64" height="64" style="display:block;margin:0 auto;border:0;border-radius:14px;box-shadow:0 4px 10px rgba(0,0,0,0.15);"/>`;
 }
 
 /** Branded HTML email with the centered logo (non-patient recipients). */
@@ -190,9 +228,87 @@ export function emailHtml(body: string): string {
   return emailShell(logoImg(), textToHtml(body));
 }
 
+/** Branded HTML email for a login OTP, with the code rendered large and bold in a dashed box. */
+export function otpEmailHtml(otp: string, expiryMinutes: number): string {
+  const body = `
+<h2 style="color:#1e293b;font-size:20px;margin:0 0 12px;font-weight:600;">Verification Code</h2>
+<p style="color:#64748b;font-size:15px;margin:0 0 28px;line-height:1.5;">Use the one-time code below to complete your login to Jido Healthcare.</p>
+<div style="background-color:#f8fafc;border:2px dashed #cbd5e1;border-radius:12px;padding:20px;display:inline-block;margin:0 0 25px;">
+<span style="font-family:'Courier New',Courier,monospace;font-size:36px;font-weight:800;letter-spacing:8px;color:${BRAND_PURPLE};">${escapeHtml(otp)}</span>
+</div>
+<p style="color:#94a3b8;font-size:13px;margin:0;">This code expires in ${expiryMinutes} minutes. Do not share this code with anyone.</p>`;
+  return emailShell(logoImg(), body);
+}
+
 /** Branded HTML email with the centered app icon (patient recipients). */
 export function patientEmailHtml(body: string): string {
   return emailShell(appIconImg(), textToHtml(body));
+}
+
+/**
+ * Branded HTML email for an invitation that carries both a one-time code and
+ * an accept link (e.g. doctor invites): code shown in a dashed box, followed
+ * by a CTA button, with the raw link kept as a fallback underneath.
+ */
+export function inviteEmailHtml(opts: {
+  heading: string;
+  intro: string;
+  code: string;
+  codeLabel: string;
+  ctaLabel: string;
+  ctaUrl: string;
+  note?: string;
+}): string {
+  const body = `
+<h2 style="color:#1e293b;font-size:20px;margin:0 0 16px;font-weight:600;">${escapeHtml(opts.heading)}</h2>
+<p style="color:#475569;font-size:15px;margin:0 0 24px;line-height:1.6;">${escapeHtml(opts.intro)}</p>
+<div style="background-color:#f8fafc;border:2px dashed #cbd5e1;border-radius:12px;padding:18px;display:inline-block;margin:0 0 28px;">
+<p style="color:#64748b;font-size:12px;margin:0 0 6px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">${escapeHtml(opts.codeLabel)}</p>
+<span style="font-family:'Courier New',Courier,monospace;font-size:32px;font-weight:800;letter-spacing:6px;color:${BRAND_PURPLE};">${escapeHtml(opts.code)}</span>
+</div>
+<div style="margin:0 0 30px;">
+<a href="${escapeHtml(opts.ctaUrl)}" target="_blank" style="background:${BUTTON_GRADIENT};color:#ffffff;padding:14px 28px;text-decoration:none;font-size:15px;font-weight:600;border-radius:8px;display:inline-block;box-shadow:0 4px 12px rgba(124,58,237,0.3);">${escapeHtml(opts.ctaLabel)}</a>
+</div>
+${opts.note ? `<p style="color:#94a3b8;font-size:13px;margin:0 0 20px;">${escapeHtml(opts.note)}</p>` : ""}
+<hr style="border:0;border-top:1px solid #e2e8f0;margin:25px 0;"/>
+<p style="color:#94a3b8;font-size:12px;margin:0 0 8px;line-height:1.4;">If the button doesn't work, copy and paste this link into your browser:</p>
+<p style="color:${BRAND_PURPLE};font-size:12px;word-break:break-all;margin:0;">${escapeHtml(opts.ctaUrl)}</p>`;
+  return emailShell(logoImg(), body);
+}
+
+/**
+ * Branded HTML email for structured details (a new booking, a payment, a
+ * confirmed appointment): each row gets a label, a bold value, and an
+ * optional sub-line, laid out in a bordered card.
+ */
+export function detailsEmailHtml(opts: {
+  heading: string;
+  intro?: string;
+  rows: Array<{ label: string; value: string; sub?: string }>;
+  note?: string;
+  patientFacing?: boolean;
+}): string {
+  const rowsHtml = opts.rows
+    .map(
+      (row, i) => `<tr>
+<td style="padding:${i === 0 ? "0" : "12px"} 0 12px 0;${i < opts.rows.length - 1 ? "border-bottom:1px solid #e2e8f0;" : ""}">
+<span style="font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">${escapeHtml(row.label)}</span>
+<p style="font-size:15px;color:#1e293b;font-weight:700;margin:4px 0 0;">${escapeHtml(row.value)}</p>
+${row.sub ? `<p style="font-size:13px;color:#64748b;margin:2px 0 0;">${escapeHtml(row.sub)}</p>` : ""}
+</td>
+</tr>`,
+    )
+    .join("");
+  const body = `
+<h2 style="color:#1e293b;font-size:20px;margin:0 0 8px;font-weight:600;">${escapeHtml(opts.heading)}</h2>
+${opts.intro ? `<p style="color:#64748b;font-size:14px;margin:0 0 24px;">${escapeHtml(opts.intro)}</p>` : ""}
+<table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:24px;">
+<tr><td style="padding:20px;text-align:left;">
+<table border="0" cellpadding="0" cellspacing="0" width="100%">${rowsHtml}</table>
+</td></tr>
+</table>
+${opts.note ? `<p style="color:#94a3b8;font-size:12px;margin:0;line-height:1.5;">${escapeHtml(opts.note)}</p>` : ""}`;
+  return emailShell(opts.patientFacing ? appIconImg() : logoImg(), body);
 }
 
 /**

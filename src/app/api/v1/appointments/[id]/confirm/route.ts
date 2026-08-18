@@ -2,7 +2,7 @@ import { api, json } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createPatientNotification, sendEmail, patientEmailHtml } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, detailsEmailHtml } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { notFound } from "@/lib/errors";
 
@@ -36,11 +36,21 @@ export const PATCH = api(undefined, async (ctx) => {
   const info = details[0];
   if (info?.patient_email) {
     const confirmBody = `Hi ${info.patient_name ?? "there"},\n\nYour appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
+    const confirmHtml = detailsEmailHtml({
+      heading: "Appointment Confirmed",
+      intro: `Hi ${info.patient_name ?? "there"}, your appointment has been confirmed.`,
+      rows: [
+        { label: "Doctor", value: `Dr. ${info.doctor_name}` },
+        { label: "Branch", value: info.branch_name },
+        { label: "Date & Time", value: `${appointment.scheduled_date} at ${appointment.scheduled_time}` },
+      ],
+      patientFacing: true,
+    });
     await sendEmail(
       info.patient_email,
       "Your appointment is confirmed",
       confirmBody,
-      patientEmailHtml(confirmBody),
+      confirmHtml,
     );
   }
 

@@ -6,7 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { conflict, isUniqueViolation, notFound, unprocessable } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { generateInviteCode, hashToken } from "@/lib/auth";
-import { sendEmail, emailHtml } from "@/lib/notifications";
+import { sendEmail, inviteEmailHtml } from "@/lib/notifications";
 import { requireBranchAccess } from "@/lib/permissions";
 import { getInviteSpecializations } from "@/lib/specializations";
 
@@ -147,7 +147,15 @@ export const POST = api(undefined, async (ctx) => {
     body.email,
     `Dr. ${body.name}, you've been invited to ${branch.name}`,
     inviteBody,
-    emailHtml(inviteBody),
+    inviteEmailHtml({
+      heading: "Clinic Join Invitation",
+      intro: `You've been invited to join ${branch.name} on MediBook. Use the details below to accept your invitation and complete setup.`,
+      code: inviteCode,
+      codeLabel: "Your One-Time Invite Code",
+      ctaLabel: "Accept Invitation",
+      ctaUrl: acceptUrl,
+      note: "This invite code and link expire in 7 days.",
+    }),
   );
 
   return json(
