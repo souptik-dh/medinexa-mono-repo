@@ -1,4 +1,4 @@
-import { api, json } from "@/lib/http";
+import { api, json, noContent } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool } from "@/lib/db";
 import { parseBody, timeSchema } from "@/lib/validators";
@@ -67,4 +67,24 @@ export const PUT = api({ rateLimit: 10 }, async (ctx) => {
     created_at: row.created_at,
     updated_at: row.updated_at,
   });
+});
+
+export const DELETE = api({ rateLimit: 10 }, async (ctx) => {
+  const auth = requireRoles(ctx.auth, ["clinic_owner", "sys_admin"]);
+  const { branchId, id } = ctx.params;
+
+  await requireBranchAccess(pool, auth, branchId, "lab_tests:manage");
+
+  const [existingRows] = await pool.query<RowDataPacket[]>(
+    `SELECT id FROM lab_test_schedules WHERE id = ? AND branch_id = ?`,
+    [id, branchId],
+  );
+  if (existingRows.length === 0) {
+    throw notFound("SCHEDULE_NOT_FOUND", "Schedule not found.");
+  }
+
+  await pool.query(`DELETE FROM lab_test_schedules WHERE id = ?`, [id]);
+  await auditLabAction(pool, auth.userId, "lab_schedule_deleted", id, { branch_id: branchId });
+
+  return noContent();
 });

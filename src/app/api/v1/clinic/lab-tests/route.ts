@@ -3,7 +3,7 @@ import { requireRoles } from "@/lib/auth";
 import { pool } from "@/lib/db";
 import { newId } from "@/lib/ids";
 import { parseBody } from "@/lib/validators";
-import { serializeLabTest, LAB_TEST_CATEGORIES, auditLabAction } from "@/lib/lab-tests";
+import { serializeLabTest, generateUniqueLabTestCode, auditLabAction } from "@/lib/lab-tests";
 import { getOwnedClinic } from "@/lib/scope";
 import { parsePagination } from "@/lib/validators";
 import { encodeCursor } from "@/lib/http";
@@ -63,10 +63,12 @@ export const GET = api({ rateLimit: 60 }, async (ctx) => {
 
 const createSchema = z.object({
   clinic_id: z.string().uuid(),
-  name: z.string().min(1).max(255),
-  code: z.string().min(1).max(50),
+  // Omit both to quick-create from just a category — name and code are then
+  // derived from it (see below) rather than required up front.
+  name: z.string().min(1).max(255).optional(),
+  code: z.string().min(1).max(50).optional(),
   description: z.string().max(2000).nullable().optional(),
-  category: z.enum(LAB_TEST_CATEGORIES),
+  category: z.string().min(1).max(100),
   instructions: z.string().max(2000).nullable().optional(),
   default_precautions: z.array(z.string().max(500)).optional(),
 });
@@ -79,6 +81,9 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     await getOwnedClinic(pool, body.clinic_id, auth.userId);
   }
 
+  const name = body.name?.trim() || body.category.trim();
+  const code = body.code?.trim() || (await generateUniqueLabTestCode(pool, body.clinic_id, body.category));
+
   const id = newId();
   await pool.query(
     `INSERT INTO lab_tests (id, clinic_id, name, code, description, category, instructions, default_precautions, status)
@@ -86,8 +91,8 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     [
       id,
       body.clinic_id,
-      body.name,
-      body.code,
+      name,
+      code,
       body.description ?? null,
       body.category,
       body.instructions ?? null,

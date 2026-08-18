@@ -6,17 +6,8 @@ import type { AuthContext } from "@/lib/auth";
 type Db = Pool | PoolConnection;
 type Row = RowDataPacket;
 
-export const LAB_TEST_CATEGORIES = [
-  "blood_test",
-  "cardiology",
-  "diabetes",
-  "urine_test",
-  "imaging",
-  "general_diagnostics",
-  "health_check",
-  "other",
-] as const;
-export type LabTestCategory = (typeof LAB_TEST_CATEGORIES)[number];
+// Category is clinic-defined free text (no fixed list) — a clinic types
+// whatever category name it wants when creating a test.
 
 export const LAB_TEST_STATUSES = ["active", "inactive"] as const;
 export type LabTestStatus = (typeof LAB_TEST_STATUSES)[number];
@@ -179,6 +170,26 @@ export function labTestScopeWhere(auth: AuthContext): { where: string; params: u
   }
 }
 
+// Scope for queries against `lab_tests lt JOIN clinics c` directly (no
+// `branches b` join) — labTestScopeWhere's `b.*` aliases don't exist there.
+export function labTestOwnerScopeWhere(auth: AuthContext): { where: string; params: unknown[] } {
+  switch (auth.role) {
+    case "patient":
+      return { where: "1 = 1", params: [] };
+    case "branch_staff":
+      return {
+        where: "lt.clinic_id IN (SELECT clinic_id FROM branches WHERE id = ?)",
+        params: [auth.branchId ?? "__none__"],
+      };
+    case "clinic_owner":
+      return { where: "c.owner_user_id = ?", params: [auth.userId] };
+    case "sys_admin":
+      return { where: "1 = 1", params: [] };
+    default:
+      return { where: "1 = 0", params: [] };
+  }
+}
+
 export function labApptScopeWhere(auth: AuthContext): { where: string; params: unknown[] } {
   switch (auth.role) {
     case "patient":
@@ -202,11 +213,11 @@ export async function getLabTestInScope(
   id: string,
   auth: AuthContext,
 ): Promise<Row> {
-  const { where, params } = labTestScopeWhere(auth);
+  const { where, params } = labTestOwnerScopeWhere(auth);
   const [rows] = await db.query<Row[]>(
     `SELECT lt.* FROM lab_tests lt
        JOIN clinics c ON c.id = lt.clinic_id
-     WHERE lt.id = ? AND ${where} AND lt.deleted_at IS NULL`,
+     WHERE lt.id = ? AND ${where}`,
     [id, ...params],
   );
   const row = rows[0];
@@ -286,6 +297,37 @@ export async function getLabTestAppointmentInScope(
   const row = rows[0];
   if (!row) throw notFound("APPOINTMENT_NOT_FOUND", "Lab test appointment not found.");
   return row;
+}
+
+function slugifyLabTestCode(input: string): string {
+  const slug = input
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 45);
+  return slug || "TEST";
+}
+
+// Create requests omitting `code` (e.g. the category-only quick-create flow)
+// get one derived from the category text, deduped against this clinic's
+// existing codes rather than relying on a DB-level uniqueness constraint
+// (lab_tests.code has none).
+export async function generateUniqueLabTestCode(
+  db: Db,
+  clinicId: string,
+  seed: string,
+): Promise<string> {
+  const base = slugifyLabTestCode(seed);
+  const [rows] = await db.query<Row[]>(
+    `SELECT code FROM lab_tests WHERE clinic_id = ? AND code LIKE ?`,
+    [clinicId, `${base}%`],
+  );
+  const existing = new Set(rows.map((r) => r.code));
+  if (!existing.has(base)) return base;
+  let n = 2;
+  while (existing.has(`${base}-${n}`)) n++;
+  return `${base}-${n}`;
 }
 
 export async function writeLabTestStatusLog(
