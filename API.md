@@ -3135,6 +3135,14 @@ Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Updates a schedule ent
 
 **Errors:** `404 BRANCH_NOT_FOUND`, `404 SCHEDULE_NOT_FOUND`, `400 VALIDATION_ERROR`.
 
+#### DELETE /clinic/branches/:branchId/lab-test-schedules/:id
+
+Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Removes a schedule entry.
+
+**Response `204`** — no body.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `404 SCHEDULE_NOT_FOUND`.
+
 ### Clinic management: appointment management
 
 #### GET /clinic/lab-test-appointments
