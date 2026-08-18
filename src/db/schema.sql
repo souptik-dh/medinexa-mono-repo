@@ -655,7 +655,7 @@ CREATE TABLE IF NOT EXISTS lab_tests (
   name VARCHAR(255) NOT NULL,
   code VARCHAR(50) NOT NULL,
   description TEXT NULL,
-  category ENUM('blood_test','cardiology','diabetes','urine_test','imaging','general_diagnostics','health_check','other') NOT NULL DEFAULT 'other',
+  category VARCHAR(100) NOT NULL DEFAULT 'other',
   instructions TEXT NULL,
   default_precautions JSON NULL,
   status ENUM('active','inactive') NOT NULL DEFAULT 'active',

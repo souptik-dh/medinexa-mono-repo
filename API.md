@@ -2630,7 +2630,7 @@ Clinics define **lab tests** (e.g. ECG, blood panel) at the clinic level, then c
 
 ### Lab test categories
 
-`category` ∈ `blood_test | cardiology | diabetes | urine_test | imaging | general_diagnostics | health_check | other`
+`category` is clinic-defined free text (string, 1–100 chars) — not a fixed enum. `GET /clinic/lab-tests/categories` returns the distinct categories a clinic has already used, for suggesting/autocompleting values on create; typing a new one is valid and simply introduces that category going forward.
 
 ### Lab test appointment statuses
 
@@ -2932,6 +2932,8 @@ Auth: `clinic_owner` (own clinics) or `branch_staff` (read-only) or `sys_admin`.
 
 Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Creates a new lab test for the clinic.
 
+`name` and `code` are both optional — omit them to quick-create from just a `category` (e.g. from a category-only combobox UI): `name` defaults to the category text, and `code` is auto-derived from it (slugified, deduped against the clinic's existing codes; there's no DB-level uniqueness constraint on `code`).
+
 **Request body**
 
 ```json
@@ -2949,16 +2951,26 @@ Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Creates a new lab test
 | Field | Type | Notes |
 |---|---|---|
 | `clinic_id` | string (UUID) | required |
-| `name` | string | required, 1–255 |
-| `code` | string | required, 1–50, unique per clinic |
+| `name` | string? | 1–255; defaults to `category` when omitted |
+| `code` | string? | 1–50; auto-derived from `category` when omitted |
 | `description` | string? | max 2000 |
-| `category` | string | required, one of the [categories](#lab-test-categories) |
+| `category` | string | required, 1–100, free text — see [categories](#lab-test-categories) |
 | `instructions` | string? | max 2000 |
 | `default_precautions` | string[]? | array of strings, max 50 items, each max 255 chars |
 
 **Response `201`** — LabTest object.
 
-**Errors:** `400 VALIDATION_ERROR`, `409 TEST_CODE_ALREADY_EXISTS`.
+**Errors:** `400 VALIDATION_ERROR`.
+
+#### GET /clinic/lab-tests/categories
+
+Auth: `clinic_owner`, `branch_staff` (read-only), or `sys_admin`. Rate limited 60/min. Distinct `category` values already used across the clinic's lab tests, for suggesting/autocompleting on create — not an exhaustive or fixed list.
+
+**Response `200`**
+
+```json
+{ "items": ["cardiology", "ECG", "Diabetes Panel"] }
+```
 
 #### PUT /clinic/lab-tests/:id
 
@@ -2972,7 +2984,7 @@ Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Updates a lab test. Fu
 
 **Response `200`** — LabTest object.
 
-**Errors:** `404 TEST_NOT_FOUND`, `400 VALIDATION_ERROR`, `409 TEST_CODE_ALREADY_EXISTS`.
+**Errors:** `404 TEST_NOT_FOUND`, `400 VALIDATION_ERROR`.
 
 #### PATCH /clinic/lab-tests/:id/status
 

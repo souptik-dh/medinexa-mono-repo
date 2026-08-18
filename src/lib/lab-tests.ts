@@ -6,17 +6,8 @@ import type { AuthContext } from "@/lib/auth";
 type Db = Pool | PoolConnection;
 type Row = RowDataPacket;
 
-export const LAB_TEST_CATEGORIES = [
-  "blood_test",
-  "cardiology",
-  "diabetes",
-  "urine_test",
-  "imaging",
-  "general_diagnostics",
-  "health_check",
-  "other",
-] as const;
-export type LabTestCategory = (typeof LAB_TEST_CATEGORIES)[number];
+// Category is clinic-defined free text (no fixed list) — a clinic types
+// whatever category name it wants when creating a test.
 
 export const LAB_TEST_STATUSES = ["active", "inactive"] as const;
 export type LabTestStatus = (typeof LAB_TEST_STATUSES)[number];
@@ -306,6 +297,37 @@ export async function getLabTestAppointmentInScope(
   const row = rows[0];
   if (!row) throw notFound("APPOINTMENT_NOT_FOUND", "Lab test appointment not found.");
   return row;
+}
+
+function slugifyLabTestCode(input: string): string {
+  const slug = input
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 45);
+  return slug || "TEST";
+}
+
+// Create requests omitting `code` (e.g. the category-only quick-create flow)
+// get one derived from the category text, deduped against this clinic's
+// existing codes rather than relying on a DB-level uniqueness constraint
+// (lab_tests.code has none).
+export async function generateUniqueLabTestCode(
+  db: Db,
+  clinicId: string,
+  seed: string,
+): Promise<string> {
+  const base = slugifyLabTestCode(seed);
+  const [rows] = await db.query<Row[]>(
+    `SELECT code FROM lab_tests WHERE clinic_id = ? AND code LIKE ?`,
+    [clinicId, `${base}%`],
+  );
+  const existing = new Set(rows.map((r) => r.code));
+  if (!existing.has(base)) return base;
+  let n = 2;
+  while (existing.has(`${base}-${n}`)) n++;
+  return `${base}-${n}`;
 }
 
 export async function writeLabTestStatusLog(
