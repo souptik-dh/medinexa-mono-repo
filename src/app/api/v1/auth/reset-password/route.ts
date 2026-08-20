@@ -12,7 +12,7 @@ const schema = z.object({
   confirm_password: z.string().min(1).max(128),
 });
 
-export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
+export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
   const body = parseBody(schema, await readJson(ctx.request));
 
   if (body.new_password !== body.confirm_password) {

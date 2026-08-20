@@ -67,6 +67,9 @@ interface TokenUser {
   doctorId: string | null;
 }
 
+const userCache = new Map<string, { user: AuthContext; ts: number }>();
+const USER_CACHE_TTL_MS = 30_000;
+
 export async function signAccessToken(user: TokenUser): Promise<string> {
   const jwt = await new SignJWT({ role: user.role, typ: "access", bid: user.branchId, did: user.doctorId })
     .setProtectedHeader({ alg: "HS256" })
@@ -191,15 +194,27 @@ export async function parseAuthContext(request: NextRequest): Promise<AuthContex
   if (!token) return null;
   const payload = await verifyAccessToken(token);
   if (!payload) return null;
+
+  const cached = userCache.get(payload.sub);
+  if (cached && Date.now() - cached.ts < USER_CACHE_TTL_MS) {
+    return cached.user;
+  }
+
   const user = await loadUser(payload.sub);
   if (!user || user.status !== "active") return null;
-  return {
+  const ctx: AuthContext = {
     userId: user.userId,
     role: user.role,
     email: user.email,
     branchId: user.branchId,
     doctorId: user.doctorId,
   };
+  userCache.set(payload.sub, { user: ctx, ts: Date.now() });
+  return ctx;
+}
+
+export function invalidateUserCache(userId: string): void {
+  userCache.delete(userId);
 }
 
 export function requireRoles(auth: AuthContext | null, roles: Role[]): AuthContext {

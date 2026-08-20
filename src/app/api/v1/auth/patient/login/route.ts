@@ -8,7 +8,7 @@ const schema = z.object({
   password: z.string().min(1),
 });
 
-export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
+export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
   const body = parseBody(schema, await readJson(ctx.request));
   const result = await loginWithPassword(body.email, body.password, "patient");
   return json({ access_token: result.access_token, refresh_token: result.refresh_token, user: result.user });

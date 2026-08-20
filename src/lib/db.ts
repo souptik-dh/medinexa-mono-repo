@@ -5,7 +5,7 @@ if (!url) throw new Error("DATABASE_URL is not set in .env");
 
 export const pool: Pool = createPool({
   uri: url,
-  connectionLimit: 10,
+  connectionLimit: 20,
   charset: "utf8mb4",
   dateStrings: true,
   timezone: "Z",

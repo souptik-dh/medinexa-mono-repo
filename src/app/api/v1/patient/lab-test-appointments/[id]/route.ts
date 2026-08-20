@@ -3,7 +3,7 @@ import { requireRoles } from "@/lib/auth";
 import { pool } from "@/lib/db";
 import { getLabTestAppointmentInScope, serializeLabTestAppointment } from "@/lib/lab-tests";
 
-export const GET = api({ rateLimit: 60 }, async (ctx) => {
+export const GET = api({ rateLimit: 120 }, async (ctx) => {
   requireRoles(ctx.auth, ["patient", "clinic_owner", "branch_staff", "sys_admin"]);
   const { id } = ctx.params;
 

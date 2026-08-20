@@ -9,7 +9,7 @@ import { badRequest } from "@/lib/errors";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
 
-export const GET = api({ rateLimit: 60 }, async (ctx) => {
+export const GET = api({ rateLimit: 120 }, async (ctx) => {
   requireRoles(ctx.auth, ["clinic_owner", "branch_staff", "sys_admin"]);
   const { branchId } = ctx.params;
 

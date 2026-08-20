@@ -14,7 +14,7 @@ function escapeLike(s: string): string {
 // Public — the platform-level master list of doctor specializations. Drives both
 // jido's home-screen category chips and the searchable specialization picker on a
 // clinic's doctor-invite form.
-export const GET = api({ rateLimit: 60 }, async (ctx) => {
+export const GET = api({ rateLimit: 120 }, async (ctx) => {
   const q = ctx.request.nextUrl.searchParams.get("q")?.trim() || null;
 
   const filters: string[] = ["ds.status = 'active'"];

@@ -4,7 +4,7 @@ import { getDoctorRating, maskPatientName } from "@/lib/reviews";
 
 // Public — drives a doctor profile's rating summary + patient feedback list, both
 // in the patient-facing app and on a clinic's own doctor page.
-export const GET = api({ rateLimit: 60 }, async (ctx) => {
+export const GET = api({ rateLimit: 120 }, async (ctx) => {
   const doctorId = ctx.params.id;
   const sp = ctx.request.nextUrl.searchParams;
   const rawLimit = Number(sp.get("limit") ?? 20);

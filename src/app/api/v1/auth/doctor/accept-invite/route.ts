@@ -18,7 +18,7 @@ const schema = z.object({
   doctor_degree: z.string().trim().max(100).optional().nullable(),
 });
 
-export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
+export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
   const body = parseBody(schema, await readJson(ctx.request));
 
   const [invites] = await pool.query<Row[]>(

@@ -5,7 +5,7 @@ import { getBranchLabTestInScope } from "@/lib/lab-tests";
 import { generateLabTestSlots } from "@/lib/lab-test-availability";
 import { badRequest } from "@/lib/errors";
 
-export const GET = api({ rateLimit: 60 }, async (ctx) => {
+export const GET = api({ rateLimit: 120 }, async (ctx) => {
   requireRoles(ctx.auth, ["patient", "clinic_owner", "branch_staff", "sys_admin"]);
   const { id: branchId, branchTestId } = ctx.params;
   const sp = ctx.request.nextUrl.searchParams;
