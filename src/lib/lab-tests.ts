@@ -128,6 +128,7 @@ export function serializeLabTestAppointment(r: Row) {
     base.branch = {
       id: r.branch_id,
       name: r.branch_name ?? null,
+      phone: r.branch_phone ?? null,
     };
   }
 

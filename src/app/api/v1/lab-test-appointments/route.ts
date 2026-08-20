@@ -172,7 +172,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
       if (body.prescription_id) {
         await conn.query(
           `INSERT INTO lab_test_prescriptions (id, patient_id, appointment_id, file_name, file_url, mime_type, file_size, uploaded_at)
-           SELECT id, patient_id, ?, file_name, file_url, mime_type, file_size, uploaded_at
+           SELECT id, patient_id, ?, file_name, file_url, mime_type, size_bytes, uploaded_at
            FROM medical_documents WHERE id = ? AND patient_id = ?`,
           [appointmentId, body.prescription_id, auth.userId],
         );
