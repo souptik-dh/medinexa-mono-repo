@@ -98,7 +98,10 @@ export async function getAppointmentInScope(
 ): Promise<Row> {
   const { where, params } = scopeWhere(auth);
   const [rows] = await db.query<Row[]>(
-    `SELECT a.* FROM appointments a WHERE a.id = ? AND ${where} FOR UPDATE`,
+    `SELECT a.*, b.timezone AS branch_timezone
+       FROM appointments a
+       JOIN branches b ON b.id = a.branch_id
+      WHERE a.id = ? AND ${where} FOR UPDATE`,
     [id, ...params],
   );
   const row = rows[0];

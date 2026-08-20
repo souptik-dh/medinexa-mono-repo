@@ -10,7 +10,7 @@ import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
 
 const collectSchema = z.object({
-  reference_no: z.string().max(255).optional(),
+  reference_no: z.string().max(255).optional().nullable(),
 });
 
 export const POST = api({ rateLimit: 10 }, async (ctx) => {

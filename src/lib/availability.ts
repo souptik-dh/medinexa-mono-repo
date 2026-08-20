@@ -77,6 +77,13 @@ export function currentTimeKeyInTz(tz: string): string {
   return fmtMinutes((Number.isFinite(h) ? h : 0) * 60 + (Number.isFinite(m) ? m : 0));
 }
 
+export function hasSlotPassedInTz(date: string, time: string, tz: string): boolean {
+  const today = todayInTz(tz);
+  if (date < today) return true;
+  if (date > today) return false;
+  return time <= currentTimeKeyInTz(tz);
+}
+
 export function generateSlotTimes(startTime: string, endTime: string, durationMinutes: number): string[] {
   const start = toMinutes(startTime);
   const end = toMinutes(endTime);

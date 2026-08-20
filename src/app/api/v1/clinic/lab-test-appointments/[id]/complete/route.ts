@@ -7,9 +7,10 @@ import {
   auditLabAction,
   serializeLabTestAppointment,
 } from "@/lib/lab-tests";
+import { hasSlotPassedInTz } from "@/lib/availability";
 import { createPatientNotification, sendEmail, detailsEmailHtml } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
-import { badRequest } from "@/lib/errors";
+import { badRequest, conflict } from "@/lib/errors";
 import type { RowDataPacket } from "mysql2/promise";
 
 export const POST = api({ rateLimit: 10 }, async (ctx) => {
@@ -20,6 +21,13 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
 
   if (auth.role === "branch_staff") {
     await assertBranchStaffPermission(pool, auth, appointment.branch_id, "lab_appointments:complete");
+  }
+
+  if (!hasSlotPassedInTz(appointment.appointment_date, appointment.start_time, appointment.branch_timezone)) {
+    throw conflict(
+      "APPOINTMENT_NOT_YET_DUE",
+      "Cannot mark as completed before the scheduled date and time have passed.",
+    );
   }
 
   await withTransaction(async (conn) => {
