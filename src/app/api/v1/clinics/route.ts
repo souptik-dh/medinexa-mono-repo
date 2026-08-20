@@ -15,12 +15,48 @@ function escapeLike(s: string): string {
 export const GET = api(undefined, async (ctx) => {
   const { limit, cursor } = parsePagination(ctx.request.nextUrl.searchParams);
   const search = ctx.request.nextUrl.searchParams.get("search")?.trim() ?? "";
+  const pinCode = ctx.request.nextUrl.searchParams.get("pin_code")?.trim() ?? "";
+  const testSearch = ctx.request.nextUrl.searchParams.get("test_search")?.trim() ?? "";
+  const hasLabTests = ctx.request.nextUrl.searchParams.get("has_lab_tests") === "true" || !!testSearch;
 
   const conditions = ["c.deleted_at IS NULL"];
   const params: unknown[] = [];
   if (search) {
     conditions.push("c.name LIKE ?");
     params.push(`%${escapeLike(search)}%`);
+  }
+  if (pinCode) {
+    // A clinic matches on its own pin_code or any non-deleted branch's pin_code —
+    // patients search by pin code without knowing which branch record carries it.
+    conditions.push(
+      "(c.pin_code = ? OR EXISTS (SELECT 1 FROM branches b WHERE b.clinic_id = c.id AND b.deleted_at IS NULL AND b.pin_code = ?))",
+    );
+    params.push(pinCode, pinCode);
+  }
+  if (hasLabTests) {
+    // Required whenever test_search is set too — a clinic can't match on a test it
+    // doesn't actually have configured at an active branch.
+    conditions.push(
+      `EXISTS (
+         SELECT 1 FROM branch_lab_tests blt
+         JOIN branches b ON b.id = blt.branch_id AND b.deleted_at IS NULL
+         WHERE blt.clinic_id = c.id AND blt.status = 'active'
+       )`,
+    );
+  }
+  if (testSearch) {
+    // A single free-text box covers both intents: match the clinic's own name, OR
+    // match the name/category of one of its active lab tests.
+    conditions.push(
+      `(c.name LIKE ? OR EXISTS (
+         SELECT 1 FROM branch_lab_tests blt
+         JOIN branches b ON b.id = blt.branch_id AND b.deleted_at IS NULL
+         JOIN lab_tests lt ON lt.id = blt.test_id
+         WHERE blt.clinic_id = c.id AND blt.status = 'active'
+           AND (lt.name LIKE ? OR lt.category LIKE ?)
+       ))`,
+    );
+    params.push(`%${escapeLike(testSearch)}%`, `%${escapeLike(testSearch)}%`, `%${escapeLike(testSearch)}%`);
   }
   if (ctx.auth?.role === "clinic_owner") {
     conditions.push("c.owner_user_id = ?");

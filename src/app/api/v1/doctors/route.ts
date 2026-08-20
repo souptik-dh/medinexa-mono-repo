@@ -21,6 +21,7 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
   const limit = Math.min(rawLimit, 50); // nextAvailableSlot below is one extra query per row
   const specializationId = sp.get("specialization_id")?.trim() || null;
   const city = sp.get("city")?.trim() || null;
+  const pinCode = sp.get("pin_code")?.trim() || null;
   const q = sp.get("q")?.trim() || null;
 
   const filters: string[] = [];
@@ -34,6 +35,10 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
   if (city) {
     filters.push("AND b.city = ?");
     params.push(city);
+  }
+  if (pinCode) {
+    filters.push("AND b.pin_code = ?");
+    params.push(pinCode);
   }
   if (q) {
     filters.push("AND d.name LIKE ?");
