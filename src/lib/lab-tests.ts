@@ -152,6 +152,24 @@ export function serializeLabTestAppointment(r: Row) {
   return base;
 }
 
+export function serializeLabTestPayment(r: Row) {
+  return {
+    id: r.id,
+    appointment_id: r.appointment_id,
+    amount: Number(r.amount),
+    currency: r.currency,
+    payment_method: r.payment_method,
+    payment_status: r.payment_status,
+    transaction_id: r.transaction_id ?? null,
+    provider: r.provider ?? null,
+    paid_at: r.paid_at ?? null,
+    collected_by: r.collected_by ?? null,
+    collected_at: r.collected_at ?? null,
+    reference_no: r.reference_no ?? null,
+    created_at: r.created_at,
+  };
+}
+
 export function labTestScopeWhere(auth: AuthContext): { where: string; params: unknown[] } {
   switch (auth.role) {
     case "patient":
@@ -340,7 +358,7 @@ export async function writeLabTestStatusLog(
 ): Promise<void> {
   const logId = newId();
   await conn.query(
-    `INSERT INTO appointment_status_log (id, appointment_id, from_status, to_status, changed_by, note)
+    `INSERT INTO lab_test_appointment_status_log (id, appointment_id, from_status, to_status, changed_by, note)
      VALUES (?, ?, ?, ?, ?, ?)`,
     [logId, appointmentId, from, to, changedBy, note ?? null],
   );
@@ -356,7 +374,7 @@ export async function transitionLabAppointment(
   const allowedFrom = LAB_APT_TRANSITIONS[appointment.status as LabAptStatus];
   if (!allowedFrom || !allowedFrom.includes(toStatus)) {
     throw conflict(
-      "INVALID_APPOINTMENT_STATUS",
+      "INVALID_STATUS_TRANSITION",
       `Cannot transition lab appointment from '${appointment.status}' to '${toStatus}'.`,
     );
   }

@@ -2,7 +2,12 @@ import { api, json } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
-import { getLabTestAppointmentInScope, transitionLabAppointment, auditLabAction } from "@/lib/lab-tests";
+import {
+  getLabTestAppointmentInScope,
+  transitionLabAppointment,
+  auditLabAction,
+  serializeLabTestAppointment,
+} from "@/lib/lab-tests";
 import { createPatientNotification, sendEmail, detailsEmailHtml } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { badRequest } from "@/lib/errors";
@@ -33,7 +38,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     await auditLabAction(conn, auth.userId, "appointment_rejected", id, { reason: body.reason });
   });
 
-  await createPatientNotification(pool, appointment.patient_id, "lab_test_booking_rejected", {
+  await createPatientNotification(pool, appointment.patient_id, "lab_test_rejected", {
     appointment_id: id,
     appointment_number: appointment.appointment_number,
     test_name: appointment.test_name,
@@ -68,5 +73,6 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     );
   }
 
-  return json({ success: true, status: "REJECTED" });
+  const updated = await getLabTestAppointmentInScope(pool, id, auth);
+  return json(serializeLabTestAppointment(updated));
 });

@@ -2,12 +2,16 @@ import { api, json } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
-import { getLabTestAppointmentInScope, transitionLabAppointment, auditLabAction } from "@/lib/lab-tests";
+import {
+  getLabTestAppointmentInScope,
+  transitionLabAppointment,
+  auditLabAction,
+  serializeLabTestAppointment,
+} from "@/lib/lab-tests";
 import { createPatientNotification } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { forbidden } from "@/lib/errors";
 import { z } from "zod";
-import type { RowDataPacket } from "mysql2/promise";
 
 const cancelSchema = z.object({
   reason: z.string().max(500).optional(),
@@ -39,7 +43,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     await auditLabAction(conn, auth.userId, "appointment_cancelled", id, { reason: body.reason });
   });
 
-  await createPatientNotification(pool, appointment.patient_id, "lab_test_booking_cancelled", {
+  await createPatientNotification(pool, appointment.patient_id, "lab_test_cancelled", {
     appointment_id: id,
     appointment_number: appointment.appointment_number,
     test_name: appointment.test_name,
@@ -47,5 +51,6 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     time: appointment.start_time,
   });
 
-  return json({ success: true });
+  const updated = await getLabTestAppointmentInScope(pool, id, auth);
+  return json(serializeLabTestAppointment(updated));
 });

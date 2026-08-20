@@ -2,7 +2,7 @@ import { api, json } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
-import { getLabTestAppointmentInScope, auditLabAction } from "@/lib/lab-tests";
+import { getLabTestAppointmentInScope, auditLabAction, serializeLabTestPayment } from "@/lib/lab-tests";
 import { createPatientNotification } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { badRequest, conflict, notFound } from "@/lib/errors";
@@ -25,7 +25,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
   }
 
   if (appointment.payment_status === "PAID") {
-    throw conflict("PAYMENT_ALREADY_COMPLETED", "Payment has already been collected.");
+    throw conflict("PAYMENT_ALREADY_COLLECTED", "Payment has already been collected.");
   }
 
   if (appointment.payment_method !== "PAY_AT_CLINIC") {
@@ -34,7 +34,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
 
   if (!["APPROVED", "COMPLETED"].includes(appointment.status)) {
     throw conflict(
-      "INVALID_APPOINTMENT_STATUS",
+      "INVALID_STATUS_TRANSITION",
       "Payment can only be collected for approved or completed appointments.",
     );
   }
@@ -45,6 +45,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
         payment_status = 'PAID',
         collected_by = ?,
         collected_at = NOW(3),
+        paid_at = NOW(3),
         reference_no = ?
        WHERE appointment_id = ? AND payment_status != 'PAID'`,
       [auth.userId, body.reference_no ?? null, id],
@@ -69,5 +70,9 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     currency: appointment.currency,
   });
 
-  return json({ success: true, payment_status: "PAID" });
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT * FROM lab_test_payments WHERE appointment_id = ? ORDER BY updated_at DESC LIMIT 1`,
+    [id],
+  );
+  return json(serializeLabTestPayment(rows[0]));
 });

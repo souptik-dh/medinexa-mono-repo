@@ -11,10 +11,11 @@ export type NotificationType =
   | "doctor_invited"
   | "doctor_invite_accepted"
   | "appointment_cancelled"
-  | "lab_test_booking_created"
-  | "lab_test_booking_approved"
-  | "lab_test_booking_rejected"
-  | "lab_test_booking_cancelled"
+  | "lab_test_booked"
+  | "lab_test_approved"
+  | "lab_test_rejected"
+  | "lab_test_cancelled"
+  | "lab_test_completed"
   | "lab_test_payment_success";
 
 export async function createNotification(
@@ -85,33 +86,40 @@ export function pushContentFor(
         title: "Appointment cancelled",
         body: `Your appointment${when ? ` on ${when}` : ""} has been cancelled.`,
       };
-    case "lab_test_booking_created":
+    case "lab_test_booked":
       return {
         title: "Lab test booked",
         body: when
           ? `Your lab test booking for ${when} has been submitted.`
           : "Your lab test booking has been submitted.",
       };
-    case "lab_test_booking_approved":
+    case "lab_test_approved":
       return {
         title: "Lab test confirmed",
         body: when
           ? `Your lab test appointment for ${when} has been confirmed.`
           : "Your lab test appointment has been confirmed.",
       };
-    case "lab_test_booking_rejected":
+    case "lab_test_rejected":
       return {
         title: "Lab test booking rejected",
         body: when
           ? `Your lab test booking for ${when} has been rejected.`
           : "Your lab test booking has been rejected.",
       };
-    case "lab_test_booking_cancelled":
+    case "lab_test_cancelled":
       return {
         title: "Lab test cancelled",
         body: when
           ? `Your lab test appointment for ${when} has been cancelled.`
           : "Your lab test appointment has been cancelled.",
+      };
+    case "lab_test_completed":
+      return {
+        title: "Lab test completed",
+        body: when
+          ? `Your lab test on ${when} has been completed.`
+          : "Your lab test has been completed.",
       };
     case "lab_test_payment_success":
       return {
