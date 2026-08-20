@@ -106,7 +106,7 @@ const createSchema = z.object({
   clinical_establishment_reg_number: z.string().trim().max(100).optional().nullable(),
 });
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   const body = parseBody(createSchema, await readJson(ctx.request));
 

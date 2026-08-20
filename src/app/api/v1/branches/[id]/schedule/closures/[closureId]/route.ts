@@ -4,7 +4,7 @@ import { requireRoles } from "@/lib/auth";
 import { requireBranchAccess } from "@/lib/permissions";
 import { notFound } from "@/lib/errors";
 
-export const DELETE = api(undefined, async (ctx) => {
+export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const { id: branchId, closureId } = ctx.params;
   await requireBranchAccess(pool, auth, branchId, "branch:settings");

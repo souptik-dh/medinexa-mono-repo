@@ -39,7 +39,7 @@ const patchSchema = z.object({
   bio: z.string().trim().max(2000).nullable().optional(),
 });
 
-export const PATCH = api(undefined, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["doctor"]);
   const [rows] = await pool.query<Row[]>(
     `SELECT id FROM doctors WHERE id = ? AND deleted_at IS NULL`,

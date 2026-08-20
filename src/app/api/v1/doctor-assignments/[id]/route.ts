@@ -48,7 +48,7 @@ async function loadAssignment(assignmentId: string) {
   return row;
 }
 
-export const PATCH = api(undefined, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "doctor", "branch_staff"]);
   const assignment = await loadAssignment(ctx.params.id);
   const body = parseBody(patchSchema, await readJson(ctx.request));
@@ -138,7 +138,7 @@ export const PATCH = api(undefined, async (ctx) => {
   });
 });
 
-export const DELETE = api(undefined, async (ctx) => {
+export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const assignment = await loadAssignment(ctx.params.id);
   if (auth.role === "clinic_owner") {

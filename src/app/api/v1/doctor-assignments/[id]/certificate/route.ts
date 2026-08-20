@@ -25,7 +25,7 @@ async function loadAssignment(assignmentId: string) {
 // The certificate lives on `doctors.certificate_url`, not on the assignment row
 // itself (doctor_branch_assignments has no certificate column) — same target
 // column the PATCH handler on /doctor-assignments/[id] already writes to.
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "doctor", "branch_staff"]);
   const assignment = await loadAssignment(ctx.params.id);
 

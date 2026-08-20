@@ -23,7 +23,7 @@ function rowToDevice(r: Row) {
   };
 }
 
-export const PATCH = api(undefined, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const body = parseBody(updateDeviceSchema, await readJson(ctx.request));
 
@@ -55,7 +55,7 @@ export const PATCH = api(undefined, async (ctx) => {
   return json(rowToDevice(updated[0]));
 });
 
-export const DELETE = api(undefined, async (ctx) => {
+export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const [rows] = await pool.query<Row[]>(
     `SELECT id FROM patient_devices WHERE id = ? AND patient_id = ?`,

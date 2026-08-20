@@ -53,7 +53,7 @@ export const GET = api(undefined, async (ctx) => {
   return json({ items: rows.map(rowToDevice) });
 });
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const body = parseBody(createDeviceSchema, await readJson(ctx.request));
   const id = newId();

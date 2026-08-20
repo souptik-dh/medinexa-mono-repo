@@ -10,7 +10,7 @@ const CERTIFICATE_ALLOWED_FORMATS = ["jpg", "jpeg", "png", "webp", "pdf"];
 // clinic/branch licenses — the client uploads straight to Cloudinary with this
 // grant, then sends the resulting URL as a plain string in the invite's
 // `certificate` field.
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   return json(
     createImageUploadSignature("doctor-invites/certificates", CERTIFICATE_ALLOWED_FORMATS),

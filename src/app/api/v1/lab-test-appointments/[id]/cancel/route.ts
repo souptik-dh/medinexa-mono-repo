@@ -17,7 +17,7 @@ const cancelSchema = z.object({
   reason: z.string().max(500).optional(),
 });
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient", "clinic_owner", "branch_staff", "sys_admin"]);
   const { id } = ctx.params;
   const body = parseBody(cancelSchema, await ctx.request.json());

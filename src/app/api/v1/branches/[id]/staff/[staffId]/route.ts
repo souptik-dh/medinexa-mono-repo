@@ -4,7 +4,7 @@ import { requireRoles } from "@/lib/auth";
 import { getOwnedBranch } from "@/lib/scope";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 
-export const DELETE = api(undefined, async (ctx) => {
+export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const { id: branchId, staffId } = ctx.params;
 

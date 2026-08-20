@@ -10,7 +10,7 @@ const schema = z.object({
   public_id: z.string().trim().min(1).max(255),
 });
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   await getOwnedBranch(pool, ctx.params.id, auth.userId);
 

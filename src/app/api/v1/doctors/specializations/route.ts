@@ -56,7 +56,7 @@ const createSchema = z.object({
 // one they need isn't in the master list yet. Case-insensitive dedup via `slug`: if a
 // specialization with the same slug already exists (created by this clinic or any
 // other), that existing row is returned instead of creating a duplicate.
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   requireRoles(ctx.auth, ["clinic_owner", "branch_staff", "sys_admin"]);
   const body = parseBody(createSchema, await readJson(ctx.request));
   const slug = slugify(body.name);

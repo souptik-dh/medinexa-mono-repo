@@ -22,7 +22,7 @@ function parseCategory(value: unknown): DocCategory {
   );
 }
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const form = await ctx.request.formData();
   const saved = await saveUpload(form.get("file"), "medical-doc", MAX_BYTES, DOC_MIMES);

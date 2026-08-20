@@ -77,13 +77,17 @@ ISO 8601 UTC — e.g. `2026-08-09T14:30:00Z`. Scheduling `date` is `YYYY-MM-DD`,
 
 ### Rate limits
 
-Default `100 req/min` per token. Auth endpoints `10 req/min` per IP. Overrides:
+Limits are per authenticated user (`Authorization` token) unless the endpoint keys by IP instead. Endpoints with no explicit limit fall back to a default that only applies to authenticated requests — an unauthenticated call to such an endpoint is not rate limited at the API layer (it will typically fail auth first anyway).
 
-| Endpoint | Limit |
-|---|---|
-| `POST /auth/*` (all) | 10/min per IP |
-| `PATCH /appointments/:id/payment` | 20/min |
-| `GET /doctors/search` | 60/min |
+- **Default (no explicit limit), authenticated:** `200/min` per user.
+- **Auth endpoints** (`POST /auth/*` registration, login, OTP, password reset, refresh, accept-invite): `20/min` per IP. `POST /auth/logout` is `100/min` per user (it requires an existing session token).
+- **`GET /health`:** `120/min` per IP.
+- **Booking & payment actions** — `POST /appointments`, `PATCH /appointments/:id/payment`, `POST /lab-test-appointments`, `POST /lab-test-appointments/:id/payment`, `POST /clinic/lab-test-appointments/:id/payment/collect`: `20/min`.
+- **Sensitive/admin-config writes** — password/email change, photo & document/signature uploads, lab test & branch-test-schedule catalog CRUD (`clinic/lab-tests*`, `clinic/branches/:branchId/lab-tests*`, `clinic/branches/:branchId/lab-test-schedules*`): `10/min`.
+- **Browse/list (`GET`) endpoints** — doctors, lab tests, branch lab tests, categories, availability: `120/min`.
+- All other mutating endpoints (status transitions such as confirm/cancel/complete/approve/reject, profile updates, device tokens, etc.) use the `200/min` default, set explicitly on the route.
+
+`429 RATE_LIMITED` responses include a `Retry-After` header (seconds until the window resets).
 
 ### File uploads
 
@@ -113,7 +117,7 @@ Common upload errors: `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`, `400 F
 
 ### GET /health
 
-Auth: none. Unauthenticated liveness/readiness check — pings the database and reports its status. Rate-limited at 60 requests/min per IP.
+Auth: none. Unauthenticated liveness/readiness check — pings the database and reports its status. Rate-limited at 120 requests/min per IP.
 
 **Response `200`**
 
@@ -145,7 +149,7 @@ Auth: none. Unauthenticated liveness/readiness check — pings the database and 
 
 ### POST /auth/patient/register
 
-Public. Rate limited 10/min per IP.
+Public. Rate limited 20/min per IP.
 
 **Request body**
 
@@ -206,7 +210,7 @@ Public. Rate limited 10/min per IP.
 
 ### POST /auth/clinic-owner/register
 
-Public. Rate limited 10/min per IP. In addition to creating the `clinic_owner` user, it auto-creates an initial clinic (named after the owner) in the same transaction.
+Public. Rate limited 20/min per IP. In addition to creating the `clinic_owner` user, it auto-creates an initial clinic (named after the owner) in the same transaction.
 
 The account is created with `status = 'pending'`. No usable `access_token`/`refresh_token` is issued — a welcome email with a verification link is sent instead, and the account cannot log in until the link is followed (see [`POST /auth/verify-email`](#post-authverify-email)).
 
@@ -244,7 +248,7 @@ The account is created with `status = 'pending'`. No usable `access_token`/`refr
 
 ### POST /auth/patient/login
 
-Public. Rate limited 10/min per IP.
+Public. Rate limited 20/min per IP.
 
 **Request body**
 
@@ -278,7 +282,7 @@ Same shape as patient login; requires `role = clinic_owner`.
 
 ### POST /auth/verify-email
 
-Public. Rate limited 10/min per IP. Single-use, 24h-expiry token; shared by two flows:
+Public. Rate limited 20/min per IP. Single-use, 24h-expiry token; shared by two flows:
 
 1. **Signup verification** — activates a `clinic_owner` account (`status: 'pending'` → `'active'`) using the token from the welcome email sent by `POST /auth/clinic-owner/register`.
 2. **Email change** — confirms a pending email change requested via `POST /patients/me/change-email`; on success, updates `users.email` to the new address instead of touching `status`.
@@ -332,7 +336,7 @@ For the email-change flow, `message` is `"Your email address has been updated."`
 
 ### POST /auth/doctor/accept-invite
 
-Public, but requires possession of a valid invite code. Rate limited 10/min per IP.
+Public, but requires possession of a valid invite code. Rate limited 20/min per IP.
 This is the **only** endpoint that activates a doctor account.
 
 On success, an in-app `doctor_invite_accepted` notification is created for whoever sent the invite **and** for the clinic owner (deduped if they're the same person), and the clinic owner is emailed that the doctor has joined.
@@ -383,7 +387,7 @@ On success, an in-app `doctor_invite_accepted` notification is created for whoev
 
 ### POST /auth/branch-staff/login
 
-Requests a passwordless OTP for an existing staff account. Rate limited 10/min per IP.
+Requests a passwordless OTP for an existing staff account. Rate limited 20/min per IP.
 Rejects any email that is not an active `branch_staff` account with `403 NOT_BRANCH_STAFF` — this reveals whether an email is registered as branch staff (a deliberate trade-off; the OTP-sent response itself does not reveal anything further).
 
 **Request body**
@@ -404,7 +408,7 @@ Rejects any email that is not an active `branch_staff` account with `403 NOT_BRA
 
 ### POST /auth/branch-staff/verify-otp
 
-Verifies the OTP and issues tokens. Rate limited 10/min per IP. Max 5 attempts per OTP.
+Verifies the OTP and issues tokens. Rate limited 20/min per IP. Max 5 attempts per OTP.
 
 **Request body**
 
@@ -432,7 +436,7 @@ Verifies the OTP and issues tokens. Rate limited 10/min per IP. Max 5 attempts p
 
 ### POST /auth/forgot-password
 
-Public. Rate limited 10/min per IP. Requests a password reset link for the given email. Always returns the same message (does not reveal whether the email exists). A reset token is only issued when the email belongs to an **active** account with a password (`patient`, `clinic_owner`, or `doctor`); passwordless `branch_staff` accounts are skipped.
+Public. Rate limited 20/min per IP. Requests a password reset link for the given email. Always returns the same message (does not reveal whether the email exists). A reset token is only issued when the email belongs to an **active** account with a password (`patient`, `clinic_owner`, or `doctor`); passwordless `branch_staff` accounts are skipped.
 
 The reset link is emailed as `{RESET_PASSWORD_URL}/new_password?token={RESET_TOKEN}` — `RESET_PASSWORD_URL` defaults to `https://medinexa-clinic.onrender.com`. Tokens are single-use and expire after 1 hour.
 
@@ -454,7 +458,7 @@ The reset link is emailed as `{RESET_PASSWORD_URL}/new_password?token={RESET_TOK
 
 ### POST /auth/reset-password
 
-Public. Rate limited 10/min per IP. Sets a new password using a valid, unexpired reset token. The token is invalidated (single-use) once the password is successfully updated.
+Public. Rate limited 20/min per IP. Sets a new password using a valid, unexpired reset token. The token is invalidated (single-use) once the password is successfully updated.
 
 **Request body**
 
@@ -1861,7 +1865,7 @@ Auth: `doctor`. Persists the doctor's profile photo after a direct Cloudinary up
 
 ### GET /doctors/search
 
-Auth: any authenticated user (`patient`, `clinic_owner`, `branch_staff`, `doctor`). Rate limited 60/min.
+Auth: any authenticated user (`patient`, `clinic_owner`, `branch_staff`, `doctor`). Rate limited 120/min.
 
 **Query:** `?q=<query>&limit=<1..50>` — `q` is required.
 
@@ -2571,7 +2575,7 @@ On success: the patient gets an in-app `payment_received` notification; the clin
 |---|---|---|
 | `fee_amount` | number | required, > 0, ≤ 1,000,000 |
 | `method` | string | required, `cash` or `upi` |
-| `reference_no` | string? | max 255 |
+| `reference_no` | string? | max 255, nullable |
 
 **Response `200`** — Appointment object (`status: "paid"`, `payment_method` set).
 
@@ -2581,9 +2585,11 @@ On success: the patient gets an in-app `payment_received` notification; the clin
 
 Auth: `branch_staff` (own branch, requires `appointments:complete`) or `clinic_owner`. Requires current status `paid`. No body.
 
+The appointment's `scheduled_date` + `scheduled_time` must have already passed in the branch's timezone — staff cannot mark a future appointment as completed ahead of its scheduled slot.
+
 **Response `200`** — Appointment object (`status: "completed"`).
 
-**Errors:** `409 INVALID_STATUS_TRANSITION`.
+**Errors:** `409 INVALID_STATUS_TRANSITION`, `409 APPOINTMENT_NOT_YET_DUE`.
 
 ### PATCH /appointments/:id/cancel
 
@@ -2634,7 +2640,9 @@ Clinics define **lab tests** (e.g. ECG, blood panel) at the clinic level, then c
 
 ### Lab test categories
 
-`category` is clinic-defined free text (string, 1–100 chars) — not a fixed enum. `GET /clinic/lab-tests/categories` returns the distinct categories a clinic has already used, for suggesting/autocompleting values on create; typing a new one is valid and simply introduces that category going forward.
+`category` on a `LabTest` is clinic-defined free text (string, 1–100 chars) — not a fixed enum; typing a new one on create is valid and simply introduces that category going forward.
+
+Clinics can additionally pre-register named categories with a display **badge color** via `POST /clinic/lab-tests/categories` (bulk create/re-color, see [below](#post-cliniclab-testscategories)). These live in a separate `lab_test_categories` table keyed by `(clinic_id, name)`, independent of any `LabTest` row. `GET /clinic/lab-tests/categories` returns the union of registered categories and any legacy free-text `category` values already used on the clinic's lab tests but never explicitly registered — the latter come back with `badge_color: null` so the UI can fall back to a default swatch.
 
 ### Lab test appointment statuses
 
@@ -2736,7 +2744,7 @@ When `service_mode` is `HOME`, the response additionally includes `home_address`
 
 #### GET /branches/:id/lab-tests
 
-Auth: any authenticated user. Lists active lab tests configured for the branch. Rate limited 60/min.
+Auth: any authenticated user. Lists active lab tests configured for the branch. Rate limited 120/min.
 
 **Query:** `?category=&search=&service_mode=` — `category` filters by test category; `search` matches test name/code; `service_mode` filters by `CLINIC` or `HOME` availability. All optional.
 
@@ -2772,7 +2780,7 @@ Auth: any authenticated user. Lists active lab tests configured for the branch. 
 
 #### GET /branches/:id/lab-tests/:branchTestId
 
-Auth: any authenticated user. Returns a single branch lab test. Rate limited 60/min.
+Auth: any authenticated user. Returns a single branch lab test. Rate limited 120/min.
 
 **Response `200`** — BranchLabTest object.
 
@@ -2780,7 +2788,7 @@ Auth: any authenticated user. Returns a single branch lab test. Rate limited 60/
 
 #### GET /branches/:id/lab-tests/:branchTestId/availability
 
-Auth: any authenticated user. Returns available time slots for a given date. Rate limited 60/min.
+Auth: any authenticated user. Returns available time slots for a given date. Rate limited 120/min.
 
 **Query:** `?date=2026-08-25` (required, `YYYY-MM-DD`, not in the past).
 
@@ -2805,7 +2813,7 @@ Slots are generated from `lab_test_schedules` for the branch, filtered against b
 
 #### POST /lab-test-appointments
 
-Auth: `patient`. Rate limited 10/min. Header `Idempotency-Key` **required**. Creates a new lab test appointment. Double-booking is prevented at the database level via a unique constraint on `(branch_id, branch_lab_test_id, appointment_date, slot_key)` excluding cancelled slots.
+Auth: `patient`. Rate limited 20/min. Header `Idempotency-Key` **required**. Creates a new lab test appointment. Double-booking is prevented at the database level via a unique constraint on `(branch_id, branch_lab_test_id, appointment_date, slot_key)` excluding cancelled slots.
 
 On success, an in-app `lab_test_booked` notification is created for every branch staff member and the clinic owner.
 
@@ -2869,7 +2877,7 @@ Auth: `patient` (own) or any clinic staff/owner. Returns a single lab test appoi
 
 #### POST /lab-test-appointments/:id/cancel
 
-Auth: `patient` (own) or `clinic_owner`/`branch_staff` (with `lab_appointments:cancel`). Rate limited 10/min. Patients can only cancel their own appointments. Transitions the appointment to `CANCELLED` via the state machine and sets `cancelled_at`.
+Auth: `patient` (own) or `clinic_owner`/`branch_staff` (with `lab_appointments:cancel`). Rate limited 200/min. Patients can only cancel their own appointments. Transitions the appointment to `CANCELLED` via the state machine and sets `cancelled_at`.
 
 On success, an in-app `lab_test_cancelled` notification is sent to the relevant parties.
 
@@ -2885,7 +2893,7 @@ On success, an in-app `lab_test_cancelled` notification is sent to the relevant 
 
 #### POST /lab-test-appointments/:id/payment
 
-Auth: `patient` (own). Rate limited 10/min. Initiates payment for a lab test appointment. Validates the appointment is in `PENDING` or `APPROVED` status.
+Auth: `patient` (own). Rate limited 20/min. Initiates payment for a lab test appointment. Validates the appointment is in `PENDING` or `APPROVED` status.
 
 **Request body**
 
@@ -2968,15 +2976,56 @@ Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Creates a new lab test
 
 #### GET /clinic/lab-tests/categories
 
-Auth: `clinic_owner`, `branch_staff` (read-only), or `sys_admin`. Rate limited 60/min. Distinct `category` values already used across the caller's lab tests, for suggesting/autocompleting on create — not an exhaustive or fixed list.
+Auth: `clinic_owner`, `branch_staff` (read-only), or `sys_admin`. Rate limited 120/min. Returns the categories available to the caller's clinic(s): every explicitly-registered `lab_test_category` (with its `badge_color`) plus any legacy free-text `category` value already used on a lab test but never registered (`badge_color: null`). Not an exhaustive or fixed list — an arbitrary new string is still accepted as `category` on `POST /clinic/lab-tests`.
 
 **Query:** `?clinic_id=` — optional, narrows to one clinic.
 
 **Response `200`**
 
 ```json
-{ "items": ["cardiology", "ECG", "Diabetes Panel"] }
+{
+  "items": [
+    { "id": "e5f6a7b8-...", "name": "Cardiology", "badge_color": "#22C55E" },
+    { "id": null, "name": "Diabetes Panel", "badge_color": null }
+  ]
+}
 ```
+
+#### POST /clinic/lab-tests/categories
+
+Auth: `clinic_owner` or `sys_admin`. Rate limited 10/min. Bulk-creates (or re-colors) named categories for a clinic in one request — e.g. to set up a full category list with badge colors before adding lab tests. Names are deduplicated case-insensitively within the request; an existing `(clinic_id, name)` pair has its `badge_color` updated rather than erroring.
+
+**Request body**
+
+```json
+{
+  "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+  "categories": [
+    { "name": "Cardiology", "badge_color": "#22C55E" },
+    { "name": "Radiology", "badge_color": "#3B82F6" }
+  ]
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `clinic_id` | string (UUID) | required |
+| `categories` | array | required, 1–100 items |
+| `categories[].name` | string | required, 1–100 chars, trimmed |
+| `categories[].badge_color` | string? | hex color `#RRGGBB`; defaults to `#6B7280` when omitted |
+
+**Response `201`**
+
+```json
+{
+  "items": [
+    { "id": "e5f6a7b8-...", "name": "Cardiology", "badge_color": "#22C55E" },
+    { "id": "f6a7b8c9-...", "name": "Radiology", "badge_color": "#3B82F6" }
+  ]
+}
+```
+
+**Errors:** `400 VALIDATION_ERROR` (missing/invalid `badge_color` format), `404 CLINIC_NOT_FOUND`.
 
 #### PUT /clinic/lab-tests/:id
 
@@ -3180,7 +3229,7 @@ Auth: `clinic_owner` (own clinics) or `branch_staff` (own branch, with `lab_appo
 
 #### POST /clinic/lab-test-appointments/:id/approve
 
-Auth: `clinic_owner` or `branch_staff` with `lab_appointments:approve` or `sys_admin`. Rate limited 10/min. Approves a `PENDING` appointment. Merges the branch test's `default_precautions` with any custom `precautions` passed in the request body.
+Auth: `clinic_owner` or `branch_staff` with `lab_appointments:approve` or `sys_admin`. Rate limited 200/min. Approves a `PENDING` appointment. Merges the branch test's `default_precautions` with any custom `precautions` passed in the request body.
 
 On success, an in-app `lab_test_approved` notification is sent to the patient and an email is sent with the appointment details.
 
@@ -3204,7 +3253,7 @@ On success, an in-app `lab_test_approved` notification is sent to the patient an
 
 #### POST /clinic/lab-test-appointments/:id/reject
 
-Auth: `clinic_owner` or `branch_staff` with `lab_appointments:reject` or `sys_admin`. Rate limited 10/min. Rejects a `PENDING` appointment. A reason is required.
+Auth: `clinic_owner` or `branch_staff` with `lab_appointments:reject` or `sys_admin`. Rate limited 200/min. Rejects a `PENDING` appointment. A reason is required.
 
 On success, an in-app `lab_test_rejected` notification is sent to the patient and an email is sent with the rejection reason.
 
@@ -3224,17 +3273,19 @@ On success, an in-app `lab_test_rejected` notification is sent to the patient an
 
 #### POST /clinic/lab-test-appointments/:id/complete
 
-Auth: `clinic_owner` or `branch_staff` with `lab_appointments:complete` or `sys_admin`. Rate limited 10/min. Marks an `APPROVED` appointment as completed. Sets `completed_at`.
+Auth: `clinic_owner` or `branch_staff` with `lab_appointments:complete` or `sys_admin`. Rate limited 200/min. Marks an `APPROVED` appointment as completed. Sets `completed_at`.
+
+The appointment's `appointment_date` + `start_time` must have already passed in the branch's timezone — staff cannot mark a future appointment as completed ahead of its scheduled slot.
 
 On success, an in-app `lab_test_completed` notification is sent to the patient and an email is sent confirming the test is done.
 
 **Response `200`** — LabTestAppointment object (`status: "COMPLETED"`).
 
-**Errors:** `404 APPOINTMENT_NOT_FOUND`, `409 INVALID_STATUS_TRANSITION`.
+**Errors:** `404 APPOINTMENT_NOT_FOUND`, `409 INVALID_STATUS_TRANSITION`, `409 APPOINTMENT_NOT_YET_DUE`.
 
 #### POST /clinic/lab-test-appointments/:id/payment/collect
 
-Auth: `clinic_owner` or `branch_staff` with `lab_payments:collect` or `sys_admin`. Rate limited 10/min. Collects a pay-at-clinic payment. Only valid for appointments with `payment_method = "PAY_AT_CLINIC"`.
+Auth: `clinic_owner` or `branch_staff` with `lab_payments:collect` or `sys_admin`. Rate limited 20/min. Collects a pay-at-clinic payment. Only valid for appointments with `payment_method = "PAY_AT_CLINIC"`.
 
 **Request body**
 
@@ -3244,7 +3295,7 @@ Auth: `clinic_owner` or `branch_staff` with `lab_payments:collect` or `sys_admin
 
 | Field | Type | Notes |
 |---|---|---|
-| `reference_no` | string? | max 255 |
+| `reference_no` | string? | max 255, nullable |
 
 **Response `200`**
 
@@ -3603,6 +3654,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `DOCTOR_HAS_ACTIVE_APPOINTMENTS` | 409 | Cannot remove doctor with live appointments |
 | `CLINIC_HAS_ACTIVE_APPOINTMENTS` | 409 | Clinic/branch has non-terminal appointments |
 | `APPOINTMENT_NOT_YET_PAID` | 409 | Prescription scan before payment |
+| `APPOINTMENT_NOT_YET_DUE` | 409 | Tried to mark an appointment completed before its scheduled date/time has passed |
 | `APPOINTMENT_NOT_COMPLETED` | 409 | Tried to rate a doctor before the appointment was completed |
 | `TEST_CODE_ALREADY_EXISTS` | 409 | Lab test code already exists for this clinic |
 | `TEST_ALREADY_CONFIGURED_FOR_BRANCH` | 409 | Lab test is already configured for this branch |
@@ -3626,7 +3678,7 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `paid` | `completed` | `PATCH /appointments/:id/complete` | branch_staff, clinic_owner |
 | `paid` | `cancelled` | `PATCH /appointments/:id/cancel` | branch_staff, clinic_owner |
 
-Any other transition returns `409 INVALID_STATUS_TRANSITION`.
+Any other transition returns `409 INVALID_STATUS_TRANSITION`. The `paid → completed` transition additionally requires `scheduled_date`/`scheduled_time` to have passed (branch timezone), else `409 APPOINTMENT_NOT_YET_DUE`.
 
 ### Lab test status transitions
 
@@ -3639,7 +3691,7 @@ Any other transition returns `409 INVALID_STATUS_TRANSITION`.
 | `APPROVED` | `COMPLETED` | `POST /clinic/lab-test-appointments/:id/complete` | clinic_owner, branch_staff |
 | `APPROVED` | `CANCELLED` | `POST /lab-test-appointments/:id/cancel` | patient, clinic_owner, branch_staff |
 
-Any other transition returns `409 INVALID_STATUS_TRANSITION`.
+Any other transition returns `409 INVALID_STATUS_TRANSITION`. The `APPROVED → COMPLETED` transition additionally requires `appointment_date`/`start_time` to have passed (branch timezone), else `409 APPOINTMENT_NOT_YET_DUE`.
 
 ---
 

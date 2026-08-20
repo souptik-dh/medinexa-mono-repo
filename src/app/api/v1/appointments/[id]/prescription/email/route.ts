@@ -6,7 +6,7 @@ import { getAppointmentInScope } from "@/lib/appointments";
 import { sendEmail, patientEmailHtml } from "@/lib/notifications";
 import { notFound } from "@/lib/errors";
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["doctor", "patient"]);
 
   let appointment: Row;

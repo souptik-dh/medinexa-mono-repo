@@ -809,6 +809,27 @@ try {
     console.log('Applied migration: lab_tests table');
   }
 
+  const [labTestCategoriesTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'lab_test_categories'`,
+  );
+  if (Number(labTestCategoriesTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE lab_test_categories (
+        id CHAR(36) NOT NULL,
+        clinic_id CHAR(36) NOT NULL,
+        name VARCHAR(100) NOT NULL,
+        badge_color VARCHAR(20) NOT NULL DEFAULT '#6B7280',
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_lab_test_category_clinic_name (clinic_id, name),
+        CONSTRAINT fk_lab_test_category_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: lab_test_categories table');
+  }
+
   const [labTestCategoryCols] = await conn.query(
     `SELECT DATA_TYPE FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'lab_tests' AND COLUMN_NAME = 'category'`,

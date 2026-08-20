@@ -30,7 +30,7 @@ function serializeReview(r: Row) {
 // has one row per (patient, doctor) — not per appointment — rating the same doctor
 // again after a later visit updates that existing review in place (and re-points it
 // at the newer appointment/branch) rather than erroring or creating a duplicate.
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const appt = await getAppointmentInScope(pool, ctx.params.id, auth);
   if (appt.status !== "completed") {

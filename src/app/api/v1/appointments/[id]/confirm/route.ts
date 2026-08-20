@@ -6,7 +6,7 @@ import { createPatientNotification, sendEmail, detailsEmailHtml } from "@/lib/no
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { notFound } from "@/lib/errors";
 
-export const PATCH = api(undefined, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["branch_staff", "clinic_owner"]);
 
   await withTransaction(async (conn) => {

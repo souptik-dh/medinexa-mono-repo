@@ -9,7 +9,7 @@ import { createOcrJob } from "@/lib/ocr";
 const SCAN_MIMES = ["image/jpeg", "image/png", "image/webp"];
 const MAX_BYTES = 10 * 1024 * 1024;
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["doctor"]);
   const appointment = await requireAssignedDoctor(pool, ctx.params.id, auth);
 

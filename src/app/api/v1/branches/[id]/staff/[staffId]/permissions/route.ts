@@ -55,7 +55,7 @@ export const GET = api(undefined, async (ctx) => {
   });
 });
 
-export const PATCH = api(undefined, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const { id: branchId, staffId } = ctx.params;
   const body = parseBody(patchSchema, await readJson(ctx.request));

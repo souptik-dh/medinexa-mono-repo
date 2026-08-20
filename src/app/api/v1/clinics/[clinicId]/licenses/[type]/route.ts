@@ -8,7 +8,7 @@ import { licenseColumns } from "@/lib/licenses";
 const LICENSE_MIMES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
 const MAX_BYTES = 10 * 1024 * 1024;
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   const clinic = await getOwnedClinic(pool, ctx.params.clinicId, auth.userId);
   const { url: urlColumn } = licenseColumns(ctx.params.type);

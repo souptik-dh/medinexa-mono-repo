@@ -4,7 +4,7 @@ import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 import type { ResultSetHeader } from "mysql2/promise";
 
-export const DELETE = api(undefined, async (ctx) => {
+export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const [result] = await pool.query<ResultSetHeader>(
     `UPDATE refresh_tokens SET revoked_at = UTC_TIMESTAMP(3)

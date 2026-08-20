@@ -8,7 +8,7 @@ const schema = z.object({
   branch_id: z.string().uuid().optional().nullable(),
 });
 
-export const PATCH = api(undefined, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient", "branch_staff", "doctor", "clinic_owner"]);
   const body = parseBody(schema, await readJson(ctx.request));
 

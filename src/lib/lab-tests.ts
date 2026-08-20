@@ -49,6 +49,14 @@ export function serializeLabTest(r: Row) {
   };
 }
 
+export function serializeLabTestCategory(r: Row) {
+  return {
+    id: r.id ?? null,
+    name: r.name,
+    badge_color: r.badge_color ?? null,
+  };
+}
+
 export function serializeBranchLabTest(r: Row) {
   return {
     id: r.id,

@@ -14,7 +14,7 @@ const schema = z.object({
   scan_url: z.string().trim().max(500).optional().nullable(),
 });
 
-export const PUT = api(undefined, async (ctx) => {
+export const PUT = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["doctor"]);
   const appointment = await requireAssignedDoctor(pool, ctx.params.id, auth);
   const body = parseBody(schema, await readJson(ctx.request));

@@ -4,7 +4,7 @@ import { requireRoles } from "@/lib/auth";
 import { getOwnedBranch } from "@/lib/scope";
 import { notFound } from "@/lib/errors";
 
-export const DELETE = api(undefined, async (ctx) => {
+export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   const { id: branchId, imageId } = ctx.params;
   await getOwnedBranch(pool, branchId, auth.userId);

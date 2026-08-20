@@ -13,7 +13,7 @@ const schema = z.object({
   reason: z.string().trim().max(500).optional().nullable(),
 });
 
-export const PATCH = api(undefined, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient", "branch_staff", "clinic_owner"]);
   const body = parseBody(schema, await readJson(ctx.request));
 

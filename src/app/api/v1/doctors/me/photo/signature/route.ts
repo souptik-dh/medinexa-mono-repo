@@ -4,7 +4,7 @@ import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 import { createImageUploadSignature } from "@/lib/cloudinary";
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["doctor"]);
   const [rows] = await pool.query<Row[]>(
     `SELECT id FROM doctors WHERE id = ? AND deleted_at IS NULL`,

@@ -2,7 +2,7 @@ import { api, noContent } from "@/lib/http";
 import { pool } from "@/lib/db";
 import { requireRoles, invalidateUserCache } from "@/lib/auth";
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   await pool.query(
     `UPDATE refresh_tokens SET revoked_at = UTC_TIMESTAMP(3) WHERE user_id = ? AND revoked_at IS NULL`,

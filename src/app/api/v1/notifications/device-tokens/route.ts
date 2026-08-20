@@ -15,7 +15,7 @@ const registerSchema = z.object({
 // registered to a different account after logout/login. The upsert reassigns it to
 // whoever is currently authenticated rather than erroring, so a shared/reused device
 // always ends up pointing at the right account.
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient", "branch_staff", "doctor", "clinic_owner"]);
   const body = parseBody(registerSchema, await readJson(ctx.request));
 
@@ -29,7 +29,7 @@ export const POST = api(undefined, async (ctx) => {
   return json({ registered: true }, 201);
 });
 
-export const DELETE = api(undefined, async (ctx) => {
+export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient", "branch_staff", "doctor", "clinic_owner"]);
   const token = ctx.request.nextUrl.searchParams.get("token");
   if (!token) throw badRequest("VALIDATION_ERROR", "token is required.", "token");

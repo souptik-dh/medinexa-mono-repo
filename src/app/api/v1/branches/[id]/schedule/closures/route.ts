@@ -81,7 +81,7 @@ const createSchema = z
     path: ["end_date"],
   });
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const branchId = ctx.params.id;
   await requireBranchAccess(pool, auth, branchId, "branch:settings");

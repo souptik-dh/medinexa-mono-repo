@@ -40,7 +40,7 @@ export const GET = api(undefined, async (ctx) => {
   return json({ items: rows.map(serializeImage) });
 });
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   const { id: branchId } = ctx.params;
   await getOwnedBranch(pool, branchId, auth.userId);

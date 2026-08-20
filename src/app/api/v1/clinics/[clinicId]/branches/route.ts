@@ -86,7 +86,7 @@ export const GET = api(undefined, async (ctx) => {
   });
 });
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   const { clinicId } = ctx.params;
   await getOwnedClinic(pool, clinicId, auth.userId);

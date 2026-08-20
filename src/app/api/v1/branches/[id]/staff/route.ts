@@ -60,7 +60,7 @@ const createSchema = z.object({
   permissions: z.array(z.enum(BRANCH_STAFF_PERMISSIONS)).optional(),
 });
 
-export const POST = api(undefined, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const branchId = ctx.params.id;
 

@@ -32,7 +32,7 @@ async function authorize(auth: AuthContext, assignment: Row) {
   }
 }
 
-export const DELETE = api(undefined, async (ctx) => {
+export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "doctor", "branch_staff"]);
   const { id: assignmentId, exceptionId } = ctx.params;
   const assignment = await loadAssignment(assignmentId);

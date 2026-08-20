@@ -56,7 +56,7 @@ const patchSchema = z.object({
   clinical_establishment_reg_number: z.string().trim().max(100).nullable().optional(),
 });
 
-export const PATCH = api(undefined, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   const clinic = await getOwnedClinic(pool, ctx.params.clinicId, auth.userId);
   const body = parseBody(patchSchema, await readJson(ctx.request));
@@ -133,7 +133,7 @@ export const PATCH = api(undefined, async (ctx) => {
   });
 });
 
-export const DELETE = api(undefined, async (ctx) => {
+export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   const clinic = await getOwnedClinic(pool, ctx.params.clinicId, auth.userId);
   const { searchParams } = ctx.request.nextUrl;

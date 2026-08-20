@@ -3,7 +3,7 @@ import { pool, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 
-export const PATCH = api(undefined, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient", "branch_staff", "doctor", "clinic_owner"]);
 
   const [rows] = await pool.query<Row[]>(

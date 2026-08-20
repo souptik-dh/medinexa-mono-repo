@@ -78,7 +78,7 @@ const patchSchema = z.object({
   preferred_branch_id: idSchema.nullable().optional(),
 });
 
-export const PATCH = api(undefined, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const body = parseBody(patchSchema, await readJson(ctx.request));
 

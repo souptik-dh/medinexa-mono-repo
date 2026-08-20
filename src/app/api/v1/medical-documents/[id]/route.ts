@@ -3,7 +3,7 @@ import { pool, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 
-export const DELETE = api(undefined, async (ctx) => {
+export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const [rows] = await pool.query<Row[]>(
     `SELECT id FROM medical_documents WHERE id = ? AND patient_id = ?`,
