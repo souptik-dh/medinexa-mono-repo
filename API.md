@@ -1163,6 +1163,8 @@ Auth: same read access as `GET /branches/:id/schedule`. Lists branch-wide closur
 
 Auth: `clinic_owner` **or** `branch_staff` with `branch:settings`. Marks a date range unavailable for **every** doctor at this branch in one call.
 
+Any pre-existing non-terminal appointment that falls inside the new closure's date range is cancelled as a side effect: doctor appointments in `pending`/`confirmed` (a `paid` appointment is left untouched — cancelling it has refund implications out of scope here, so staff must handle those manually) and lab test appointments in `PENDING`/`APPROVED`. Each affected patient gets an in-app `appointment_cancelled`/`lab_test_cancelled` notification **and** an email — a booking they made suddenly becoming invalid is a surprise, not a routine cancel, so it's always emailed regardless of the notification-type table in [Notifications](#notifications).
+
 **Request body**
 
 ```json
@@ -1740,6 +1742,8 @@ Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff`
 ### POST /doctor-assignments/:id/exceptions
 
 Auth: same as above. Marks a date range unavailable ("doctor leave"), even if it falls inside an active `slot_template` weekday/date-range. The leave does not need to fall entirely inside the assignment's slot-template range — the effective unavailable window is the **intersection** of the leave and the doctor's availability period, computed live by every availability/booking endpoint rather than stored.
+
+Same cascade as branch closures (see [POST /branches/:id/schedule/closures](#post-branchesidscheduleclosures)): any of this doctor's `pending`/`confirmed` appointments at this branch that fall inside the leave's date range are cancelled, with an in-app notification and email to each affected patient. `paid` appointments are left untouched.
 
 **Request body**
 

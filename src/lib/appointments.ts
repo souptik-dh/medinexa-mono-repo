@@ -121,6 +121,34 @@ export async function writeStatusLog(
   );
 }
 
+// Cancels every non-terminal (pending/confirmed) appointment that falls inside a newly
+// created branch closure or doctor leave date range. Paid appointments are left alone —
+// same guard as a manual cancel, since cancelling a paid visit has refund implications
+// out of scope here. Returns the cancelled rows (pre-transition snapshot) so the caller
+// can notify/email each affected patient after the transaction commits.
+export async function autoCancelAppointmentsInRange(
+  conn: PoolConnection,
+  opts: { branchId: string; doctorId?: string; startDate: string; endDate: string; reason: string; changedBy: string },
+): Promise<Row[]> {
+  const doctorFilter = opts.doctorId ? "AND a.doctor_id = ?" : "";
+  const params: unknown[] = [opts.branchId, opts.startDate, opts.endDate];
+  if (opts.doctorId) params.push(opts.doctorId);
+
+  const [rows] = await conn.query<Row[]>(
+    `SELECT a.* FROM appointments a
+     WHERE a.branch_id = ? AND a.scheduled_date BETWEEN ? AND ?
+       AND a.status IN ('pending', 'confirmed') ${doctorFilter}
+     FOR UPDATE`,
+    params,
+  );
+
+  for (const appt of rows) {
+    await transition(conn, appt, "cancelled", opts.changedBy, ["pending", "confirmed"], opts.reason);
+  }
+
+  return rows;
+}
+
 export async function transition(
   conn: PoolConnection,
   appointment: Row,

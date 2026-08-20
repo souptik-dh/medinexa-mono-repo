@@ -1,17 +1,20 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
-import { pool, type Row } from "@/lib/db";
+import { pool, withTransaction, type Row } from "@/lib/db";
 import { requireRoles, type AuthContext } from "@/lib/auth";
 import { requireBranchAccess } from "@/lib/permissions";
 import { notFound, forbidden, badRequest } from "@/lib/errors";
 import { parseBody } from "@/lib/validators";
 import { newId } from "@/lib/ids";
+import { autoCancelAppointmentsInRange } from "@/lib/appointments";
+import { autoCancelLabTestAppointmentsInRange } from "@/lib/lab-tests";
+import { notifyAutoCancelledDoctorAppointments, notifyAutoCancelledLabTestAppointments } from "@/lib/schedule-cancellations";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 async function loadBranch(branchId: string) {
   const [rows] = await pool.query<Row[]>(
-    `SELECT b.id, c.owner_user_id
+    `SELECT b.id, b.name, c.owner_user_id
        FROM branches b
        JOIN clinics c ON c.id = b.clinic_id AND c.deleted_at IS NULL
       WHERE b.id = ? AND b.deleted_at IS NULL`,
@@ -89,12 +92,37 @@ export const POST = api(undefined, async (ctx) => {
     throw badRequest("VALIDATION_ERROR", "end_date must not be before start_date.", "end_date");
   }
 
+  const branch = await loadBranch(branchId);
   const id = newId();
-  await pool.query(
-    `INSERT INTO branch_closures (id, branch_id, start_date, end_date, reason, created_by)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [id, branchId, body.start_date, endDate, body.reason ?? null, auth.userId],
-  );
+  const cancelReason = body.reason ? `Branch closed: ${body.reason}` : "The branch is closed on this date.";
+
+  const { cancelledDoctorAppts, cancelledLabAppts } = await withTransaction(async (conn) => {
+    await conn.query(
+      `INSERT INTO branch_closures (id, branch_id, start_date, end_date, reason, created_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, branchId, body.start_date, endDate, body.reason ?? null, auth.userId],
+    );
+
+    const cancelledDoctorAppts = await autoCancelAppointmentsInRange(conn, {
+      branchId,
+      startDate: body.start_date,
+      endDate,
+      reason: cancelReason,
+      changedBy: auth.userId,
+    });
+    const cancelledLabAppts = await autoCancelLabTestAppointmentsInRange(conn, {
+      branchId,
+      startDate: body.start_date,
+      endDate,
+      reason: cancelReason,
+      changedBy: auth.userId,
+    });
+
+    return { cancelledDoctorAppts, cancelledLabAppts };
+  });
+
+  await notifyAutoCancelledDoctorAppointments(cancelledDoctorAppts, branch.name, cancelReason);
+  await notifyAutoCancelledLabTestAppointments(cancelledLabAppts, branch.name, cancelReason);
 
   return json(
     {

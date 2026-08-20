@@ -365,6 +365,31 @@ export async function writeLabTestStatusLog(
   );
 }
 
+// Cancels every non-terminal (PENDING/APPROVED) lab test appointment that falls inside a
+// newly created branch closure. Unlike doctor appointments, there's no payment-status
+// guard here — the manual cancel endpoint allows cancelling regardless of payment_status.
+// Returns the cancelled rows (pre-transition snapshot) so the caller can notify/email each
+// affected patient after the transaction commits.
+export async function autoCancelLabTestAppointmentsInRange(
+  conn: PoolConnection,
+  opts: { branchId: string; startDate: string; endDate: string; reason: string; changedBy: string },
+): Promise<Row[]> {
+  const [rows] = await conn.query<Row[]>(
+    `SELECT * FROM lab_test_appointments
+     WHERE branch_id = ? AND appointment_date BETWEEN ? AND ?
+       AND status IN ('PENDING', 'APPROVED')
+     FOR UPDATE`,
+    [opts.branchId, opts.startDate, opts.endDate],
+  );
+
+  for (const appt of rows) {
+    await transitionLabAppointment(conn, appt, "CANCELLED", opts.changedBy, opts.reason);
+    await conn.query(`UPDATE lab_test_appointments SET cancelled_at = NOW(3) WHERE id = ?`, [appt.id]);
+  }
+
+  return rows;
+}
+
 export async function transitionLabAppointment(
   conn: PoolConnection,
   appointment: Row,

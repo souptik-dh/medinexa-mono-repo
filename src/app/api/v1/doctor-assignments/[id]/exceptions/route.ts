@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
-import { pool, type Row } from "@/lib/db";
+import { pool, withTransaction, type Row } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
 import { requireRoles, type AuthContext } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { assertBranchStaffPermission } from "@/lib/permissions";
+import { autoCancelAppointmentsInRange } from "@/lib/appointments";
+import { notifyAutoCancelledDoctorAppointments } from "@/lib/schedule-cancellations";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -22,7 +24,7 @@ const createSchema = z
 
 async function loadAssignment(assignmentId: string) {
   const [rows] = await pool.query<Row[]>(
-    `SELECT dba.*, c.owner_user_id
+    `SELECT dba.*, b.name AS branch_name, c.owner_user_id
        FROM doctor_branch_assignments dba
        JOIN branches b ON b.id = dba.branch_id AND b.deleted_at IS NULL
        JOIN clinics c ON c.id = b.clinic_id AND c.deleted_at IS NULL
@@ -80,11 +82,26 @@ export const POST = api(undefined, async (ctx) => {
 
   const id = newId();
   const endDate = body.end_date ?? body.excluded_date;
-  await pool.query(
-    `INSERT INTO doctor_slot_exceptions (id, doctor_branch_assignment_id, excluded_date, end_date, reason)
-     VALUES (?, ?, ?, ?, ?)`,
-    [id, assignment.id, body.excluded_date, endDate, body.reason ?? null],
-  );
+  const cancelReason = body.reason ? `Doctor unavailable: ${body.reason}` : "The doctor is unavailable on this date.";
+
+  const cancelledAppts = await withTransaction(async (conn) => {
+    await conn.query(
+      `INSERT INTO doctor_slot_exceptions (id, doctor_branch_assignment_id, excluded_date, end_date, reason)
+       VALUES (?, ?, ?, ?, ?)`,
+      [id, assignment.id, body.excluded_date, endDate, body.reason ?? null],
+    );
+
+    return autoCancelAppointmentsInRange(conn, {
+      branchId: assignment.branch_id,
+      doctorId: assignment.doctor_id,
+      startDate: body.excluded_date,
+      endDate,
+      reason: cancelReason,
+      changedBy: auth.userId,
+    });
+  });
+
+  await notifyAutoCancelledDoctorAppointments(cancelledAppts, assignment.branch_name, cancelReason);
 
   return json(
     {
