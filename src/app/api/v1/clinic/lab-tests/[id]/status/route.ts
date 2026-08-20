@@ -2,7 +2,7 @@ import { api, json, readJson } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
-import { getLabTestInScope, auditLabAction } from "@/lib/lab-tests";
+import { getLabTestInScope, auditLabAction, serializeLabTest } from "@/lib/lab-tests";
 import { z } from "zod";
 
 const statusSchema = z.object({
@@ -20,5 +20,6 @@ export const PATCH = api({ rateLimit: 10 }, async (ctx) => {
 
   await auditLabAction(pool, auth.userId, "lab_test_status_changed", id, { status: body.status });
 
-  return json({ success: true, status: body.status });
+  const updated = await getLabTestInScope(pool, id, auth);
+  return json(serializeLabTest(updated));
 });

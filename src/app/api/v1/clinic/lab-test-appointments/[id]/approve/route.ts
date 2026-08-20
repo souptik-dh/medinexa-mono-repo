@@ -2,7 +2,12 @@ import { api, json } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
-import { getLabTestAppointmentInScope, transitionLabAppointment, auditLabAction } from "@/lib/lab-tests";
+import {
+  getLabTestAppointmentInScope,
+  transitionLabAppointment,
+  auditLabAction,
+  serializeLabTestAppointment,
+} from "@/lib/lab-tests";
 import {
   createPatientNotification,
   branchContactEmails,
@@ -69,7 +74,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     });
   });
 
-  await createPatientNotification(pool, appointment.patient_id, "lab_test_booking_approved", {
+  await createPatientNotification(pool, appointment.patient_id, "lab_test_approved", {
     appointment_id: id,
     appointment_number: appointment.appointment_number,
     test_name: appointment.test_name,
@@ -104,5 +109,6 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     await sendEmail(patient.email, `Lab Test Confirmed — ${appointment.appointment_number}`, "", emailHtml);
   }
 
-  return json({ success: true, status: "APPROVED" });
+  const updated = await getLabTestAppointmentInScope(pool, id, auth);
+  return json(serializeLabTestAppointment(updated));
 });

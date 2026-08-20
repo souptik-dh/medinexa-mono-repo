@@ -3,9 +3,8 @@ import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
 import { parseBody } from "@/lib/validators";
-import { getLabTestAppointmentInScope, auditLabAction } from "@/lib/lab-tests";
-import { createPatientNotification } from "@/lib/notifications";
-import { badRequest, conflict, notFound } from "@/lib/errors";
+import { getLabTestAppointmentInScope, auditLabAction, serializeLabTestPayment } from "@/lib/lab-tests";
+import { conflict, notFound } from "@/lib/errors";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
 
@@ -27,7 +26,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
   }
 
   if (!["PENDING", "APPROVED"].includes(appointment.status)) {
-    throw badRequest("INVALID_APPOINTMENT_STATUS", "Cannot make payment for this appointment.");
+    throw conflict("INVALID_STATUS_TRANSITION", "Cannot make payment for this appointment.");
   }
 
   const [existingPayment] = await pool.query<RowDataPacket[]>(
@@ -39,8 +38,8 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
   }
 
   if (body.payment_method === "ONLINE") {
+    const paymentId = newId();
     await withTransaction(async (conn) => {
-      const paymentId = newId();
       await conn.query(
         `INSERT INTO lab_test_payments (id, appointment_id, patient_id, amount, currency, payment_method, payment_status, transaction_id, provider)
          VALUES (?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)`,
@@ -66,14 +65,12 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
       });
     });
 
-    return json({
-      success: true,
-      message: "Payment initiated. Confirmation pending.",
-    });
+    const [rows] = await pool.query<RowDataPacket[]>(`SELECT * FROM lab_test_payments WHERE id = ?`, [paymentId]);
+    return json(serializeLabTestPayment(rows[0]));
   }
 
+  const paymentId = newId();
   await withTransaction(async (conn) => {
-    const paymentId = newId();
     await conn.query(
       `INSERT INTO lab_test_payments (id, appointment_id, patient_id, amount, currency, payment_method, payment_status)
        VALUES (?, ?, ?, ?, ?, ?, 'UNPAID')`,
@@ -90,5 +87,6 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     });
   });
 
-  return json({ success: true, message: "Payment recorded. Pay at clinic on your visit." });
+  const [rows] = await pool.query<RowDataPacket[]>(`SELECT * FROM lab_test_payments WHERE id = ?`, [paymentId]);
+  return json(serializeLabTestPayment(rows[0]));
 });

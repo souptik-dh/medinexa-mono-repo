@@ -776,6 +776,19 @@ CREATE TABLE IF NOT EXISTS lab_test_prescriptions (
   CONSTRAINT fk_ltp_appointment FOREIGN KEY (appointment_id) REFERENCES lab_test_appointments(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+CREATE TABLE IF NOT EXISTS lab_test_appointment_status_log (
+  id CHAR(36) NOT NULL,
+  appointment_id CHAR(36) NOT NULL,
+  from_status VARCHAR(16) NULL,
+  to_status VARCHAR(16) NOT NULL,
+  changed_by CHAR(36) NOT NULL,
+  changed_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  note VARCHAR(500) NULL,
+  PRIMARY KEY (id),
+  KEY idx_lta_status_log_appt (appointment_id),
+  CONSTRAINT fk_lta_status_log_appt FOREIGN KEY (appointment_id) REFERENCES lab_test_appointments(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS lab_test_payments (
   id CHAR(36) NOT NULL,
   appointment_id CHAR(36) NOT NULL,
