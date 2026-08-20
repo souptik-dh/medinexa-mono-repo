@@ -13,7 +13,7 @@ const collectSchema = z.object({
   reference_no: z.string().max(255).optional().nullable(),
 });
 
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api({ rateLimit: 20 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff", "sys_admin"]);
   const { id } = ctx.params;
   const body = parseBody(collectSchema, await ctx.request.json());

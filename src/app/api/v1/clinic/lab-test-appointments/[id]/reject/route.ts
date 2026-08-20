@@ -18,7 +18,7 @@ const rejectSchema = z.object({
   reason: z.string().min(1).max(500),
 });
 
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff", "sys_admin"]);
   const { id } = ctx.params;
   const body = parseBody(rejectSchema, await ctx.request.json());

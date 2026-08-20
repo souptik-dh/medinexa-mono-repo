@@ -25,7 +25,7 @@ const approveSchema = z.object({
   clinic_notes: z.string().max(1000).optional(),
 });
 
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff", "sys_admin"]);
   const { id } = ctx.params;
   const body = parseBody(approveSchema, await ctx.request.json());

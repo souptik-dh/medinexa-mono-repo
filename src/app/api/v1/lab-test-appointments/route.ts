@@ -37,7 +37,7 @@ const createSchema = z.object({
   home_notes: z.string().max(500).optional(),
 });
 
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api({ rateLimit: 20 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const idemKey = ctx.request.headers.get("idempotency-key");
   if (!idemKey) {

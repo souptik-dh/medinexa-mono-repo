@@ -14,7 +14,7 @@ const paymentSchema = z.object({
   provider: z.string().max(50).optional(),
 });
 
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api({ rateLimit: 20 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const { id } = ctx.params;
   const body = parseBody(paymentSchema, await ctx.request.json());

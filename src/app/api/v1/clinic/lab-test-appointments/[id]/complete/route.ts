@@ -13,7 +13,7 @@ import { assertBranchStaffPermission } from "@/lib/permissions";
 import { badRequest, conflict } from "@/lib/errors";
 import type { RowDataPacket } from "mysql2/promise";
 
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api(undefined, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff", "sys_admin"]);
   const { id } = ctx.params;
 
