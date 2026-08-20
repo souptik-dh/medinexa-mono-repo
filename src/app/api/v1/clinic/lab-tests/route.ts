@@ -10,7 +10,7 @@ import { encodeCursor } from "@/lib/http";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
 
-export const GET = api({ rateLimit: 60 }, async (ctx) => {
+export const GET = api({ rateLimit: 120 }, async (ctx) => {
   requireRoles(ctx.auth, ["clinic_owner", "branch_staff", "sys_admin"]);
   const sp = ctx.request.nextUrl.searchParams;
   const clinicId = sp.get("clinic_id");

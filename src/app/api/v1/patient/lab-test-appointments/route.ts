@@ -6,7 +6,7 @@ import { parsePagination } from "@/lib/validators";
 import { encodeCursor } from "@/lib/http";
 import type { RowDataPacket } from "mysql2/promise";
 
-export const GET = api({ rateLimit: 60 }, async (ctx) => {
+export const GET = api({ rateLimit: 120 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const sp = ctx.request.nextUrl.searchParams;
   const status = sp.get("status");

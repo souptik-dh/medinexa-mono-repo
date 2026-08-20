@@ -1,7 +1,7 @@
 import { api, json } from "@/lib/http";
 import { ping } from "@/lib/db";
 
-export const GET = api({ rateLimit: 60, rateKey: "ip" }, async () => {
+export const GET = api({ rateLimit: 120, rateKey: "ip" }, async () => {
   try {
     await ping();
   } catch {

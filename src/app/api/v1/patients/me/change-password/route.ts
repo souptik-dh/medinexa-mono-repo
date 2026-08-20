@@ -2,7 +2,7 @@ import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
 import { parseBody, passwordSchema } from "@/lib/validators";
-import { requireRoles, hashPassword, verifyPassword } from "@/lib/auth";
+import { requireRoles, hashPassword, verifyPassword, invalidateUserCache } from "@/lib/auth";
 import { badRequest, unauthorized } from "@/lib/errors";
 
 const schema = z.object({
@@ -38,6 +38,7 @@ export const POST = api({ rateLimit: 10 }, async (ctx) => {
     `UPDATE refresh_tokens SET revoked_at = UTC_TIMESTAMP(3) WHERE user_id = ? AND revoked_at IS NULL`,
     [auth.userId],
   );
+  invalidateUserCache(auth.userId);
 
   return json({ message: "Password changed. Please log in again on your other devices." });
 });

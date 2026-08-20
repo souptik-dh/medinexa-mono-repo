@@ -9,7 +9,7 @@ function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 }
 
-export const GET = api({ rateLimit: 60 }, async (ctx) => {
+export const GET = api({ rateLimit: 120 }, async (ctx) => {
   requireRoles(ctx.auth, ["patient", "clinic_owner", "branch_staff", "doctor"]);
 
   const sp = ctx.request.nextUrl.searchParams;

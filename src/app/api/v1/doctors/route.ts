@@ -15,7 +15,7 @@ function escapeLike(s: string): string {
 // "browse all doctors" view (e.g. a home screen's "Top doctors") with no prerequisites.
 // One row per active doctor<->branch assignment, same item shape as
 // GET /branches/:id/doctors so the client can render a card without extra calls.
-export const GET = api({ rateLimit: 60 }, async (ctx) => {
+export const GET = api({ rateLimit: 120 }, async (ctx) => {
   const sp = ctx.request.nextUrl.searchParams;
   const { limit: rawLimit, cursor } = parsePagination(sp);
   const limit = Math.min(rawLimit, 50); // nextAvailableSlot below is one extra query per row

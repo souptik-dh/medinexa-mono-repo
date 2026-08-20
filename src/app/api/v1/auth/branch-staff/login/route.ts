@@ -9,7 +9,7 @@ import { forbidden } from "@/lib/errors";
 
 const schema = z.object({ email: emailSchema });
 
-export const POST = api({ rateLimit: 10, rateKey: "ip" }, async (ctx) => {
+export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
   const body = parseBody(schema, await readJson(ctx.request));
 
   const [users] = await pool.query<Row[]>(
