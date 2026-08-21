@@ -523,7 +523,7 @@ Auth required. Revokes the given refresh token.
 
 Public. Paginated. If the request is authenticated as a `clinic_owner`, results are silently scoped to clinics owned by that caller (isolation, not an opt-in filter — a clinic owner can never see another owner's clinics through this endpoint). Unauthenticated callers and any other role see the full public directory.
 
-**Query:** `?search=&limit=&cursor=`
+**Query:** `?search=&city=&pin_code=&has_lab_tests=&test_search=&limit=&cursor=` — `search` is a `name` substring match. `city` and `pin_code` each match against either the clinic's own value or any of its non-deleted branches' value (a patient searching by city or pin code doesn't know which record carries it); `city` is a case-insensitive substring match, `pin_code` is exact. `has_lab_tests=true` restricts results to clinics with at least one `active` lab test configured at an active branch; `test_search` implies `has_lab_tests` (a clinic only matches if it actually has a matching test). `test_search` is a single free-text filter matching either the clinic's own `name` **or** the `name`/`category` of one of its active lab tests. All filters are optional and combine with AND.
 
 **Response `200`**
 

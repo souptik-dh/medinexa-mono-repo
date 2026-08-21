@@ -15,6 +15,7 @@ function escapeLike(s: string): string {
 export const GET = api(undefined, async (ctx) => {
   const { limit, cursor } = parsePagination(ctx.request.nextUrl.searchParams);
   const search = ctx.request.nextUrl.searchParams.get("search")?.trim() ?? "";
+  const city = ctx.request.nextUrl.searchParams.get("city")?.trim() ?? "";
   const pinCode = ctx.request.nextUrl.searchParams.get("pin_code")?.trim() ?? "";
   const testSearch = ctx.request.nextUrl.searchParams.get("test_search")?.trim() ?? "";
   const hasLabTests = ctx.request.nextUrl.searchParams.get("has_lab_tests") === "true" || !!testSearch;
@@ -24,6 +25,14 @@ export const GET = api(undefined, async (ctx) => {
   if (search) {
     conditions.push("c.name LIKE ?");
     params.push(`%${escapeLike(search)}%`);
+  }
+  if (city) {
+    // Same OR-match shape as pin_code below — a clinic matches on its own city or
+    // any non-deleted branch's city, since patients don't know which record carries it.
+    conditions.push(
+      "(c.city LIKE ? OR EXISTS (SELECT 1 FROM branches b WHERE b.clinic_id = c.id AND b.deleted_at IS NULL AND b.city LIKE ?))",
+    );
+    params.push(`%${escapeLike(city)}%`, `%${escapeLike(city)}%`);
   }
   if (pinCode) {
     // A clinic matches on its own pin_code or any non-deleted branch's pin_code —
