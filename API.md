@@ -523,7 +523,7 @@ Auth required. Revokes the given refresh token.
 
 Public. Paginated. If the request is authenticated as a `clinic_owner`, results are silently scoped to clinics owned by that caller (isolation, not an opt-in filter — a clinic owner can never see another owner's clinics through this endpoint). Unauthenticated callers and any other role see the full public directory.
 
-**Query:** `?search=&city=&pin_code=&has_lab_tests=&test_search=&limit=&cursor=` — `search` is a `name` substring match. `city` and `pin_code` each match against either the clinic's own value or any of its non-deleted branches' value (a patient searching by city or pin code doesn't know which record carries it); `city` is a case-insensitive substring match, `pin_code` is exact. `has_lab_tests=true` restricts results to clinics with at least one `active` lab test configured at an active branch; `test_search` implies `has_lab_tests` (a clinic only matches if it actually has a matching test). `test_search` is a single free-text filter matching either the clinic's own `name` **or** the `name`/`category` of one of its active lab tests. All filters are optional and combine with AND.
+**Query:** `?search=&city=&pin_code=&has_lab_tests=&has_doctor=&test_search=&limit=&cursor=` — `search` is a `name` substring match. `city` and `pin_code` each match against either the clinic's own value or any of its non-deleted branches' value (a patient searching by city or pin code doesn't know which record carries it); `city` is a case-insensitive substring match, `pin_code` is exact. `has_lab_tests=true` restricts results to clinics with at least one `active` lab test configured at an active branch; `test_search` implies `has_lab_tests` (a clinic only matches if it actually has a matching test). `has_doctor=true` restricts results to clinics with at least one active doctor assignment at an active branch. `test_search` is a single free-text filter matching either the clinic's own `name` **or** the `name`/`category` of one of its active lab tests. All filters are optional and combine with AND.
 
 **Response `200`**
 
@@ -535,12 +535,16 @@ Public. Paginated. If the request is authenticated as a `clinic_owner`, results 
       "name": "Sunrise Multispeciality",
       "description": "General & cardiac care",
       "branch_count": 2,
+      "has_doctor": true,
+      "has_lab_tests": true,
       "created_at": "2026-08-01T09:30:00Z"
     }
   ],
   "next_cursor": null
 }
 ```
+
+`has_doctor`/`has_lab_tests` are always present regardless of whether the corresponding `has_doctor`/`has_lab_tests` query filter was used, so a client can display the flag even on an unfiltered listing.
 
 ### GET /clinics/nearby
 
@@ -1885,6 +1889,15 @@ Searches `reg_no` (prefix), `name` (contains), and each doctor's master-list spe
       "smc_name": "Medical Council of India",
       "doctor_degree": "MBBS, MD",
       "phone": "+919900000001",
+      "clinics": [
+        {
+          "clinic_id": "9f1c...",
+          "clinic_name": "Sunrise Clinic",
+          "branch_id": "4b2a...",
+          "branch_name": "Sunrise Clinic - Koramangala",
+          "city": "Bengaluru"
+        }
+      ],
       "clinic_count": 1,
       "rating": { "average": 4.5, "count": 12 }
     }
@@ -1892,7 +1905,7 @@ Searches `reg_no` (prefix), `name` (contains), and each doctor's master-list spe
 }
 ```
 
-`rating` is the same platform-wide aggregate described under `GET /branches/:id/doctors`.
+`clinics` lists every active branch the doctor is assigned to, one entry per clinic+branch (a doctor at multiple branches of the same clinic gets one entry per branch); use its `branch_id` to let the patient pick where to book before calling `POST /appointments`. `clinic_count` is `clinics.length`, kept for existing clients. `rating` is the same platform-wide aggregate described under `GET /branches/:id/doctors`.
 
 **Errors:** `400 VALIDATION_ERROR` (missing `q`), `401 UNAUTHORIZED`.
 

@@ -19,6 +19,7 @@ export const GET = api(undefined, async (ctx) => {
   const pinCode = ctx.request.nextUrl.searchParams.get("pin_code")?.trim() ?? "";
   const testSearch = ctx.request.nextUrl.searchParams.get("test_search")?.trim() ?? "";
   const hasLabTests = ctx.request.nextUrl.searchParams.get("has_lab_tests") === "true" || !!testSearch;
+  const hasDoctor = ctx.request.nextUrl.searchParams.get("has_doctor") === "true";
 
   const conditions = ["c.deleted_at IS NULL"];
   const params: unknown[] = [];
@@ -53,6 +54,15 @@ export const GET = api(undefined, async (ctx) => {
        )`,
     );
   }
+  if (hasDoctor) {
+    conditions.push(
+      `EXISTS (
+         SELECT 1 FROM doctor_branch_assignments dba
+         JOIN branches b ON b.id = dba.branch_id AND b.deleted_at IS NULL
+         WHERE b.clinic_id = c.id AND dba.is_active = 1
+       )`,
+    );
+  }
   if (testSearch) {
     // A single free-text box covers both intents: match the clinic's own name, OR
     // match the name/category of one of its active lab tests.
@@ -77,6 +87,16 @@ export const GET = api(undefined, async (ctx) => {
     db: pool,
     select: `SELECT c.id, c.name, c.description,
                     (SELECT COUNT(*) FROM branches b WHERE b.clinic_id = c.id AND b.deleted_at IS NULL) AS branch_count,
+                    EXISTS (
+                      SELECT 1 FROM doctor_branch_assignments dba
+                      JOIN branches b ON b.id = dba.branch_id AND b.deleted_at IS NULL
+                      WHERE b.clinic_id = c.id AND dba.is_active = 1
+                    ) AS has_doctor,
+                    EXISTS (
+                      SELECT 1 FROM branch_lab_tests blt
+                      JOIN branches b ON b.id = blt.branch_id AND b.deleted_at IS NULL
+                      WHERE blt.clinic_id = c.id AND blt.status = 'active'
+                    ) AS has_lab_tests,
                     c.created_at`,
     from: "FROM clinics c",
     where,
@@ -91,6 +111,8 @@ export const GET = api(undefined, async (ctx) => {
       name: r.name,
       description: r.description,
       branch_count: Number(r.branch_count),
+      has_doctor: !!r.has_doctor,
+      has_lab_tests: !!r.has_lab_tests,
       created_at: r.created_at,
     })),
     next_cursor: nextCursor,

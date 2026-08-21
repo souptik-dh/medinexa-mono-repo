@@ -4,6 +4,7 @@ import { requireRoles } from "@/lib/auth";
 import { badRequest } from "@/lib/errors";
 import { getDoctorSpecializations, specializationDisplayName } from "@/lib/specializations";
 import { getDoctorRatingMap } from "@/lib/reviews";
+import { getDoctorClinics } from "@/lib/clinics";
 
 function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
@@ -23,11 +24,7 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
   const prefix = `${escapeLike(q)}%`;
 
   const [rows] = await pool.query<Row[]>(
-    `SELECT d.id, d.name, d.reg_no, d.smc_name, d.doctor_degree, d.phone, d.photo_url,
-            (SELECT COUNT(DISTINCT b.clinic_id)
-               FROM doctor_branch_assignments dba
-               JOIN branches b ON b.id = dba.branch_id AND b.deleted_at IS NULL
-              WHERE dba.doctor_id = d.id AND dba.is_active = 1) AS clinic_count
+    `SELECT d.id, d.name, d.reg_no, d.smc_name, d.doctor_degree, d.phone, d.photo_url
        FROM doctors d
       WHERE d.deleted_at IS NULL
         AND (d.reg_no LIKE ? OR d.name LIKE ?
@@ -41,10 +38,12 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
 
   const specializationsByDoctor = await getDoctorSpecializations(pool, rows.map((r) => String(r.id)));
   const ratingByDoctor = await getDoctorRatingMap(pool, rows.map((r) => String(r.id)));
+  const clinicsByDoctor = await getDoctorClinics(pool, rows.map((r) => String(r.id)));
 
   return json({
     items: rows.map((r) => {
       const specializations = specializationsByDoctor.get(String(r.id)) ?? [];
+      const clinics = clinicsByDoctor.get(String(r.id)) ?? [];
       return {
         id: r.id,
         name: r.name,
@@ -55,7 +54,8 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
         doctor_degree: r.doctor_degree,
         phone: r.phone,
         photo_url: r.photo_url,
-        clinic_count: Number(r.clinic_count),
+        clinics,
+        clinic_count: clinics.length,
         rating: ratingByDoctor.get(String(r.id)) ?? { average: null, count: 0 },
       };
     }),
