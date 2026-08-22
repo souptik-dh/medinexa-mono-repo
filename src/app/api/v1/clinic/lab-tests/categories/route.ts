@@ -68,7 +68,7 @@ const bulkCreateSchema = z.object({
 // Bulk-create (or re-color) named categories with a badge in one request, so
 // clinic staff can set up a full category list — each with its own badge
 // color for the Add Lab Test screen — without one request per category.
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "sys_admin"]);
   const body = parseBody(bulkCreateSchema, await ctx.request.json());
 

@@ -81,7 +81,7 @@ const createSchema = z.object({
   default_precautions: z.array(z.string().max(500)).optional(),
 });
 
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "sys_admin"]);
   const body = parseBody(createSchema, await ctx.request.json());
 

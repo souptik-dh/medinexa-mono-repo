@@ -9,7 +9,7 @@ const statusSchema = z.object({
   status: z.enum(["active", "inactive"]),
 });
 
-export const PATCH = api({ rateLimit: 10 }, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "sys_admin"]);
   const { id } = ctx.params;
   const body = parseBody(statusSchema, await readJson(ctx.request));

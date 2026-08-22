@@ -12,7 +12,7 @@ const bodySchema = z.object({
 // both the create-clinic form (no clinic row exists yet) and the edit form. The
 // caller (POST /clinics or PATCH /clinics/:id) is what persists trade_license_validated
 // et al., by echoing this response's `validated`/`status` back in that request body.
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   requireRoles(ctx.auth, ["clinic_owner", "sys_admin"]);
   const body = parseBody(bodySchema, await readJson(ctx.request));
 

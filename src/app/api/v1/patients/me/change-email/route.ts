@@ -14,7 +14,7 @@ const schema = z.object({
   current_password: z.string().min(1),
 });
 
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const body = parseBody(schema, await readJson(ctx.request));
 

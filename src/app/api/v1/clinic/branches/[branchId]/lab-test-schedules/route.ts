@@ -39,7 +39,7 @@ const scheduleSchema = z.object({
   is_active: z.boolean().default(true),
 });
 
-export const POST = api({ rateLimit: 120 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "sys_admin"]);
   const { branchId } = ctx.params;
   const body = parseBody(scheduleSchema, await ctx.request.json());

@@ -48,7 +48,7 @@ const createSchema = z.object({
   prescription_required: z.boolean().default(false),
 });
 
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "sys_admin"]);
   const { branchId } = ctx.params;
   const body = parseBody(createSchema, await ctx.request.json());

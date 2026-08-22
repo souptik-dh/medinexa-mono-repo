@@ -6,7 +6,7 @@ import { newId } from "@/lib/ids";
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "application/pdf"];
 const MAX_SIZE = 10 * 1024 * 1024;
 
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
 
   const formData = await ctx.request.formData();

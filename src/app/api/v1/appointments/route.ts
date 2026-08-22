@@ -104,7 +104,7 @@ const schema = z.object({
   patient_details: patientDetailsSchema.optional(),
 });
 
-export const POST = api({ rateLimit: 20 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient"]);
   const idemKey = ctx.request.headers.get("idempotency-key");
   if (!idemKey) {

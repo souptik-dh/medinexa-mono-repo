@@ -16,7 +16,7 @@ const schema = z.object({
   reference_no: z.string().trim().max(255).optional().nullable(),
 });
 
-export const PATCH = api({ rateLimit: 20 }, async (ctx) => {
+export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["branch_staff", "clinic_owner"]);
   const idemKey = ctx.request.headers.get("idempotency-key");
   if (!idemKey) {

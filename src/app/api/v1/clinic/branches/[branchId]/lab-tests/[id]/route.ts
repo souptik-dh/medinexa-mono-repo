@@ -17,7 +17,7 @@ const updateSchema = z.object({
   status: z.enum(["active", "inactive"]).optional(),
 });
 
-export const PUT = api({ rateLimit: 10 }, async (ctx) => {
+export const PUT = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "sys_admin"]);
   const { branchId, id } = ctx.params;
   const body = parseBody(updateSchema, await ctx.request.json());
