@@ -24,7 +24,7 @@ const verifySchema = z.object({
  * a frontend claim of "paid" without it is rejected and the attempt is marked FAILED.
  * On success the paid period is applied and the clinic is reactivated automatically.
  */
-export const POST = api({ rateLimit: 20 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   await getOwnedClinic(pool, ctx.params.clinicId, auth.userId, { skipSubscriptionGate: true });
   const body = parseBody(verifySchema, await readJson(ctx.request));

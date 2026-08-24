@@ -33,7 +33,7 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
 const grantSchema = z.object({ email: emailSchema });
 
 /** Grants Super Admin to an existing sys_admin-role user. */
-export const POST = api({ rateLimit: 20 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const admin = await requireSuperAdmin(ctx.auth);
   const body = parseBody(grantSchema, await readJson(ctx.request));
 
