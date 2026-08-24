@@ -16,18 +16,58 @@ export const DEFAULT_EXPIRING_WARNING_DAYS = 7;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** HMAC secret used to verify gateway-style payment callbacks. Fail closed when unset. */
+/**
+ * HMAC secret used to verify gateway-style payment callbacks. Razorpay signs
+ * `order_id|payment_id` with RAZORPAY_KEY_SECRET, so that must take precedence
+ * whenever real Razorpay orders are in play; SUBSCRIPTION_PAYMENT_SECRET only
+ * covers the generic mock-gateway fallback when no Razorpay keys are set.
+ */
 function paymentSecret(): string {
   const secret =
-    process.env.SUBSCRIPTION_PAYMENT_SECRET ?? process.env.RAZORPAY_KEY_SECRET ?? null;
+    process.env.RAZORPAY_KEY_SECRET ?? process.env.SUBSCRIPTION_PAYMENT_SECRET ?? null;
   if (!secret) {
     throw new ApiError(
       503,
       "PAYMENT_VERIFICATION_UNAVAILABLE",
-      "Payment verification is not configured on the server. Set SUBSCRIPTION_PAYMENT_SECRET.",
+      "Payment verification is not configured on the server. Set RAZORPAY_KEY_SECRET.",
     );
   }
   return secret;
+}
+
+/** Creates a real order via Razorpay's Orders API so checkout.js has a valid order_id to open. */
+async function createRazorpayOrder(opts: {
+  amount: number;
+  currency: string;
+  receipt: string;
+}): Promise<string> {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret) {
+    throw new ApiError(
+      503,
+      "PAYMENT_GATEWAY_UNAVAILABLE",
+      "Razorpay is not configured on the server. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.",
+    );
+  }
+  const res = await fetch("https://api.razorpay.com/v1/orders", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
+    },
+    body: JSON.stringify({
+      amount: Math.round(opts.amount * 100),
+      currency: opts.currency,
+      receipt: opts.receipt,
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new ApiError(502, "PAYMENT_GATEWAY_ERROR", `Razorpay order creation failed: ${detail || res.statusText}`);
+  }
+  const order = (await res.json()) as { id: string };
+  return order.id;
 }
 
 export function computeProviderSignature(orderId: string, paymentId: string): string {
@@ -341,7 +381,7 @@ export async function initiateSubscriptionPayment(
   const invoiceNo = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${randomBytes(4)
     .toString("hex")
     .toUpperCase()}`;
-  const orderId = `order_${randomBytes(12).toString("hex")}`;
+  const orderId = await createRazorpayOrder({ amount, currency: plan.currency, receipt: invoiceNo });
 
   const id = newId();
   await db.query(
