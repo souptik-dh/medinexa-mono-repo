@@ -15,7 +15,7 @@ import {
  * suspension or a failed activation step). If the subscription is still blocked and
  * no verified payment exists, the client is pointed at the payment flow instead.
  */
-export const POST = api({ rateLimit: 20 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   await getOwnedClinic(pool, ctx.params.clinicId, auth.userId, { skipSubscriptionGate: true });
 

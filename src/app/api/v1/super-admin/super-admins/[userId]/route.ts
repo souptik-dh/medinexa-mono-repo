@@ -4,7 +4,7 @@ import { requireSuperAdmin, logSuperAdminAction } from "@/lib/super-admin";
 import { notFound } from "@/lib/errors";
 
 /** Revokes Super Admin privileges from a user. */
-export const DELETE = api({ rateLimit: 20 }, async (ctx) => {
+export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const admin = await requireSuperAdmin(ctx.auth);
   const { userId } = ctx.params;
 
