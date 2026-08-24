@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
 const allowedOrigins = [
-  "http://localhost:3000",
+  "http://localhost:3001",
   "https://medinexa-clinic.onrender.com",
   "https://healthcare.jido.co.in",
   "https://awake-up-git-main-sids-projects-85c8cf36.vercel.app/",

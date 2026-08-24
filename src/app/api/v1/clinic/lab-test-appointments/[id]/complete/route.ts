@@ -10,6 +10,7 @@ import {
 import { hasSlotPassedInTz } from "@/lib/availability";
 import { createPatientNotification, sendEmail, detailsEmailHtml } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
+import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict } from "@/lib/errors";
 import type { RowDataPacket } from "mysql2/promise";
 
@@ -18,6 +19,10 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const { id } = ctx.params;
 
   const appointment = await getLabTestAppointmentInScope(pool, id, auth);
+
+  if (auth.role !== "sys_admin") {
+    await assertClinicOperational(pool, appointment.clinic_id);
+  }
 
   if (auth.role === "branch_staff") {
     await assertBranchStaffPermission(pool, auth, appointment.branch_id, "lab_appointments:complete");

@@ -1020,6 +1020,66 @@ try {
     console.log('Applied migration: lab_test_payments table');
   }
 
+  // ---- Clinic Subscription System ----
+
+  // Default plan: ₹49/month, 2-month free trial. Inserted only when no plan exists.
+  const [planRows] = await conn.query(`SELECT COUNT(*) AS cnt FROM subscription_plans`);
+  if (Number(planRows[0].cnt) === 0) {
+    await conn.query(
+      `INSERT INTO subscription_plans (id, name, billing_period, amount, currency, trial_months, is_active)
+       VALUES (?, 'Clinic Monthly', 'monthly', 49.00, 'INR', 2, 1)`,
+      [randomUUID()],
+    );
+    console.log('Applied migration: default subscription plan (INR 49/month, 2-month trial)');
+  }
+
+  const [settingRows] = await conn.query(`SELECT COUNT(*) AS cnt FROM platform_settings`);
+  if (Number(settingRows[0].cnt) === 0) {
+    await conn.query(`
+      INSERT INTO platform_settings (setting_key, setting_value, description) VALUES
+        ('subscription.expiring_warning_days', '7', 'Days before expiry when a subscription is reported as EXPIRING'),
+        ('subscription.max_months_per_payment', '12', 'Maximum months a clinic can pay for in one payment'),
+        ('subscription.currency', 'INR', 'Default subscription currency')
+    `);
+    console.log('Applied migration: default platform settings');
+  }
+
+  // Backfill subscriptions for clinics created before this system existed: give each
+  // a TRIAL row anchored at the clinic's own created_at so nobody loses access.
+  const [missingSubs] = await conn.query(
+    `SELECT c.id FROM clinics c
+       LEFT JOIN clinic_subscriptions cs ON cs.clinic_id = c.id
+      WHERE c.deleted_at IS NULL AND cs.clinic_id IS NULL`,
+  );
+  if (missingSubs.length > 0) {
+    const [activePlan] = await conn.query(
+      `SELECT id, amount, currency, trial_months FROM subscription_plans
+        WHERE is_active = 1 ORDER BY effective_from DESC LIMIT 1`,
+    );
+    const plan = activePlan[0];
+    for (const clinic of missingSubs) {
+      await conn.query(
+        `INSERT INTO clinic_subscriptions
+           (id, clinic_id, status, plan_id, monthly_amount, currency,
+            period_start, period_end, is_trial, trial_started_at, trial_ends_at)
+         SELECT ?, c.id, 'TRIAL', ?, ?, ?,
+                c.created_at, DATE_ADD(c.created_at, INTERVAL ? MONTH),
+                1, c.created_at, DATE_ADD(c.created_at, INTERVAL ? MONTH)
+           FROM clinics c WHERE c.id = ?`,
+        [
+          randomUUID(),
+          plan?.id ?? null,
+          plan?.amount ?? 49.0,
+          plan?.currency ?? 'INR',
+          plan?.trial_months ?? 2,
+          plan?.trial_months ?? 2,
+          clinic.id,
+        ],
+      );
+    }
+    console.log(`Applied migration: backfilled ${missingSubs.length} clinic subscription(s) with trial period`);
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();

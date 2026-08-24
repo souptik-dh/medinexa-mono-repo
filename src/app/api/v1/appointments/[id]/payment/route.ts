@@ -9,6 +9,7 @@ import { createNotification, createPatientNotification, clinicOwnerContact, send
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { assertBranchStaffPermission } from "@/lib/permissions";
+import { assertClinicOperational } from "@/lib/subscriptions";
 
 const schema = z.object({
   fee_amount: z.coerce.number().positive().max(1_000_000),
@@ -39,6 +40,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
     const paymentId = newId();
     await withTransaction(async (conn) => {
       const appt = await getAppointmentInScope(conn, ctx.params.id, auth);
+      await assertClinicOperational(conn, appt.clinic_id);
       await assertBranchStaffPermission(conn, auth, appt.branch_id, "appointments:payment");
       await transition(conn, appt, "paid", auth.userId, ["confirmed"]);
       await conn.query(

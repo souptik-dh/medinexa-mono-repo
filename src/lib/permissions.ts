@@ -2,6 +2,7 @@ import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
 import { forbidden, notFound } from "@/lib/errors";
 import type { AuthContext } from "@/lib/auth";
 import { getOwnedBranch } from "@/lib/scope";
+import { assertClinicOperational, resolveClinicIdByBranch } from "@/lib/subscriptions";
 
 type Db = Pool | PoolConnection;
 type Row = RowDataPacket;
@@ -103,11 +104,15 @@ export async function assertBranchStaffPermission(
   permission: BranchStaffPermission,
 ): Promise<void> {
   if (auth.role === "sys_admin") return;
-  if (auth.role === "clinic_owner") return;
   if (auth.role === "branch_staff") {
     if (auth.branchId !== branchId) {
       throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
     }
+  }
+  // Clinic operations are blocked while the owning clinic's subscription is inactive.
+  const clinicId = await resolveClinicIdByBranch(db, branchId);
+  if (clinicId) await assertClinicOperational(db, clinicId);
+  if (auth.role === "branch_staff") {
     const perms = await loadStaffPermissions(db, branchId, auth.userId);
     if (!hasPermission(perms, permission)) {
       throw forbidden(
@@ -117,6 +122,7 @@ export async function assertBranchStaffPermission(
     }
     return;
   }
+  if (auth.role === "clinic_owner") return;
   throw forbidden(
     "PERMISSION_DENIED",
     "You do not have permission to perform this action.",

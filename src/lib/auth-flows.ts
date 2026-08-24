@@ -8,6 +8,7 @@ import {
 import { conflict, forbidden, unauthorized, badRequest, isUniqueViolation } from "@/lib/errors";
 import { newId, type Role } from "@/lib/ids";
 import { sendEmail, emailHtml } from "@/lib/notifications";
+import { ensureClinicSubscription } from "@/lib/subscriptions";
 
 const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -113,6 +114,9 @@ export async function registerUser(input: RegisterInput) {
            VALUES (?, ?, NULL, ?)`,
           [clinicId, clinicName, id],
         );
+        // Every new clinic starts with the configured free trial (default 2 months),
+        // anchored at the clinic's creation date.
+        await ensureClinicSubscription(conn, clinicId);
         clinic = {
           id: clinicId,
           name: clinicName,

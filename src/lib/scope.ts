@@ -1,13 +1,24 @@
 import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
 import { forbidden, notFound } from "@/lib/errors";
+import { assertClinicOperational } from "@/lib/subscriptions";
 
 type Db = Pool | PoolConnection;
 type Row = RowDataPacket;
+
+export interface ScopeOptions {
+  /**
+   * Skip the clinic-subscription gate. Used by the subscription/payment endpoints
+   * themselves (an inactive clinic's owner must still be able to reach them) and by
+   * teardown paths such as deleting one's own clinic.
+   */
+  skipSubscriptionGate?: boolean;
+}
 
 export async function getOwnedClinic(
   db: Db,
   clinicId: string,
   ownerUserId: string,
+  opts: ScopeOptions = {},
 ): Promise<Row> {
   const [rows] = await db.query<Row[]>(
     `SELECT * FROM clinics WHERE id = ? AND deleted_at IS NULL`,
@@ -18,6 +29,9 @@ export async function getOwnedClinic(
   if (row.owner_user_id !== ownerUserId) {
     throw forbidden("NOT_CLINIC_OWNER", "You do not own this clinic.");
   }
+  if (!opts.skipSubscriptionGate) {
+    await assertClinicOperational(db, clinicId);
+  }
   return row;
 }
 
@@ -25,6 +39,7 @@ export async function getOwnedBranch(
   db: Db,
   branchId: string,
   ownerUserId: string,
+  opts: ScopeOptions = {},
 ): Promise<Row> {
   const [rows] = await db.query<Row[]>(
     `SELECT b.*, c.owner_user_id
@@ -37,6 +52,9 @@ export async function getOwnedBranch(
   if (!row) throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
   if (row.owner_user_id !== ownerUserId) {
     throw forbidden("NOT_CLINIC_OWNER", "You do not own the clinic for this branch.");
+  }
+  if (!opts.skipSubscriptionGate) {
+    await assertClinicOperational(db, row.clinic_id);
   }
   return row;
 }
