@@ -5,6 +5,7 @@ import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/a
 import { hasSlotPassedInTz } from "@/lib/availability";
 import { createPatientNotification } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
+import { assertClinicOperational } from "@/lib/subscriptions";
 import { conflict, notFound } from "@/lib/errors";
 
 export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
@@ -12,6 +13,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
 
   await withTransaction(async (conn) => {
     const appt = await getAppointmentInScope(conn, ctx.params.id, auth);
+    await assertClinicOperational(conn, appt.clinic_id);
     await assertBranchStaffPermission(conn, auth, appt.branch_id, "appointments:complete");
     if (!hasSlotPassedInTz(appt.scheduled_date, appt.scheduled_time, appt.branch_timezone)) {
       throw conflict(

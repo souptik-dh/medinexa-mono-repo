@@ -7,6 +7,7 @@ import { newId } from "@/lib/ids";
 import { ApiError, conflict, notFound, isUniqueViolation } from "@/lib/errors";
 import { createNotification, sendEmail, emailHtml } from "@/lib/notifications";
 import { getInviteSpecializations } from "@/lib/specializations";
+import { assertClinicOperational, resolveClinicIdByBranch } from "@/lib/subscriptions";
 import type { ResultSetHeader } from "mysql2/promise";
 
 const schema = z.object({
@@ -33,6 +34,10 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
     await pool.query(`UPDATE doctor_invites SET status = 'expired' WHERE id = ?`, [invite.id]);
     throw new ApiError(410, "INVITE_EXPIRED", "This invite has expired. Contact the clinic for a new one.");
   }
+
+  // Doctors cannot join a clinic whose subscription is inactive.
+  const inviteClinicId = await resolveClinicIdByBranch(pool, invite.branch_id);
+  if (inviteClinicId) await assertClinicOperational(pool, inviteClinicId);
 
   const doctorId = newId();
   const userId = newId();

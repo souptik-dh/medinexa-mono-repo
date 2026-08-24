@@ -135,7 +135,8 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
 
 export const DELETE = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
-  const clinic = await getOwnedClinic(pool, ctx.params.clinicId, auth.userId);
+  // Teardown stays available even while the subscription is inactive.
+  const clinic = await getOwnedClinic(pool, ctx.params.clinicId, auth.userId, { skipSubscriptionGate: true });
   const { searchParams } = ctx.request.nextUrl;
   const force = searchParams.get("force") === "true";
 

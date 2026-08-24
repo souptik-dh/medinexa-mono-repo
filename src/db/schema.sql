@@ -801,6 +801,139 @@ CREATE TABLE IF NOT EXISTS lab_test_appointment_status_log (
   CONSTRAINT fk_lta_status_log_appt FOREIGN KEY (appointment_id) REFERENCES lab_test_appointments(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+-- ============================================================
+-- Clinic Monthly Subscription System
+-- ============================================================
+
+-- Versioned plan catalog. The Super Admin "change price" operation inserts a new
+-- active version here and deactivates the previous one — existing subscriptions and
+-- already-created payments keep their own amount snapshots, so history is never
+-- rewritten when pricing changes.
+CREATE TABLE IF NOT EXISTS subscription_plans (
+  id CHAR(36) NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  billing_period ENUM('monthly') NOT NULL DEFAULT 'monthly',
+  amount DECIMAL(10,2) NOT NULL,
+  currency CHAR(3) NOT NULL DEFAULT 'INR',
+  trial_months SMALLINT NOT NULL DEFAULT 2,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  effective_from DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  created_by CHAR(36) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY idx_plan_active (is_active, effective_from),
+  CONSTRAINT fk_plan_created_by FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- Platform-level key/value settings managed by Super Admin (warning windows etc).
+CREATE TABLE IF NOT EXISTS platform_settings (
+  setting_key VARCHAR(100) NOT NULL,
+  setting_value VARCHAR(255) NOT NULL,
+  description VARCHAR(255) NULL,
+  updated_by CHAR(36) NULL,
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (setting_key)
+) ENGINE=InnoDB;
+
+-- One row per clinic. Canonical stored states: TRIAL / ACTIVE / EXPIRED / INACTIVE.
+-- EXPIRING is a derived display state (ACTIVE/TRIAL with expiry inside the warning
+-- window) — never stored. Deactivating a clinic never deletes clinic or patient data;
+-- it only restricts clinic operations until payment/reactivation.
+CREATE TABLE IF NOT EXISTS clinic_subscriptions (
+  id CHAR(36) NOT NULL,
+  clinic_id CHAR(36) NOT NULL,
+  status ENUM('TRIAL','ACTIVE','EXPIRED','INACTIVE') NOT NULL DEFAULT 'TRIAL',
+  plan_id CHAR(36) NULL,
+  monthly_amount DECIMAL(10,2) NOT NULL DEFAULT 49.00,
+  currency CHAR(3) NOT NULL DEFAULT 'INR',
+  period_start DATETIME(3) NOT NULL,
+  period_end DATETIME(3) NOT NULL,
+  is_trial TINYINT(1) NOT NULL DEFAULT 1,
+  trial_started_at DATETIME(3) NULL,
+  trial_ends_at DATETIME(3) NULL,
+  auto_renew TINYINT(1) NOT NULL DEFAULT 0,
+  deactivated_at DATETIME(3) NULL,
+  deactivated_by CHAR(36) NULL,
+  deactivation_reason VARCHAR(500) NULL,
+  last_paid_payment_id CHAR(36) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_subscription_clinic (clinic_id),
+  KEY idx_subscription_status_expiry (status, period_end),
+  CONSTRAINT fk_subscription_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
+  CONSTRAINT fk_subscription_plan FOREIGN KEY (plan_id) REFERENCES subscription_plans(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- Subscription payment attempts. Amount/period are computed server-side; the client
+-- can never set them. provider_order_id is issued at initiation; verification checks an
+-- HMAC signature over `order_id|payment_id` (gateway-style) before any activation.
+CREATE TABLE IF NOT EXISTS subscription_payments (
+  id CHAR(36) NOT NULL,
+  clinic_id CHAR(36) NOT NULL,
+  subscription_id CHAR(36) NOT NULL,
+  plan_id CHAR(36) NULL,
+  invoice_no VARCHAR(32) NOT NULL,
+  amount DECIMAL(10,2) NOT NULL,
+  currency CHAR(3) NOT NULL DEFAULT 'INR',
+  months SMALLINT NOT NULL DEFAULT 1,
+  method ENUM('upi','card','netbanking','wallet','cash','manual') NOT NULL DEFAULT 'upi',
+  provider VARCHAR(50) NULL,
+  provider_order_id VARCHAR(100) NULL,
+  provider_payment_id VARCHAR(100) NULL,
+  provider_signature VARCHAR(255) NULL,
+  status ENUM('PENDING','PAID','FAILED') NOT NULL DEFAULT 'PENDING',
+  failure_reason VARCHAR(500) NULL,
+  reference_no VARCHAR(255) NULL,
+  verification_method ENUM('signature','webhook','manual') NULL,
+  verified_by CHAR(36) NULL,
+  verified_at DATETIME(3) NULL,
+  period_start DATETIME(3) NULL,
+  period_end DATETIME(3) NULL,
+  initiated_by CHAR(36) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_subpay_invoice (invoice_no),
+  UNIQUE KEY uniq_subpay_provider_order (provider_order_id),
+  KEY idx_subpay_clinic (clinic_id, created_at),
+  KEY idx_subpay_status (status, created_at),
+  CONSTRAINT fk_subpay_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
+  CONSTRAINT fk_subpay_subscription FOREIGN KEY (subscription_id) REFERENCES clinic_subscriptions(id),
+  CONSTRAINT fk_subpay_plan FOREIGN KEY (plan_id) REFERENCES subscription_plans(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- Full lifecycle audit of a clinic's subscription (trial start, expirations,
+-- reactivations, manual super-admin changes). changed_by NULL = system/cron.
+CREATE TABLE IF NOT EXISTS subscription_history (
+  id CHAR(36) NOT NULL,
+  clinic_id CHAR(36) NOT NULL,
+  subscription_id CHAR(36) NOT NULL,
+  from_status VARCHAR(16) NULL,
+  to_status VARCHAR(16) NOT NULL,
+  reason VARCHAR(500) NULL,
+  changed_by CHAR(36) NULL,
+  source ENUM('system','clinic','super_admin','payment','webhook') NOT NULL DEFAULT 'system',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY idx_subhist_clinic (clinic_id, created_at),
+  CONSTRAINT fk_subhist_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
+  CONSTRAINT fk_subhist_subscription FOREIGN KEY (subscription_id) REFERENCES clinic_subscriptions(id)
+) ENGINE=InnoDB;
+
+-- Super Admin grant list. A platform Super Admin = users row with role 'sys_admin'
+-- AND an active (revoked_at IS NULL) row here. Grants are managed via the
+-- Super Admin API itself and bootstrapped with scripts/create-super-admin.mjs.
+CREATE TABLE IF NOT EXISTS super_admins (
+  user_id CHAR(36) NOT NULL,
+  granted_by CHAR(36) NULL,
+  revoked_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (user_id),
+  CONSTRAINT fk_super_admin_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_super_admin_granted_by FOREIGN KEY (granted_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS lab_test_payments (
   id CHAR(36) NOT NULL,
   appointment_id CHAR(36) NOT NULL,

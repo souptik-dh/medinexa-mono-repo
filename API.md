@@ -29,9 +29,12 @@ Live implementation reference for the MediBook API. Every endpoint below documen
 16. [Medical documents](#medical-documents)
 17. [Notifications](#notifications)
 18. [Files (signed URLs)](#files-signed-urls)
-19. [Error codes](#error-codes)
-20. [Status transition table](#status-transition-table)
-21. [Lab test status transitions](#lab-test-status-transitions)
+19. [Subscriptions & billing](#subscriptions--billing)
+20. [Super Admin platform](#super-admin-platform)
+21. [Webhooks](#webhooks)
+22. [Error codes](#error-codes)
+23. [Status transition table](#status-transition-table)
+24. [Lab test status transitions](#lab-test-status-transitions)
 
 ---
 
@@ -86,6 +89,10 @@ Limits are per authenticated user (`Authorization` token) unless the endpoint ke
 - **Sensitive/admin-config writes** — password/email change, photo & document/signature uploads, lab test & branch-test-schedule catalog CRUD (`clinic/lab-tests*`, `clinic/branches/:branchId/lab-tests*`, `clinic/branches/:branchId/lab-test-schedules*`): `10/min`.
 - **Browse/list (`GET`) endpoints** — doctors, lab tests, branch lab tests, categories, availability: `120/min`.
 - All other mutating endpoints (status transitions such as confirm/cancel/complete/approve/reject, profile updates, device tokens, etc.) use the `200/min` default, set explicitly on the route.
+- **Subscription payments** — `POST /clinics/:clinicId/subscription/payments`, `POST /clinics/:clinicId/subscription/payments/:paymentId/verify`, `POST /clinics/:clinicId/subscription/reactivate`: `20/min`.
+- **`POST /auth/super-admin/login`:** `10/min` per IP.
+- **Super Admin writes** — grant/revoke a Super Admin (`POST`/`DELETE /super-admin/super-admins*`): `20/min`. Update a platform setting (`PATCH /super-admin/settings`), publish a new plan version (`POST /super-admin/plans`), and trigger the subscription sweep (`POST /super-admin/system/process-subscriptions`): `30/min`. Activate/deactivate a clinic or extend its subscription (`POST /super-admin/clinics/:clinicId/{activate,deactivate,subscription/extend}`): `60/min`. All other Super Admin `GET` endpoints use the `200/min` default.
+- **`POST /webhooks/subscription-payments`:** `120/min` per source IP (no user auth to key by).
 
 `429 RATE_LIMITED` responses include a `Retry-After` header (seconds until the window resets).
 
@@ -142,6 +149,8 @@ Auth: none. Unauthenticated liveness/readiness check — pings the database and 
 | `branch_staff` | Resources under their assigned branch only |
 | `doctor` | Own profile + appointments/patients linked to them |
 | `sys_admin` | Bypasses role checks (internal) |
+
+> **Super Admin** (platform operator) is not a separate JWT role — it's a `sys_admin`-role user who additionally holds an active (non-revoked) grant row in `super_admins`. Every endpoint under [Super Admin platform](#super-admin-platform) requires both; a `sys_admin` account with no grant (or a revoked one) gets `403 NOT_SUPER_ADMIN`. The first Super Admin is created outside the API via `scripts/create-super-admin.mjs`; every subsequent grant/revoke goes through `POST`/`DELETE /super-admin/super-admins*`.
 
 ---
 
@@ -481,6 +490,34 @@ Public. Rate limited 20/min per IP. Sets a new password using a valid, unexpired
 ```
 
 **Errors:** `400 VALIDATION_ERROR` (including password mismatch), `400 RESET_TOKEN_INVALID`, `410 RESET_TOKEN_EXPIRED`.
+
+### POST /auth/super-admin/login
+
+Public endpoint, but only succeeds for an account with `role = sys_admin` **and** an active grant in `super_admins` — see [Super Admin platform](#super-admin-platform). Same password credentials as any other login; this is a separate entry point, not a separate credential. Rate limited `10/min` per IP.
+
+**Request body**
+
+```json
+{ "email": "admin@medinexa.io", "password": "password123" }
+```
+
+**Response `200`**
+
+```json
+{
+  "user": {
+    "id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+    "name": "Platform Admin",
+    "email": "admin@medinexa.io",
+    "phone": null,
+    "role": "sys_admin"
+  },
+  "access_token": "<jwt>",
+  "refresh_token": "<opaque>"
+}
+```
+
+**Errors:** `400 VALIDATION_ERROR`, `401 INVALID_CREDENTIALS` (also returned when the account's role isn't `sys_admin` — login is scoped to that role), `403 INVITE_NOT_ACCEPTED` (account `pending`), `401 ACCOUNT_DISABLED`, `403 NOT_SUPER_ADMIN` (valid `sys_admin` credentials but no active `super_admins` grant).
 
 ### POST /auth/refresh
 
@@ -3546,9 +3583,9 @@ Auth: `doctor` **only**, and only with a non-cancelled appointment relationship 
 }
 ```
 
-`type` ∈ `new_booking | booking_confirmed | payment_received | consultation_completed | prescription_ready | doctor_invited | doctor_invite_accepted | appointment_cancelled | lab_test_booked | lab_test_approved | lab_test_rejected | lab_test_cancelled | lab_test_completed`
+`type` ∈ `new_booking | booking_confirmed | payment_received | consultation_completed | prescription_ready | doctor_invited | doctor_invite_accepted | appointment_cancelled | lab_test_booked | lab_test_approved | lab_test_rejected | lab_test_cancelled | lab_test_completed | lab_test_payment_success | subscription_expiring | subscription_expired | subscription_activated | subscription_deactivated`
 
-**Delivery:** notifications are stored in-app and polled via the endpoints below. Patient-facing events (`booking_confirmed`, `payment_received`, `consultation_completed`, `prescription_ready`, and patient-cancelled/`appointment_cancelled` by staff) additionally fan out a **push** notification via Firebase Cloud Messaging to every device the patient is registered on (see [Device tokens](#device-tokens) below). Push failures never fail the triggering request.
+**Delivery:** notifications are stored in-app and polled via the endpoints below. Patient-facing events (`booking_confirmed`, `payment_received`, `consultation_completed`, `prescription_ready`, and patient-cancelled/`appointment_cancelled` by staff) additionally fan out a **push** notification via Firebase Cloud Messaging to every device the patient is registered on (see [Device tokens](#device-tokens) below). Push failures never fail the triggering request. The four `subscription_*` types (clinic-owner-facing, from [Subscriptions & billing](#subscriptions--billing) and [Super Admin platform](#super-admin-platform)) are in-app only — no push or email is sent for them.
 
 ### Device tokens
 
@@ -3624,6 +3661,554 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 
 ---
 
+## Subscriptions & billing
+
+Every clinic has exactly one `clinic_subscriptions` row (lazily created on first read/write, anchored at the clinic's `created_at`, if one doesn't already exist). A clinic starts on a **free trial** (`trial_months` from the currently active plan, default **2 months**) and must convert to a paid **monthly** subscription to keep operating past the trial or a paid period's `period_end`.
+
+**Stored status** (`clinic_subscriptions.status`): `TRIAL | ACTIVE | EXPIRED | INACTIVE`. **Display status** (every `subscription.status` field below) adds one *derived, never-persisted* value: `EXPIRING` — shown only for a stored `ACTIVE` subscription whose `period_end` is within the configured warning window (`platform_settings['subscription.expiring_warning_days']`, default 7 days; see [Super Admin platform](#super-admin-platform)). A trial in its own warning window stays displayed as `TRIAL` (its `expiring_soon` flag turns `true` instead of the status changing).
+
+**The subscription gate.** Once a clinic is blocked — stored status `INACTIVE` (manual platform deactivation), or the relevant window (`trial_ends_at` while trialing, else `period_end`) has passed — every clinic-owner/branch-staff mutation that resolves the clinic via `getOwnedClinic`/`getOwnedBranch` or `assertBranchStaffPermission` (creating/confirming/paying/completing appointments and lab test appointments, accepting a doctor invite, etc.) is rejected with:
+
+```json
+{ "error": { "code": "SUBSCRIPTION_INACTIVE", "message": "The free trial period has ended. Pay the monthly subscription to restore clinic access.", "field": null, "request_id": "req_8f2a1c33" } }
+```
+
+**Status `402`.** The `message` varies with the cause: `"Clinic deactivated by platform administrator: <reason>"` / `"...administrator."` (no reason given), `"The free trial period has ended. Pay the monthly subscription to restore clinic access."` (trial elapsed), or `"The subscription has expired. Renew the subscription to restore clinic access."` (paid period elapsed). `DELETE /clinics/:clinicId` and every endpoint in this section are explicitly exempted from this gate, so a blocked clinic owner can still view status/history, pay, and reactivate — or tear the clinic down.
+
+### Subscription object
+
+```json
+{
+  "id": "6a1b2c3d-4e5f-6789-abcd-ef0123456789",
+  "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+  "status": "TRIAL",
+  "stored_status": "TRIAL",
+  "is_trial": true,
+  "monthly_amount": 49.00,
+  "currency": "INR",
+  "period_start": "2026-07-01T09:00:00Z",
+  "period_end": "2026-09-01T09:00:00Z",
+  "trial_started_at": "2026-07-01T09:00:00Z",
+  "trial_ends_at": "2026-09-01T09:00:00Z",
+  "days_remaining": 8,
+  "expiring_soon": false,
+  "auto_renew": false,
+  "inactive_since": null,
+  "deactivation_reason": null,
+  "blocked": false,
+  "blocked_reason": null
+}
+```
+
+`blocked`/`blocked_reason` mirror exactly what the subscription gate above would throw if the clinic acted right now. While on trial, `period_start`/`period_end` mirror `trial_started_at`/`trial_ends_at`.
+
+### Subscription Payment object
+
+```json
+{
+  "id": "9f8e7d6c-5b4a-4392-8102-f3e4d5c6b7a8",
+  "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+  "subscription_id": "6a1b2c3d-4e5f-6789-abcd-ef0123456789",
+  "invoice_no": "INV-20260824-9B3E7A1C",
+  "amount": 49.00,
+  "currency": "INR",
+  "months": 1,
+  "method": "upi",
+  "provider": "subscription_gateway",
+  "provider_order_id": "order_3c9e7f1a2b4d6081e3c5a7f901827364",
+  "provider_payment_id": "pay_MkX9Lq2Rz1Yb3c",
+  "status": "PAID",
+  "failure_reason": null,
+  "reference_no": null,
+  "verification_method": "signature",
+  "verified_by": null,
+  "verified_at": "2026-08-24T06:42:10.000Z",
+  "period_start": "2026-08-24T06:40:00.000Z",
+  "period_end": "2026-09-24T06:40:00.000Z",
+  "initiated_by": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "created_at": "2026-08-24T06:40:00.000Z"
+}
+```
+
+`method` ∈ `upi | card | netbanking | wallet` when created through the client-facing initiate endpoint below (`cash`/`manual` exist in the DB enum but are only ever set by Super Admin/manual code paths). `status` ∈ `PENDING | PAID | FAILED`. `verification_method` ∈ `signature | webhook | manual`, `null` until verified. Paying never loses unused trial/paid time: the new paid period starts at whichever is later of "now" and the current `trial_ends_at`/`period_end`, so `period_start` can be later than `created_at`.
+
+### GET /clinics/:clinicId/subscription
+
+Auth: `clinic_owner`, must own the clinic (subscription gate not applied to this section).
+
+**Response `200`**
+
+```json
+{
+  "subscription": { /* Subscription object */ },
+  "current_plan": { "id": "d4e5f6a7-8901-bcde-f234-56789012abcd", "name": "Clinic Monthly", "monthly_amount": 49.00, "currency": "INR", "trial_months": 2 },
+  "settings": { "expiring_warning_days": 7, "max_months_per_payment": 12 }
+}
+```
+
+`current_plan` is the platform's currently active plan (server-side pricing for the *next* payment — not necessarily what this clinic is already paying). `current_plan.id` is `null` if `subscription_plans` has no active row (a built-in default of ₹49/month, 2-month trial, is used).
+
+**Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`.
+
+### GET /clinics/:clinicId/subscription/history
+
+Auth: `clinic_owner`, must own the clinic. Paginated (cursor, `?limit=&cursor=`, ordered newest first).
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "d4e5f607-1829-4a3b-8c4d-5e6f70819293",
+      "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+      "from_status": "TRIAL",
+      "to_status": "ACTIVE",
+      "reason": "Payment INV-20260820-4F2A9C1B verified (signature); +1 month(s)",
+      "changed_by": null,
+      "source": "payment",
+      "created_at": "2026-08-20T10:15:22.412Z"
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+`source` ∈ `system | clinic | super_admin | payment | webhook` (`changed_by` is the acting user, `null` for system/cron-driven rows). `from_status` is `null` on the clinic's first (trial-provisioning) row.
+
+**Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 VALIDATION_ERROR` (`limit` outside 1–100).
+
+### GET /clinics/:clinicId/subscription/payments
+
+Auth: `clinic_owner`, must own the clinic. Paginated (cursor, ordered newest first).
+
+**Query:** `?status=&limit=&cursor=` — `status` ∈ `PENDING | PAID | FAILED`.
+
+**Response `200`** — `{ "items": [ /* Subscription Payment objects */ ], "next_cursor": null }`
+
+**Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`. An invalid `status` value is a documented deviation: it currently throws an unhandled validation error that surfaces as `500 INTERNAL_ERROR` rather than `400 VALIDATION_ERROR` — send only the three documented values.
+
+### POST /clinics/:clinicId/subscription/payments
+
+Auth: `clinic_owner`, must own the clinic. Rate limited `20/min`. Initiates a new payment attempt for one or more months at the plan's **current** price — the amount is always computed server-side (`plan.amount × months`); the client never sets it.
+
+**Request body**
+
+```json
+{ "months": 1, "method": "upi" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `months` | integer | required, 1–12 (and further capped by the platform's `subscription.max_months_per_payment` setting, default 12) |
+| `method` | string? | optional, `upi \| card \| netbanking \| wallet`, defaults to `upi` |
+
+**Response `201`**
+
+```json
+{
+  "payment": { /* Subscription Payment object, status "PENDING" */ },
+  "plan": { "name": "Clinic Monthly", "monthly_amount": 49.00, "currency": "INR", "months": 1 },
+  "next_steps": [
+    "Complete the payment on your payment gateway using provider_order_id.",
+    "POST /clinics/:clinicId/subscription/payments/:paymentId/verify with provider_payment_id and provider_signature."
+  ]
+}
+```
+
+`invoice_no` (`INV-YYYYMMDD-XXXXXXXX`) and `provider_order_id` (`order_<24 hex>`) are generated server-side; `provider` is always `"subscription_gateway"`.
+
+**Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 VALIDATION_ERROR` (`months`/`method` fail schema), `400 INVALID_MONTHS` (`months` outside the platform's configured max — only reachable if an admin has set `max_months_per_payment` below 12).
+
+### POST /clinics/:clinicId/subscription/payments/:paymentId/verify
+
+Auth: `clinic_owner`, must own the clinic. Rate limited `20/min`. `paymentId` matches by `id` **or** `provider_order_id`. Verifies the gateway's signature and, if valid, atomically activates the paid period.
+
+**Request body**
+
+```json
+{ "provider_payment_id": "pay_MkX9Lq2Rz1Yb3c", "provider_signature": "9d3c1f0a...", "reference_no": null }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `provider_payment_id` | string | required, 1–100 chars |
+| `provider_signature` | string | required, 16–255 chars — hex `HMAC-SHA256("<order_id>|<payment_id>")` signed with the server's payment secret |
+| `reference_no` | string? | optional, max 255 |
+
+**Response `200`**
+
+```json
+{
+  "message": "Payment verified. Your clinic subscription is active.",
+  "payment": { /* Subscription Payment object, status "PAID", verification_method "signature" */ },
+  "subscription": { /* Subscription object, status "ACTIVE" */ }
+}
+```
+
+**Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 VALIDATION_ERROR`, `404 PAYMENT_NOT_FOUND`, `503 PAYMENT_VERIFICATION_UNAVAILABLE` (server payment secret not configured), `400 PAYMENT_SIGNATURE_INVALID` (also marks the payment `FAILED` if it was still `PENDING`), `409 PAYMENT_ALREADY_VERIFIED`, `409 PAYMENT_FAILED`, `404 SUBSCRIPTION_NOT_FOUND`.
+
+**Side effects:** on success — `subscription_payments` → `PAID`; `clinic_subscriptions` → `ACTIVE`, `is_trial: false`, `auto_renew: true`, period extended, any deactivation cleared; a `subscription_history` row (`source: "payment"`); an in-app `subscription_activated` notification to the clinic owner (no email/push).
+
+### POST /clinics/:clinicId/subscription/reactivate
+
+Auth: `clinic_owner`, must own the clinic. Rate limited `20/min`. No request body. Re-applies the clinic's **most recent already-`PAID`** payment to the subscription — never extends beyond what was already paid for, and does nothing if the clinic was manually deactivated by a Super Admin (that requires `POST /super-admin/clinics/:clinicId/activate`) or if that payment's period has itself already lapsed.
+
+**Response `200`** — always `200`, even when nothing could be applied:
+
+```json
+{ "reactivated": true, "payment_applied": true, "message": "Your clinic is active.", "subscription": { /* Subscription object */ } }
+```
+
+or
+
+```json
+{ "reactivated": false, "payment_applied": false, "message": "Clinic is still inactive. Initiate and verify a subscription payment first.", "subscription": { /* Subscription object, still blocked */ } }
+```
+
+**Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`.
+
+### GET /clinics/:clinicId/subscription/trial
+
+Auth: `clinic_owner`, must own the clinic. A trial-focused view for a dedicated UI widget.
+
+**Response `200`**
+
+```json
+{
+  "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+  "trial": { "is_trial": true, "status": "TRIAL", "started_at": "2026-07-01T09:00:00Z", "ends_at": "2026-09-01T09:00:00Z", "days_remaining": 8, "expiring_soon": false, "expired": false },
+  "subscription_status": "TRIAL",
+  "monthly_amount": 49.00,
+  "currency": "INR",
+  "blocked": false,
+  "blocked_reason": null
+}
+```
+
+Once the clinic has converted to paid, `trial.status` becomes the fixed string `"CONCLUDED"` and `trial.expired`/`days_remaining`/`expiring_soon` freeze at `true`/`0`/`false` regardless of the paid subscription's own health — check the top-level `subscription_status` for that.
+
+**Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`.
+
+---
+
+## Super Admin platform
+
+A separate, patient-data-free operator layer for managing clinics platform-wide and running the subscription business. Every endpoint below requires **Super Admin** (see [Roles & scope](#roles--scope)): `requireSuperAdmin` first enforces `role = sys_admin` (`401 UNAUTHORIZED` / `403 INSUFFICIENT_ROLE`), then an active `super_admins` grant (`403 NOT_SUPER_ADMIN`). Log in via [`POST /auth/super-admin/login`](#post-authsuper-adminlogin).
+
+Every mutating endpoint here writes an **audit log** row (`audit_logs`: `actor_user_id, action, resource_type, resource_id, changes_json, ip_address, created_at`) — visible via `GET /super-admin/audit-logs`.
+
+> **Known deviation:** `GET /super-admin/clinics`, `GET /super-admin/clinics/:clinicId/payments`, `GET /super-admin/audit-logs`, and `GET /super-admin/payments` validate their query string directly with Zod (not through the shared body-validation helper). An out-of-enum value (e.g. an unrecognized `subscription_status` or `status`) currently throws an unhandled error and surfaces as `500 INTERNAL_ERROR` instead of `400 VALIDATION_ERROR` — send only documented enum values until this is tightened.
+
+### GET /super-admin/clinics
+
+Paginated (cursor, `?q=&subscription_status=&limit=&cursor=`).
+
+- `q` — optional, matches clinic name/city or the owner's name/email (substring).
+- `subscription_status` — optional, `TRIAL | ACTIVE | EXPIRING | EXPIRED | INACTIVE` (`EXPIRING` is the same derived state as elsewhere).
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+      "name": "Sunrise Multispeciality",
+      "city": "Mumbai",
+      "district": "Mumbai Suburban",
+      "owner": { "id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d", "email": "owner@sunrise.example", "name": "Anita Rao", "phone": "+919820011223" },
+      "branch_count": 2,
+      "subscription": { /* Subscription object, or null if never provisioned */ },
+      "created_at": "2026-06-01T09:30:00Z"
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+### GET /super-admin/clinics/:clinicId
+
+Full operator view of one clinic — location, owner, licenses, subscription, branches, staff, doctors, lab configuration, and aggregate (not per-patient) appointment counts. Never returns patient identities, medical records, prescriptions, or documents.
+
+**Response `200`**
+
+```json
+{
+  "id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+  "name": "Sunrise Multispeciality",
+  "description": "General & cardiac care",
+  "location": { "nearby_location": null, "city": "Mumbai", "district": "Mumbai Suburban", "pin_code": "400058", "state": "Maharashtra" },
+  "owner": { "id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d", "name": "Anita Rao", "email": "owner@sunrise.example", "phone": "+919820011223", "account_status": "active", "created_at": null },
+  "licenses": { "trade_license_number": "TL-2026-004521", "trade_license_validation_status": "VALID", "drug_license_number": "DL-MH-2026-1187", "clinical_establishment_reg_number": "CER-MH-2026-0932" },
+  "subscription": { /* Subscription object */ },
+  "branches": [ { "id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b", "name": "Sunrise — Andheri", "address": "12, SV Road, Andheri West, Mumbai 400058", "city": "Mumbai", "district": "Mumbai Suburban", "pin_code": "400058", "state": "Maharashtra", "phone": "+912240010010", "timezone": "Asia/Kolkata", "trade_license_validation_status": "VALID", "created_at": "2026-06-02T11:00:00Z" } ],
+  "staff": [ { "user_id": "7c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f", "name": "Ritu Sharma", "email": "ritu@sunrise.example", "phone": "+919812345670", "account_status": "active", "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b", "branch_name": "Sunrise — Andheri", "added_at": "2026-06-05T08:00:00Z" } ],
+  "doctors": [ { "id": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d", "name": "Dr. Kavita Iyer", "specialization": "Cardiology", "reg_no": "MH-12345", "smc_name": "Maharashtra Medical Council", "degree": "MBBS, MD", "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b", "fee_amount": 800, "currency": "INR" } ],
+  "lab_configuration": { "active_tests": 12, "categories": 4, "branch_test_links": 12 },
+  "appointment_summary": { "by_status": { "pending": 3, "confirmed": 5, "completed": 40 }, "lab_tests_by_status": { "approved": 2, "completed": 18 }, "appointments_last_30d": 22, "collected_estimate_inr": 32000 },
+  "created_at": "2026-06-01T09:30:00Z"
+}
+```
+
+`owner.created_at` is always `null` (not populated by the underlying query). Fetching this endpoint lazily provisions the clinic's trial `clinic_subscriptions` row if it doesn't have one yet (e.g. a clinic created before this system shipped).
+
+**Errors:** `404 CLINIC_NOT_FOUND`.
+
+### POST /super-admin/clinics/:clinicId/activate
+
+Rate limited `60/min`. No body. Reverses a manual deactivation — restores the clinic to whatever its "honest" underlying state is (not forced to `ACTIVE`): still-valid trial → `TRIAL`; still-valid paid period → `ACTIVE`; neither → `EXPIRED` (blocked again; needs payment or `extend`).
+
+**Response `200`** — `{ "message": "Clinic activated.", "subscription": { /* Subscription object */ } }`
+
+**Errors:** `404 CLINIC_NOT_FOUND`, `409 CLINIC_NOT_DEACTIVATED` (subscription wasn't `INACTIVE`).
+
+**Side effects:** `subscription_history` row (`source: "super_admin"`); in-app `subscription_activated` notification to the owner if restored to `TRIAL`/`ACTIVE` (none if restored to `EXPIRED`).
+
+### POST /super-admin/clinics/:clinicId/deactivate
+
+Rate limited `60/min`. Suspends the clinic platform-wide (triggers the subscription gate everywhere) without touching any clinic/patient data — reversible via `activate`.
+
+**Request body:** `{ "reason": "Chargeback dispute pending review by billing team." }` — `reason` required, 3–500 chars.
+
+**Response `200`** — `{ "message": "Clinic deactivated. Clinic and patient data are preserved.", "subscription": { /* Subscription object, status "INACTIVE", blocked: true */ } }`
+
+**Errors:** `400 VALIDATION_ERROR` (`reason` missing/too short/too long), `404 CLINIC_NOT_FOUND`, `409 CLINIC_ALREADY_DEACTIVATED`.
+
+**Side effects:** `clinic_subscriptions` → `INACTIVE` (`deactivated_at/by/reason` set); `subscription_history` row; in-app `subscription_deactivated` notification to the owner (no email/push).
+
+### GET /super-admin/clinics/:clinicId/payments
+
+Paginated (cursor, `?status=&limit=&cursor=`, `status` ∈ `PENDING | PAID | FAILED`). Payment history for one clinic; each item is a Subscription Payment object. Unlike other Super Admin clinic endpoints, this one does **not** exclude soft-deleted clinics — a deleted clinic's payment history remains reachable by ID.
+
+**Errors:** `404 CLINIC_NOT_FOUND` (clinic id never existed).
+
+### GET /super-admin/clinics/:clinicId/subscription
+
+Admin-perspective subscription detail: live subscription state, the platform's currently active plan, and lifetime totals.
+
+**Response `200`**
+
+```json
+{
+  "subscription": { /* Subscription object */ },
+  "current_plan": { "id": "d4e5f6a7-8901-bcde-f234-56789012abcd", "name": "Clinic Monthly", "monthly_amount": 49.00, "currency": "INR", "trial_months": 2 },
+  "lifetime": { "total_paid": 294.00, "paid_payment_count": 3 }
+}
+```
+
+**Errors:** `404 CLINIC_NOT_FOUND`.
+
+### POST /super-admin/clinics/:clinicId/subscription/extend
+
+Rate limited `60/min`. The manual override path for granting extra paid months or trial days — plan price changes never retroactively affect running subscriptions, so this is the only way to adjust one directly. Stacks on top of remaining time; never loses it.
+
+**Request body** — exactly one of `months`/`trial_days`, plus a mandatory `reason`:
+
+```json
+{ "months": 3, "reason": "Goodwill extension after gateway outage on 2026-08-20." }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `months` | integer? | 1–36 — extends the paid period; sets `status: "ACTIVE"` |
+| `trial_days` | integer? | 1–365 — extends the trial; sets `status: "TRIAL"` |
+| `reason` | string | required, 3–500 chars, audit trail |
+
+**Response `200`** — `{ "message": "Subscription updated.", "subscription": { /* Subscription object */ } }`
+
+**Errors:** `400 VALIDATION_ERROR` (`reason` invalid, or neither `months` nor `trial_days` given / out of range), `404 CLINIC_NOT_FOUND`.
+
+**Side effects:** `subscription_history` row (`reason: "Extended by super admin (+N month(s)|+N trial day(s)): <reason>"`, `source: "super_admin"`); in-app `subscription_activated` notification to the owner.
+
+### GET /super-admin/audit-logs
+
+Paginated (cursor, ordered newest first). `?action=&actor_user_id=&resource_type=&resource_id=&from=&to=&limit=&cursor=` — `action` is a substring match; `from`/`to` are `YYYY-MM-DD` (inclusive) filtering `created_at`; all filters AND together, all optional.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "7c1a2b3d-4e5f-6789-0abc-def123456789",
+      "actor": { "user_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d", "email": "admin@medinexa.io" },
+      "action": "platform_setting.updated",
+      "resource_type": "platform_setting",
+      "resource_id": "subscription.expiring_warning_days",
+      "changes": { "from": "7", "to": "10" },
+      "ip_address": "203.0.113.42",
+      "created_at": "2026-08-20T11:15:03.221Z"
+    }
+  ],
+  "next_cursor": null
+}
+```
+
+`actor` is `null` if the acting user was later deleted. Known `action` values: `platform_setting.updated`, `super_admin.granted`, `super_admin.revoked`, `subscription_plan.price_changed`, `clinic.activated`, `clinic.deactivated`, `subscription.extended_months`, `subscription.extended_trial`, `subscription.sweep_triggered`.
+
+### GET /super-admin/settings
+
+Lists platform-wide configuration used by the subscription system.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    { "key": "subscription.currency", "value": "INR", "description": "Default subscription currency (ISO 4217)", "updated_at": "2026-08-01T00:00:00.000Z" },
+    { "key": "subscription.expiring_warning_days", "value": "7", "description": "Days before expiry when a subscription is flagged EXPIRING", "updated_at": "2026-08-01T00:00:00.000Z" },
+    { "key": "subscription.max_months_per_payment", "value": "12", "description": "Maximum months payable in a single subscription payment", "updated_at": "2026-08-01T00:00:00.000Z" }
+  ],
+  "editable_keys": [
+    { "key": "subscription.expiring_warning_days", "description": "Days before expiry when a subscription is flagged EXPIRING" },
+    { "key": "subscription.max_months_per_payment", "description": "Maximum months payable in a single subscription payment" },
+    { "key": "subscription.currency", "description": "Default subscription currency (ISO 4217)" }
+  ]
+}
+```
+
+`items` only lists rows actually present in `platform_settings` (can be empty on a fresh install, in which case the coded defaults above apply); `editable_keys` is the static allow-list for `PATCH` below regardless of what's stored.
+
+### PATCH /super-admin/settings
+
+Rate limited `30/min`. Updates exactly one of the three editable keys above.
+
+**Request body:** `{ "key": "subscription.expiring_warning_days", "value": "10" }` — `value` must be a non-negative integer string for every key **except** `subscription.currency` (any 1–255 char string).
+
+**Response `200`** — `{ "message": "Setting updated.", "key": "subscription.expiring_warning_days", "value": "10" }`
+
+**Errors:** `400 VALIDATION_ERROR`, `400 SETTING_NOT_EDITABLE` (`key` isn't one of the 3 allow-listed keys).
+
+**Side effects:** upserts `platform_settings`; writes an audit log row (`action: "platform_setting.updated"`, `changes: { from, to }`).
+
+### GET /super-admin/statistics
+
+Single aggregate snapshot, no params.
+
+**Response `200`**
+
+```json
+{
+  "clinics": { "total": 42, "by_status": { "TRIAL": 12, "ACTIVE": 25, "EXPIRED": 3, "INACTIVE": 2 }, "expiring_within_days": 4, "expiring_window_days": 7 },
+  "revenue_inr": { "total_collected": 128450.00, "current_month": 12250.00, "previous_month": 11250.00, "paid_payment_count": 261, "monthly_breakdown": [ { "month": "2025-09", "amount": 9800.00, "count": 200 }, { "month": "2026-08", "amount": 12250.00, "count": 250 } ] },
+  "mrr_estimate_inr": 1225.00,
+  "current_plan": { "name": "Clinic Monthly", "monthly_amount": 49.00, "currency": "INR" }
+}
+```
+
+`clinics.by_status` always reports all 4 stored statuses (`0` where empty) — `EXPIRING` never appears here, it's a display-only state. `monthly_breakdown` covers the trailing 12 months of verified payments, keyed by `verified_at`. The `_inr` key names are fixed regardless of the platform's actually configured currency.
+
+### GET /super-admin/super-admins
+
+Not paginated. Lists every grant, including revoked ones (full grant history), active grants first.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    { "user_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d", "email": "admin@medinexa.io", "name": "Platform Admin", "account_status": "active", "revoked": false, "granted_by_email": null, "granted_at": "2026-06-01T00:00:00.000Z" },
+    { "user_id": "8b2c4d5e-6f70-4a1b-9c2d-3e4f5a6b7c8d", "email": "ops@medinexa.io", "name": "Ops Lead", "account_status": "active", "revoked": true, "granted_by_email": "admin@medinexa.io", "granted_at": "2026-07-10T09:00:00.000Z" }
+  ]
+}
+```
+
+### POST /super-admin/super-admins
+
+Rate limited `20/min`. Grants Super Admin to an **existing** `sys_admin`-role account (does not create users, and cannot promote a non-`sys_admin` account).
+
+**Request body:** `{ "email": "ops@medinexa.io" }`
+
+**Response `201`** — `{ "message": "Super Admin granted.", "user_id": "8b2c4d5e-6f70-4a1b-9c2d-3e4f5a6b7c8d", "email": "ops@medinexa.io" }`
+
+**Errors:** `400 VALIDATION_ERROR`, `404 USER_NOT_FOUND`, `409 NOT_SYS_ADMIN` (account exists but its role isn't `sys_admin`).
+
+Re-granting a previously-revoked admin is idempotent (just clears `revoked_at`).
+
+### DELETE /super-admin/super-admins/:userId
+
+Rate limited `20/min`. Revokes an active grant — never deletes the user account.
+
+**Response `204 No Content`**
+
+**Errors:** `409 CANNOT_REVOKE_SELF` (revoking your own grant), `404 SUPER_ADMIN_NOT_FOUND` (no active grant for this user).
+
+### GET /super-admin/plans
+
+Not paginated — full version history, newest first. Each item: `{ id, name, billing_period, monthly_amount, currency, trial_months, is_active, effective_from, created_by_email, created_at }`. Exactly one row has `is_active: true` at any time.
+
+### POST /super-admin/plans
+
+Rate limited `30/min`. Publishes a new active plan version (a price change) — existing subscriptions and already-created payments keep their own amount snapshots; only payments initiated **after** this call use the new price.
+
+**Request body:**
+
+```json
+{ "name": "Clinic Monthly", "monthly_amount": 59, "currency": "INR", "trial_months": 2 }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string? | 1–100 chars, defaults to `"Clinic Monthly"` |
+| `monthly_amount` | number | required, `> 0`, max `1,000,000` |
+| `currency` | string? | 3 chars, defaults to `"INR"` |
+| `trial_months` | integer? | 0–12, defaults to `2` |
+
+**Response `201`** — `{ "message": "New plan version published. It applies to payments initiated from now on; existing subscriptions are unaffected.", "plan_id": "...", "monthly_amount": 59, "currency": "INR", "trial_months": 2 }`
+
+**Errors:** `400 VALIDATION_ERROR`.
+
+### GET /super-admin/payments
+
+Platform-wide payment history across all clinics. Paginated (cursor). `?clinic_id=&status=&from=&to=&limit=&cursor=`. Each item is a Subscription Payment object plus a joined `clinic_name`.
+
+### POST /super-admin/system/process-subscriptions
+
+Rate limited `30/min`. Manually triggers the same sweep that otherwise runs automatically **every hour in the background** (started at server boot — see below) — useful to force an immediate pass rather than as a required trigger.
+
+Auth: **either** header `x-cron-secret` exactly matching the server's `CRON_SECRET` env var (for an external scheduler, no bearer token needed), **or** a Super Admin bearer token. If `CRON_SECRET` isn't configured, only the Super Admin path works.
+
+**Response `200`** — `{ "message": "Subscription sweep complete.", "result": { "expiredTrials": 2, "expiredSubscriptions": 1, "expiringNotified": 3 } }`
+
+The sweep: expires any `TRIAL` past `trial_ends_at` or `ACTIVE` past `period_end` (→ `EXPIRED`, `subscription_history` row, `subscription_expired` notification); and sends a one-time `subscription_expiring` notification to any `TRIAL`/`ACTIVE` subscription newly entering the warning window. A Super-Admin-triggered sweep is itself audit-logged (`subscription.sweep_triggered`); a cron-secret-triggered one is not.
+
+**Errors:** (only when neither auth path is satisfied) `401 UNAUTHORIZED`, `403 INSUFFICIENT_ROLE`, `403 NOT_SUPER_ADMIN`.
+
+---
+
+## Webhooks
+
+### POST /webhooks/subscription-payments
+
+Payment-gateway webhook receiver — the automatic counterpart to the client-driven `POST /clinics/:clinicId/subscription/payments/:paymentId/verify`. No bearer auth; authentication *is* a signature check.
+
+**Auth:** header `x-webhook-signature` must equal `HMAC-SHA256(secret, rawRequestBody)` hex digest, where `secret` is `WEBHOOK_SECRET` (or `SUBSCRIPTION_PAYMENT_SECRET`) from the environment. If neither is configured, the route fails closed with `503`. Rate limited `120/min` per source IP (no auth context to key by user).
+
+**Request body** (only these fields are read; a real gateway payload carries more, all ignored — amounts are never trusted from the webhook):
+
+```json
+{ "event": "payment.captured", "payload": { "payment": { "entity": { "order_id": "order_xxxxxxxxxxxx", "id": "pay_xxxxxxxxxxxx" } } } }
+```
+
+**Response — always `200`** (so the gateway never retry-storms on a business-logic mismatch):
+
+| Case | Body |
+|---|---|
+| Applied | `{ "received": true, "handled": true, "duplicate": false, "payment": { /* Subscription Payment object */ } }` |
+| Already-`PAID` replay | `{ "received": true, "handled": true, "duplicate": true, "payment": { /* Subscription Payment object */ } }` |
+| Invalid JSON body | `{ "received": true, "handled": false, "reason": "invalid_json" }` |
+| No `order_id` in payload | `{ "received": true, "handled": false, "reason": "missing_order_id" }` |
+| `order_id` matches no payment | `{ "received": true, "handled": false, "reason": "unknown_order" }` |
+
+**Errors (non-200):** `503 WEBHOOK_NOT_CONFIGURED` (no secret configured on the server — this specific response has no `request_id`, unlike every other error in this API), `401 INVALID_WEBHOOK_SIGNATURE`, `409 PAYMENT_FAILED` (matched payment was already `FAILED`), `429 RATE_LIMITED`.
+
+**Side effects (on "applied" only, one transaction, row locked):** `subscription_payments` → `PAID`, `verification_method: "webhook"`, `verified_by: <gateway payment id>`; `clinic_subscriptions` → `ACTIVE` (period extended, same "never lose unused time" stacking as manual verify); `subscription_history` row (`source: "webhook"`); in-app `subscription_activated` notification to the owner. No email/push is sent from this path either. Replays and unknown/malformed payloads write nothing.
+
+**Background job note:** subscription expiry/warning processing is **not** something you need to hit an endpoint for — `src/instrumentation.ts` starts an in-process hourly sweep at server boot (first run 30s after boot) that calls the exact same logic as `POST /super-admin/system/process-subscriptions` above.
+
+---
+
 ## Error codes
 
 | Code | Status | Meaning |
@@ -3634,12 +4219,17 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `FILE_REQUIRED` / `FILE_EMPTY` | 400 | Missing or empty upload field |
 | `INVALID_PUBLIC_ID` | 400 | Photo `public_id` was not issued by a signature endpoint |
 | `INVALID_LICENSE_TYPE` | 400 | License upload `:type` is not one of `trade-license`, `drug-license`, `clinical-establishment-registration` |
+| `SETTING_NOT_EDITABLE` | 400 | Super Admin tried to update a platform setting key outside the editable allow-list |
+| `INVALID_MONTHS` | 400 | Subscription payment `months` outside the platform's configured `max_months_per_payment` |
+| `PAYMENT_SIGNATURE_INVALID` | 400 | Subscription payment gateway signature didn't verify (marks the payment `FAILED`) |
 | `UNAUTHORIZED` | 401 | No/invalid token |
 | `INVALID_CREDENTIALS` | 401 | Wrong email/password |
 | `ACCOUNT_DISABLED` | 401/403 | Account not `active` |
 | `INVALID_OTP` / `OTP_MAX_ATTEMPTS` | 401 | OTP failure |
 | `RESET_TOKEN_INVALID` | 400 | Reset token missing, already used, or unknown |
 | `REFRESH_TOKEN_INVALID` | 401 | Refresh token invalid/expired/revoked |
+| `INVALID_WEBHOOK_SIGNATURE` | 401 | Subscription payment webhook's `x-webhook-signature` header didn't match |
+| `SUBSCRIPTION_INACTIVE` | 402 | Clinic's subscription is inactive (trial/period elapsed, or manually deactivated) — action blocked. See [Subscriptions & billing](#subscriptions--billing) |
 | `INSUFFICIENT_ROLE` | 403 | Authenticated but wrong role |
 | `PERMISSION_DENIED` | 403 | `branch_staff` lacks the required branch permission for the action |
 | `NOT_CLINIC_OWNER` | 403 | Not the owner of the clinic/branch |
@@ -3647,7 +4237,9 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `NO_APPOINTMENT_RELATIONSHIP` | 403 | No appointment link with the patient |
 | `FEE_OWNER_CONTROLLED` | 403 | Doctor tried to change the fee |
 | `INVALID_SIGNED_URL` | 403 | Bad/expired file URL signature |
+| `NOT_SUPER_ADMIN` | 403 | `sys_admin` role present but no active `super_admins` grant |
 | `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` / `EXCEPTION_NOT_FOUND` / `CLOSURE_NOT_FOUND` / `TEST_NOT_FOUND` / `SCHEDULE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
+| `USER_NOT_FOUND` / `SUPER_ADMIN_NOT_FOUND` / `PAYMENT_NOT_FOUND` / `SUBSCRIPTION_NOT_FOUND` | 404 | Super Admin / subscription resource missing |
 | `INVITE_EXPIRED` / `OTP_EXPIRED` / `RESET_TOKEN_EXPIRED` | 410 | Expired one-time code |
 | `FILE_TOO_LARGE` | 413 | Upload exceeds size limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Upload has a disallowed MIME type |
@@ -3672,10 +4264,15 @@ Public, but requires a valid signature. `key` is the encoded file name; query pa
 | `TEST_CODE_ALREADY_EXISTS` | 409 | Lab test code already exists for this clinic |
 | `TEST_ALREADY_CONFIGURED_FOR_BRANCH` | 409 | Lab test is already configured for this branch |
 | `PAYMENT_ALREADY_COLLECTED` | 409 | Lab test payment was already collected |
+| `NOT_SYS_ADMIN` | 409 | Tried to grant Super Admin to an account whose role isn't `sys_admin` |
+| `CANNOT_REVOKE_SELF` | 409 | Super Admin tried to revoke their own grant |
+| `CLINIC_ALREADY_DEACTIVATED` / `CLINIC_NOT_DEACTIVATED` | 409 | Clinic deactivation state doesn't match the requested action |
+| `PAYMENT_ALREADY_VERIFIED` / `PAYMENT_FAILED` | 409 | Subscription payment already `PAID` / already `FAILED` — cannot be re-verified |
 | `OUTSIDE_DOCTOR_AVAILABILITY` / `DATE_IN_PAST` / `OUTSIDE_SCHEDULE` | 422 | Booking rules violated |
 | `TRADE_LICENSE_NOT_VALIDATED` | 422 | `POST /clinics` without a `trade_license_validation_status: "VALID"` from a prior validate call |
 | `PRESCRIPTION_REQUIRED` | 422 | Lab test requires a prescription but none was provided |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
+| `PAYMENT_VERIFICATION_UNAVAILABLE` / `WEBHOOK_NOT_CONFIGURED` | 503 | Server's subscription payment/webhook secret isn't configured |
 
 ---
 
@@ -3705,6 +4302,21 @@ Any other transition returns `409 INVALID_STATUS_TRANSITION`. The `paid → comp
 | `APPROVED` | `CANCELLED` | `POST /lab-test-appointments/:id/cancel` | patient, clinic_owner, branch_staff |
 
 Any other transition returns `409 INVALID_STATUS_TRANSITION`. The `APPROVED → COMPLETED` transition additionally requires `appointment_date`/`start_time` to have passed (branch timezone), else `409 APPOINTMENT_NOT_YET_DUE`.
+
+### Subscription status transitions
+
+| From | To | Trigger | Source |
+|---|---|---|---|
+| — | `TRIAL` | Clinic created / first subscription read | system |
+| `TRIAL` | `ACTIVE` | Payment verified/webhook, or Super Admin `extend` (`months`) | payment / webhook / super_admin |
+| `TRIAL` | `EXPIRED` | `trial_ends_at` passed (hourly sweep) | system |
+| `ACTIVE` | `EXPIRED` | `period_end` passed (hourly sweep) | system |
+| `ACTIVE` / `TRIAL` / `EXPIRED` | `INACTIVE` | `POST /super-admin/clinics/:clinicId/deactivate` | super_admin |
+| `INACTIVE` | `TRIAL` / `ACTIVE` / `EXPIRED` | `POST /super-admin/clinics/:clinicId/activate` (restores underlying state) | super_admin |
+| `EXPIRED` | `ACTIVE` | Payment verified/webhook, `reactivate` (if a usable paid payment exists), or Super Admin `extend` | payment / webhook / super_admin |
+| `EXPIRED` / `TRIAL` | `TRIAL` | Super Admin `extend` (`trial_days`) | super_admin |
+
+`EXPIRING` is never a stored transition target — it's a derived display state (see [Subscriptions & billing](#subscriptions--billing)). Every transition writes a `subscription_history` row.
 
 ---
 
@@ -3752,4 +4364,14 @@ POST /clinic/lab-test-appointments/:id/approve   {precautions: ["Fasting require
 POST /clinic/lab-test-appointments/:id/payment/collect   {reference_no: "CASH-001"}
 POST /clinic/lab-test-appointments/:id/complete
 GET  /patient/lab-test-appointments/:id      (final status: COMPLETED)
+```
+
+### Clinic subscription: trial → payment → active
+
+```
+GET  /clinics/:clinicId/subscription/trial                      → is_trial: true, days_remaining: 8
+POST /clinics/:clinicId/subscription/payments   {months: 1}      → payment PENDING, provider_order_id
+  ... pay on the gateway using provider_order_id ...
+POST /clinics/:clinicId/subscription/payments/:paymentId/verify  {provider_payment_id, provider_signature}
+GET  /clinics/:clinicId/subscription                            → status: "ACTIVE", is_trial: false
 ```

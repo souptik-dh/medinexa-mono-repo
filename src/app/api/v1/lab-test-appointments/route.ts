@@ -17,6 +17,7 @@ import {
   detailsEmailHtml,
 } from "@/lib/notifications";
 import { runIdempotent } from "@/lib/idempotency";
+import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict, notFound } from "@/lib/errors";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
@@ -66,6 +67,9 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
     }
     const branch = branchRows[0];
+
+    // New bookings are rejected while the clinic's subscription is inactive.
+    await assertClinicOperational(pool, branch.clinic_id);
 
     const [bltRows] = await pool.query<RowDataPacket[]>(
       `SELECT blt.*, lt.name AS test_name, lt.status AS test_status

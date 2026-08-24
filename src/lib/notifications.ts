@@ -16,7 +16,11 @@ export type NotificationType =
   | "lab_test_rejected"
   | "lab_test_cancelled"
   | "lab_test_completed"
-  | "lab_test_payment_success";
+  | "lab_test_payment_success"
+  | "subscription_expiring"
+  | "subscription_expired"
+  | "subscription_activated"
+  | "subscription_deactivated";
 
 export async function createNotification(
   db: Pick<PoolConnection, "query">,
@@ -125,6 +129,33 @@ export function pushContentFor(
       return {
         title: "Payment received",
         body: `Payment for your lab test${when ? ` on ${when}` : ""} has been received.`,
+      };
+    case "subscription_expiring":
+      return {
+        title: "Subscription expiring soon",
+        body:
+          typeof payload.days_left === "number"
+            ? `Your MediBook subscription expires in ${payload.days_left} day${payload.days_left === 1 ? "" : "s"}. Renew now to keep your clinic online.`
+            : "Your MediBook subscription is expiring soon. Renew now to keep your clinic online.",
+      };
+    case "subscription_expired":
+      return {
+        title: "Subscription expired",
+        body: "Your MediBook subscription has expired. Clinic operations are paused until you renew.",
+      };
+    case "subscription_activated":
+      return {
+        title: "Subscription active",
+        body: typeof payload.period_end === "string"
+          ? `Your MediBook subscription is active through ${String(payload.period_end).slice(0, 10)}.`
+          : "Your MediBook subscription is active. Welcome aboard!",
+      };
+    case "subscription_deactivated":
+      return {
+        title: "Clinic deactivated",
+        body: typeof payload.reason === "string" && payload.reason.length > 0
+          ? `Your clinic has been deactivated by the platform: ${payload.reason}`
+          : "Your clinic has been deactivated by the platform. Contact support for details.",
       };
     default:
       return {

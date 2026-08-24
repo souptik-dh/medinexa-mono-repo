@@ -4,6 +4,7 @@ import { requireRoles } from "@/lib/auth";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
 import { createPatientNotification, sendEmail, detailsEmailHtml } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
+import { assertClinicOperational } from "@/lib/subscriptions";
 import { notFound } from "@/lib/errors";
 
 export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
@@ -11,6 +12,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
 
   await withTransaction(async (conn) => {
     const appt = await getAppointmentInScope(conn, ctx.params.id, auth);
+    await assertClinicOperational(conn, appt.clinic_id);
     await assertBranchStaffPermission(conn, auth, appt.branch_id, "appointments:confirm");
     await transition(conn, appt, "confirmed", auth.userId, ["pending"]);
     await createPatientNotification(conn, appt.patient_id, "booking_confirmed", {

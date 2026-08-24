@@ -10,6 +10,7 @@ import {
 } from "@/lib/lab-tests";
 import { createPatientNotification, sendEmail, detailsEmailHtml } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
+import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest } from "@/lib/errors";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
@@ -24,6 +25,10 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const body = parseBody(rejectSchema, await ctx.request.json());
 
   const appointment = await getLabTestAppointmentInScope(pool, id, auth);
+
+  if (auth.role !== "sys_admin") {
+    await assertClinicOperational(pool, appointment.clinic_id);
+  }
 
   if (auth.role === "branch_staff") {
     await assertBranchStaffPermission(pool, auth, appointment.branch_id, "lab_appointments:reject");

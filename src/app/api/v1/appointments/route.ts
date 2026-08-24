@@ -19,6 +19,7 @@ import {
   findCoveringLeave,
 } from "@/lib/availability";
 import { fetchPage } from "@/lib/pagination";
+import { assertClinicOperational } from "@/lib/subscriptions";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -133,6 +134,9 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     );
     const branch = branches[0];
     if (!branch) throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
+
+    // New bookings are rejected while the clinic's subscription is inactive.
+    await assertClinicOperational(pool, branch.clinic_id);
 
     const tz = branch.timezone as string;
     const today = todayInTz(tz);
