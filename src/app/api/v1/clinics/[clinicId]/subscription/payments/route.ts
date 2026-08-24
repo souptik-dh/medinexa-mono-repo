@@ -47,7 +47,7 @@ const initiateSchema = z.object({
  * Initiates a subscription payment. The amount is computed SERVER-SIDE from the
  * active plan — the client cannot influence pricing or payment status.
  */
-export const POST = api({ rateLimit: 20 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner"]);
   await getOwnedClinic(pool, ctx.params.clinicId, auth.userId, { skipSubscriptionGate: true });
   const body = parseBody(initiateSchema, await readJson(ctx.request));
