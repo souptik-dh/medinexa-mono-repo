@@ -143,15 +143,45 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     if (body.date < today) {
       throw unprocessable("DATE_IN_PAST", "The appointment date is in the past.");
     }
+    const branchWeekday = weekdayInTz(body.date, tz);
+
+    // None of these reads depends on another's result (all key off doctor_id/branch_id/
+    // date, known already), so they run as one round trip instead of four sequential
+    // ones. Their errors are still evaluated and thrown below in the same priority
+    // order the original sequential checks used.
+    const [branchSchedule, [leaveRows], [templates], [assignments], selfRows] = await Promise.all([
+      getBranchSchedule(pool, body.branch_id, { from: body.date, to: body.date }),
+      pool.query<Row[]>(
+        `SELECT dse.id FROM doctor_slot_exceptions dse
+           JOIN doctor_branch_assignments dba ON dba.id = dse.doctor_branch_assignment_id
+          WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1
+            AND dse.status = 'active' AND dse.excluded_date <= ? AND COALESCE(dse.end_date, dse.excluded_date) >= ?
+          LIMIT 1`,
+        [body.doctor_id, body.branch_id, body.date, body.date],
+      ),
+      pool.query<Row[]>(
+        `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes, dba.slot_type
+           FROM doctor_slot_templates dst
+           JOIN doctor_branch_assignments dba ON dba.id = dst.doctor_branch_assignment_id
+          WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1
+            AND dst.weekday = ? AND dst.start_date <= ? AND (dst.end_date IS NULL OR dst.end_date >= ?)`,
+        [body.doctor_id, body.branch_id, branchWeekday, body.date, body.date],
+      ),
+      pool.query<Row[]>(
+        `SELECT dba.id, dba.fee_amount, dba.currency
+           FROM doctor_branch_assignments dba
+           JOIN doctors d ON d.id = dba.doctor_id AND d.deleted_at IS NULL
+          WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1`,
+        [body.doctor_id, body.branch_id],
+      ),
+      body.patient_details
+        ? Promise.resolve(null)
+        : pool.query<Row[]>(`SELECT name, phone FROM users WHERE id = ?`, [auth.userId]).then(([rows]) => rows),
+    ]);
 
     // Branch-level gate checked first — it's the outermost constraint (a doctor can
     // never be bookable on a day/date the branch itself isn't open), so it gets its
     // own conflict code rather than being folded into DOCTOR_ON_LEAVE.
-    const branchWeekday = weekdayInTz(body.date, tz);
-    const branchSchedule = await getBranchSchedule(pool, body.branch_id, {
-      from: body.date,
-      to: body.date,
-    });
     if (!isWeekdayOpen(branchSchedule, branchWeekday) || findCoveringLeave(body.date, branchSchedule.closures)) {
       throw conflict("CLINIC_CLOSED", "The clinic is closed on the selected date.");
     }
@@ -160,27 +190,10 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     // an active leave gets the specific DOCTOR_ON_LEAVE conflict rather than being folded
     // into the generic OUTSIDE_DOCTOR_AVAILABILITY case — this is what stops a client from
     // bypassing the disabled calendar day by calling the booking API directly.
-    const [leaveRows] = await pool.query<Row[]>(
-      `SELECT dse.id FROM doctor_slot_exceptions dse
-         JOIN doctor_branch_assignments dba ON dba.id = dse.doctor_branch_assignment_id
-        WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1
-          AND dse.status = 'active' AND dse.excluded_date <= ? AND COALESCE(dse.end_date, dse.excluded_date) >= ?
-        LIMIT 1`,
-      [body.doctor_id, body.branch_id, body.date, body.date],
-    );
     if (leaveRows[0]) {
       throw conflict("DOCTOR_ON_LEAVE", "Doctor is unavailable on the selected date.");
     }
 
-    const wd = weekdayInTz(body.date, tz);
-    const [templates] = await pool.query<Row[]>(
-      `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes, dba.slot_type
-         FROM doctor_slot_templates dst
-         JOIN doctor_branch_assignments dba ON dba.id = dst.doctor_branch_assignment_id
-        WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1
-          AND dst.weekday = ? AND dst.start_date <= ? AND (dst.end_date IS NULL OR dst.end_date >= ?)`,
-      [body.doctor_id, body.branch_id, wd, body.date, body.date],
-    );
     const template = templates[0];
     if (!template) {
       throw unprocessable(
@@ -222,13 +235,6 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       scheduledTime = body.time;
     }
 
-    const [assignments] = await pool.query<Row[]>(
-      `SELECT dba.id, dba.fee_amount, dba.currency
-         FROM doctor_branch_assignments dba
-         JOIN doctors d ON d.id = dba.doctor_id AND d.deleted_at IS NULL
-        WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1`,
-      [body.doctor_id, body.branch_id],
-    );
     const assignment = assignments[0];
     if (!assignment) throw notFound("DOCTOR_NOT_FOUND", "Doctor is not assigned to this branch.");
 
@@ -236,8 +242,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     // (the common "booking for myself" case).
     let patientDetails = body.patient_details;
     if (!patientDetails) {
-      const [selfRows] = await pool.query<Row[]>(`SELECT name, phone FROM users WHERE id = ?`, [auth.userId]);
-      const self = selfRows[0];
+      const self = selfRows?.[0];
       patientDetails = { relationship: "self", name: self?.name ?? "Self", phone: self?.phone ?? null, age: null, gender: null };
     }
 
@@ -314,28 +319,30 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       }
     }
 
-    const [rows] = await pool.query<Row[]>(
-      `SELECT a.*, ap.relationship AS visitor_relationship, ap.name AS visitor_name,
-              ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender
-         FROM appointments a
-         LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
-        WHERE a.id = ?`,
-      [id],
-    );
-
-    const [details] = await pool.query<Row[]>(
-      `SELECT u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
-              d.name AS doctor_name, b.name AS branch_name
-         FROM appointments a
-         JOIN users u ON u.id = a.patient_id
-         JOIN doctors d ON d.id = a.doctor_id
-         JOIN branches b ON b.id = a.branch_id
-        WHERE a.id = ?`,
-      [id],
-    );
+    // Independent reads — none depends on the others — so they run as one round trip.
+    const [[rows], [details], recipients] = await Promise.all([
+      pool.query<Row[]>(
+        `SELECT a.*, ap.relationship AS visitor_relationship, ap.name AS visitor_name,
+                ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender
+           FROM appointments a
+           LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
+          WHERE a.id = ?`,
+        [id],
+      ),
+      pool.query<Row[]>(
+        `SELECT u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
+                d.name AS doctor_name, b.name AS branch_name
+           FROM appointments a
+           JOIN users u ON u.id = a.patient_id
+           JOIN doctors d ON d.id = a.doctor_id
+           JOIN branches b ON b.id = a.branch_id
+          WHERE a.id = ?`,
+        [id],
+      ),
+      branchContactEmails(pool, body.branch_id),
+    ]);
     const info = details[0];
     if (info) {
-      const recipients = await branchContactEmails(pool, body.branch_id);
       const isForSelf = patientDetails.relationship === "self";
       const subject = `New appointment booked — ${patientDetails.name} with Dr. ${info.doctor_name}`;
       const emailBody = [
@@ -373,7 +380,9 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
           },
         ],
       });
-      await Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody, emailHtmlBody)));
+      // sendEmail already catches its own errors — no reason to hold the response on
+      // Brevo's round trip once the booking itself is committed.
+      void Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody, emailHtmlBody)));
     }
 
     return { status: 201, body: serializeAppointment(rows[0]) };

@@ -264,8 +264,10 @@ export function computeLiveState(sub: Row, warningDays: number): LiveSubscriptio
  * Never deletes anything — it only restricts operations.
  */
 export async function assertClinicOperational(db: Db, clinicId: string): Promise<void> {
-  const sub = await ensureClinicSubscription(db, clinicId);
-  const settings = await getPlatformSettings(db);
+  const [sub, settings] = await Promise.all([
+    ensureClinicSubscription(db, clinicId),
+    getPlatformSettings(db),
+  ]);
   const live = computeLiveState(sub, settings.expiring_warning_days);
   if (live.blocked) {
     throw new ApiError(

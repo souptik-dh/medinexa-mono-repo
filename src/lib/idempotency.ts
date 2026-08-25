@@ -43,9 +43,10 @@ export async function runIdempotent<T>(
 
   if (claimed) {
     if (Math.random() < 0.01) {
-      await pool.query(
-        `DELETE FROM idempotency_keys WHERE created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 24 HOUR)`,
-      );
+      // Background sweep — never let it hold up the response it happened to land on.
+      void pool
+        .query(`DELETE FROM idempotency_keys WHERE created_at < DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 24 HOUR)`)
+        .catch(() => {});
     }
     const store = async (status: number, body: unknown) => {
       await pool.execute(

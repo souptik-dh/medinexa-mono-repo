@@ -46,9 +46,13 @@ export async function notifyBranchStaff(
     `SELECT user_id FROM branch_staff WHERE branch_id = ?`,
     [branchId],
   );
-  for (const row of rows) {
-    await createNotification(db, row.user_id, type, payload, branchId);
-  }
+  if (rows.length === 0) return;
+  const payloadJson = JSON.stringify(payload);
+  const values = rows.map((row) => [newId(), row.user_id, branchId, type, payloadJson]);
+  await db.query(
+    `INSERT INTO notifications (id, user_id, branch_id, type, payload_json) VALUES ?`,
+    [values],
+  );
 }
 
 export interface PushMessage {

@@ -70,6 +70,18 @@ export function checkRateLimit(key: string, limitPerMin: number): void {
   hits.set(key, arr);
 }
 
+const SLOW_REQUEST_MS = Number(process.env.SLOW_API_THRESHOLD_MS) || 200;
+
+/** Grep for "SLOW" to find requests over the threshold; every request is logged. */
+function logRequestTiming(method: string, path: string, status: number, durationMs: number, reqId: string): void {
+  const line = `[api] ${reqId} ${method} ${path} ${status} ${durationMs.toFixed(1)}ms`;
+  if (durationMs > SLOW_REQUEST_MS) {
+    console.warn(`${line} SLOW`);
+  } else {
+    console.log(line);
+  }
+}
+
 function errorEnvelope(err: unknown, reqId: string): Response {
   if (err instanceof ApiError) {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -96,7 +108,9 @@ export function api<P extends Record<string, string> = Record<string, string>>(
 ) {
   return async (request: NextRequest, context: { params: Promise<P> }): Promise<Response> => {
     const reqId = `req_${randomUUID().slice(0, 8)}`;
+    const start = performance.now();
     const params = await context.params;
+    let response: Response;
     try {
       const auth = await parseAuthContext(request);
       if (opts?.rateLimit != null) {
@@ -108,10 +122,14 @@ export function api<P extends Record<string, string> = Record<string, string>>(
         const key = `u:${auth.userId}`;
         checkRateLimit(key, 200);
       }
-      return await fn({ request, params, reqId, auth });
+      response = await fn({ request, params, reqId, auth });
     } catch (err) {
-      return errorEnvelope(err, reqId);
+      response = errorEnvelope(err, reqId);
     }
+    const durationMs = performance.now() - start;
+    logRequestTiming(request.method, request.nextUrl.pathname, response.status, durationMs, reqId);
+    response.headers.set("X-Response-Time", `${durationMs.toFixed(1)}ms`);
+    return response;
   };
 }
 
