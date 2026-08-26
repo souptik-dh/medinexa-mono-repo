@@ -4,7 +4,6 @@ import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 import { loadStaffPermissions, hasPermission } from "@/lib/permissions";
 import { getDoctorSpecializations, specializationDisplayName } from "@/lib/specializations";
-import { getDoctorClinics } from "@/lib/clinics";
 
 // Lists doctors already actively assigned somewhere in this clinic - used by
 // the "add existing doctor to another branch" fast-track picker, so clinic
