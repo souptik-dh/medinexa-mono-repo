@@ -1465,10 +1465,11 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
 
 | Field | Type | Notes |
 |---|---|---|
-| `name` | string | required |
-| `specialization_ids` | string[] | required, 1–10 `doctor_specializations.id` values (see `GET /doctors/specializations`; use `POST /doctors/specializations` first if the one you need doesn't exist yet) |
-| `email` | string | required |
-| `phone` | string? | max 32 |
+| `doctor_id` | string? | a `doctors.id` from `GET /clinics/:clinicId/doctors` — picks an existing clinic doctor and skips straight to the direct-assignment fast-track below, looking up their name/email server-side. Either `doctor_id`, or both `name` and `email`, are required. |
+| `name` | string? | required unless `doctor_id` is given |
+| `specialization_ids` | string[] | required, 1–10 `doctor_specializations.id` values (see `GET /doctors/specializations`; use `POST /doctors/specializations` first if the one you need doesn't exist yet) — for the `doctor_id` fast-track this is the set of specializations to assign at *this* branch, independent of the doctor's specializations at other branches |
+| `email` | string? | required unless `doctor_id` is given |
+| `phone` | string? | max 32, ignored when `doctor_id` is given |
 | `reg_no` | string? | max 64, optional — pre-fill the doctor's registration number; if omitted, the doctor supplies it on accept |
 | `smc_name` | string? | max 255, optional — State Medical Council name |
 | `doctor_degree` | string? | max 100, optional — e.g. `MBBS, MD` |
@@ -1491,10 +1492,11 @@ A doctor's booking behavior for a branch is controlled by `slot_type` on the ass
 - **`fixed`** (default) — the patient picks one specific `HH:MM` slot from `GET /doctors/:id/availability`, and `POST /appointments` requires a `time` that aligns to the doctor's slot template.
 - **`sequential`** ("as per bookings") — the doctor only defines a time range and slot duration (e.g. 7 PM–9 PM, 15 min slots); patients do **not** choose a time. `POST /appointments` omits `time`, and the server assigns the next free slot in order: 1st booking gets 7:00–7:15, 2nd gets 7:15–7:30, 3rd gets 7:30–7:45, and so on. If the range is full for that date, `POST /appointments` returns `409 DOCTOR_FULLY_BOOKED`.
 
-**Response `201`**
+**Response `201`** — normal case: an invite is created and emailed to the doctor.
 
 ```json
 {
+  "type": "invite",
   "id": "7c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f",
   "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
   "email": "dr.smith@example.com",
@@ -1507,7 +1509,64 @@ A doctor's booking behavior for a branch is controlled by `slot_type` on the ass
 }
 ```
 
-**Errors:** `409 INVITE_ALREADY_PENDING`, `409 DOCTOR_ALREADY_ASSIGNED`, `422 SPECIALIZATION_NOT_FOUND`.
+#### Same-clinic, different-branch fast-track
+
+If the doctor already has an **active** assignment at another branch of the **same clinic** — identified either directly by `doctor_id` (pick from `GET /clinics/:clinicId/doctors`) or by `email` match (the doctor already accepted an invite and is an approved/associated doctor of this clinic, just at a different branch) — the invitation process is skipped entirely:
+
+- No `doctor_invites` row, invite code, or accept link is created.
+- No new `users`/`doctors` row is created — the doctor keeps using their existing account.
+- A new `doctor_branch_assignments` row (plus its slot template) is created directly for the target branch, using the request body's `fee_amount`, `currency`, `slot_type`, and `slot_template`.
+- No invite email is sent. Instead the doctor receives an **acknowledgement-only** email ("You have been added to \{branch\} under \{clinic\}...") with no invite code or accept link.
+
+The `doctor_id` path is stricter than the `email` path: it 404s (`DOCTOR_NOT_IN_CLINIC`) if that doctor has no active assignment anywhere in this clinic, rather than silently falling back to sending a normal invite — since a `doctor_id` picked from `GET /clinics/:clinicId/doctors` is only ever meant to add an already-known clinic doctor to a new branch.
+
+**Response `201`** — direct-assignment case:
+
+```json
+{
+  "type": "direct_assignment",
+  "id": "9b2e1a3c-...",
+  "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+  "email": "dr.smith@example.com",
+  "doctor_id": "1f4a6b8c-...",
+  "specializations": [{ "id": "a1b2c3d4-...", "name": "Cardiology" }],
+  "status": "active"
+}
+```
+
+**Errors:** `409 INVITE_ALREADY_PENDING`, `409 DOCTOR_ALREADY_ASSIGNED` (doctor already assigned to *this* branch — applies to both the normal and fast-track cases), `404 DOCTOR_NOT_IN_CLINIC` (`doctor_id` given but has no active assignment anywhere in this clinic), `422 SPECIALIZATION_NOT_FOUND`.
+
+### GET /clinics/:clinicId/doctors
+
+Auth: `clinic_owner` (must own the clinic) **or** `branch_staff` with `doctors:manage` (their branch must belong to this clinic). Lists doctors already actively assigned somewhere in this clinic — powers the "add existing doctor" picker used to build the `doctor_id` fast-track request above, so clinic staff can pick a doctor instead of retyping their email from memory. Doctor `email` is intentionally not exposed here.
+
+**Query:** `?exclude_branch_id=` — optional; drops doctors already active at that branch (pass the branch you're about to add to, so already-assigned doctors don't show up as pickable).
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "1f4a6b8c-...",
+      "name": "Dr. Smith",
+      "specialization": "Cardiology",
+      "specializations": [{ "id": "a1b2c3d4-...", "name": "Cardiology" }],
+      "phone": "+919900000001",
+      "photo_url": null,
+      "doctor_degree": "MBBS, MD",
+      "smc_name": "Medical Council of India",
+      "branches": [
+        { "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b", "branch_name": "Sunrise — Andheri" }
+      ]
+    }
+  ]
+}
+```
+
+`branches` lists every branch of *this* clinic the doctor is currently active at (a doctor can be active at more than one).
+
+**Errors:** `404 CLINIC_NOT_FOUND`.
 
 ### GET /branches/:id/doctor-invites
 

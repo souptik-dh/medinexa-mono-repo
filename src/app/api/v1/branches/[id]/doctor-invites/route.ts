@@ -3,7 +3,7 @@ import { api, json, readJson } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
 import { parseBody, emailSchema, idSchema } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
-import { conflict, isUniqueViolation, notFound, unprocessable } from "@/lib/errors";
+import { badRequest, conflict, isUniqueViolation, notFound, unprocessable } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { generateInviteCode, hashToken } from "@/lib/auth";
 import { sendEmail, inviteEmailHtml, branchAccessEmailHtml } from "@/lib/notifications";
@@ -30,20 +30,30 @@ const slotTemplateSchema = z
     "start_date must not be after end_date.",
   );
 
-const createSchema = z.object({
-  name: z.string().trim().min(1).max(255),
-  specialization_ids: z.array(idSchema).min(1).max(10),
-  email: emailSchema,
-  phone: z.string().trim().max(32).optional().nullable(),
-  reg_no: z.string().trim().max(64).optional().nullable(),
-  smc_name: z.string().trim().max(255).optional().nullable(),
-  doctor_degree: z.string().trim().max(100).optional().nullable(),
-  fee_amount: z.coerce.number().positive().max(1_000_000),
-  currency: z.string().trim().toUpperCase().length(3),
-  certificate: z.string().trim().max(500).optional().nullable(),
-  slot_type: z.enum(["fixed", "sequential"]).default("fixed"),
-  slot_template: slotTemplateSchema,
-});
+const createSchema = z
+  .object({
+    // Picking an existing clinic doctor (see GET /clinics/:clinicId/doctors)
+    // identifies them by id and skips the invite process entirely - see the
+    // "doctor_id fast-track" below. Otherwise `name`/`email` describe who to
+    // invite (or, if they already exist elsewhere in this clinic, who to
+    // fast-track by email - see "Same-clinic, different-branch fast-track").
+    doctor_id: idSchema.optional(),
+    name: z.string().trim().min(1).max(255).optional(),
+    specialization_ids: z.array(idSchema).min(1).max(10),
+    email: emailSchema.optional(),
+    phone: z.string().trim().max(32).optional().nullable(),
+    reg_no: z.string().trim().max(64).optional().nullable(),
+    smc_name: z.string().trim().max(255).optional().nullable(),
+    doctor_degree: z.string().trim().max(100).optional().nullable(),
+    fee_amount: z.coerce.number().positive().max(1_000_000),
+    currency: z.string().trim().toUpperCase().length(3),
+    certificate: z.string().trim().max(500).optional().nullable(),
+    slot_type: z.enum(["fixed", "sequential"]).default("fixed"),
+    slot_template: slotTemplateSchema,
+  })
+  .refine((body) => body.doctor_id || (body.name && body.email), {
+    message: "Either doctor_id, or both name and email, are required.",
+  });
 
 export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
@@ -69,29 +79,19 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   }
 
   // ── Same-clinic, different-branch fast-track ──────────────────────────
-  // If the doctor (by email) already has an active assignment at any branch
-  // of the same clinic, skip the invitation process entirely: create the
-  // new branch assignment directly and send an acknowledgement email.
+  // If the doctor already has an active assignment at any branch of the
+  // same clinic - identified either directly by doctor_id (the "add
+  // existing doctor" picker, GET /clinics/:clinicId/doctors) or by email
+  // match (typed into the regular invite form) - skip the invitation
+  // process entirely: create the new branch assignment directly and send
+  // an acknowledgement email instead of an invite.
   const clinicId = String(branch.clinic_id);
 
-  const [existingClinicAssignment] = await pool.query<Row[]>(
-    `SELECT dba.id, dba.doctor_id, d.name AS doctor_name
-       FROM doctor_branch_assignments dba
-       JOIN doctors d ON d.id = dba.doctor_id
-       JOIN users u ON u.id = d.user_id
-       JOIN branches b ON b.id = dba.branch_id
-      WHERE b.clinic_id = ? AND u.email = ? AND dba.is_active = 1 AND dba.branch_id != ?
-      LIMIT 1`,
-    [clinicId, body.email, branchId],
-  );
-
-  if (existingClinicAssignment[0]) {
-    const existingAssignment = existingClinicAssignment[0];
-
+  const directAssign = async (doctorId: string, doctorName: string, doctorEmail: string) => {
     const [alreadyAssignedToTarget] = await pool.query<Row[]>(
       `SELECT dba.id FROM doctor_branch_assignments dba
         WHERE dba.branch_id = ? AND dba.doctor_id = ? AND dba.is_active = 1`,
-      [branchId, existingAssignment.doctor_id],
+      [branchId, doctorId],
     );
     if (alreadyAssignedToTarget[0]) {
       throw conflict("DOCTOR_ALREADY_ASSIGNED", "This doctor is already assigned to this branch.");
@@ -103,14 +103,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         `INSERT INTO doctor_branch_assignments
            (id, doctor_id, branch_id, fee_amount, currency, is_active, slot_type)
          VALUES (?, ?, ?, ?, ?, 1, ?)`,
-        [
-          assignmentId,
-          existingAssignment.doctor_id,
-          branchId,
-          body.fee_amount,
-          body.currency,
-          body.slot_type,
-        ],
+        [assignmentId, doctorId, branchId, body.fee_amount, body.currency, body.slot_type],
       );
       for (const slot of body.slot_template) {
         await conn.query(
@@ -129,11 +122,11 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     const clinicName = String(clinicRow[0]?.name ?? "the clinic");
 
     await sendEmail(
-      body.email,
-      `Dr. ${body.name}, you've been added to ${branch.name}`,
+      doctorEmail,
+      `Dr. ${doctorName}, you've been added to ${branch.name}`,
       `You have been added to ${branch.name} under ${clinicName}. You can now manage your schedule and appointments at this branch using your existing MediBook account.`,
       branchAccessEmailHtml({
-        doctorName: body.name,
+        doctorName,
         branchName: branch.name,
         clinicName,
       }),
@@ -144,13 +137,59 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         type: "direct_assignment" as const,
         id: assignmentId,
         branch_id: branchId,
-        email: body.email,
-        doctor_id: existingAssignment.doctor_id,
+        email: doctorEmail,
+        doctor_id: doctorId,
         specializations: specializationRows.map((r) => ({ id: r.id, name: r.name })),
         status: "active",
       },
       201,
     );
+  };
+
+  if (body.doctor_id) {
+    const [existingClinicAssignment] = await pool.query<Row[]>(
+      `SELECT d.id AS doctor_id, d.name AS doctor_name, u.email
+         FROM doctor_branch_assignments dba
+         JOIN doctors d ON d.id = dba.doctor_id
+         JOIN users u ON u.id = d.user_id
+         JOIN branches b ON b.id = dba.branch_id
+        WHERE b.clinic_id = ? AND dba.doctor_id = ? AND dba.is_active = 1
+        LIMIT 1`,
+      [clinicId, body.doctor_id],
+    );
+    const existingAssignment = existingClinicAssignment[0];
+    if (!existingAssignment) {
+      throw notFound(
+        "DOCTOR_NOT_IN_CLINIC",
+        "This doctor does not have an active assignment at this clinic.",
+      );
+    }
+    return directAssign(
+      String(existingAssignment.doctor_id),
+      String(existingAssignment.doctor_name),
+      String(existingAssignment.email),
+    );
+  }
+
+  // No doctor_id: createSchema's refine guarantees name+email are present,
+  // re-asserted here to narrow the types for the rest of this handler.
+  if (!body.email || !body.name) {
+    throw badRequest("VALIDATION_ERROR", "name and email are required.");
+  }
+
+  const [existingClinicAssignment] = await pool.query<Row[]>(
+    `SELECT dba.id, dba.doctor_id, d.name AS doctor_name
+       FROM doctor_branch_assignments dba
+       JOIN doctors d ON d.id = dba.doctor_id
+       JOIN users u ON u.id = d.user_id
+       JOIN branches b ON b.id = dba.branch_id
+      WHERE b.clinic_id = ? AND u.email = ? AND dba.is_active = 1 AND dba.branch_id != ?
+      LIMIT 1`,
+    [clinicId, body.email, branchId],
+  );
+
+  if (existingClinicAssignment[0]) {
+    return directAssign(String(existingClinicAssignment[0].doctor_id), body.name, body.email);
   }
   // ── End same-clinic fast-track ────────────────────────────────────────
 
