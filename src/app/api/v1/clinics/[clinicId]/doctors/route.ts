@@ -72,14 +72,37 @@ export const GET = api(undefined, async (ctx) => {
     pool,
     doctorRows.map((r) => String(r.id)),
   );
-  const clinicsByDoctor = await getDoctorClinics(pool, doctorRows.map((r) => String(r.id)));
+
+  // Per-branch assignment details (fee/currency/slot_type), scoped to this
+  // clinic - lets the "add existing doctor" picker auto-fill sensible
+  // defaults for the new branch from wherever else this doctor already works.
+  const [assignmentRows] = await pool.query<Row[]>(
+    `SELECT dba.doctor_id, b.id AS branch_id, b.name AS branch_name,
+            dba.fee_amount, dba.currency, dba.slot_type
+       FROM doctor_branch_assignments dba
+       JOIN branches b ON b.id = dba.branch_id AND b.deleted_at IS NULL
+      WHERE b.clinic_id = ? AND dba.doctor_id IN (?) AND dba.is_active = 1
+      ORDER BY b.name ASC`,
+    [clinicId, doctorRows.map((r) => String(r.id))],
+  );
+  const branchesByDoctor = new Map<string, Row[]>();
+  for (const r of assignmentRows) {
+    const key = String(r.doctor_id);
+    const list = branchesByDoctor.get(key) ?? [];
+    list.push(r);
+    branchesByDoctor.set(key, list);
+  }
 
   return json({
     items: doctorRows.map((r) => {
       const specializations = specializationsByDoctor.get(String(r.id)) ?? [];
-      const branches = (clinicsByDoctor.get(String(r.id)) ?? [])
-        .filter((c) => String(c.clinic_id) === String(clinicId))
-        .map((c) => ({ branch_id: c.branch_id, branch_name: c.branch_name }));
+      const branches = (branchesByDoctor.get(String(r.id)) ?? []).map((b) => ({
+        branch_id: b.branch_id,
+        branch_name: b.branch_name,
+        fee_amount: Number(b.fee_amount),
+        currency: b.currency,
+        slot_type: b.slot_type,
+      }));
       return {
         id: r.id,
         name: r.name,
