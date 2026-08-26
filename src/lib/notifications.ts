@@ -393,6 +393,28 @@ ${opts.note ? `<p style="color:#94a3b8;font-size:12px;margin:0;line-height:1.5;"
 }
 
 /**
+ * Branded HTML email acknowledging that a doctor has been added to a new branch
+ * within the same clinic (no invitation flow needed).
+ */
+export function branchAccessEmailHtml(opts: {
+  doctorName: string;
+  branchName: string;
+  clinicName: string;
+}): string {
+  const body = `
+<h2 style="color:#1e293b;font-size:20px;margin:0 0 16px;font-weight:600;">You've been added to a new branch</h2>
+<p style="color:#475569;font-size:15px;margin:0 0 24px;line-height:1.6;">Hi Dr. ${escapeHtml(opts.doctorName)},</p>
+<p style="color:#475569;font-size:15px;margin:0 0 24px;line-height:1.6;">
+You have been successfully added to <strong>${escapeHtml(opts.branchName)}</strong> under <strong>${escapeHtml(opts.clinicName)}</strong>.
+</p>
+<p style="color:#475569;font-size:15px;margin:0 0 24px;line-height:1.6;">
+You can now manage your schedule and appointments at this branch using your existing MediBook account. No further action is required.
+</p>
+<p style="color:#94a3b8;font-size:13px;margin:0;">If you have any questions, please contact the clinic administrator.</p>`;
+  return emailShell(logoImg(), body);
+}
+
+/**
  * Sends email through the Brevo SMTP API (credentials in .env). Falls back to
  * a console log in local dev when BREVO_API_KEY is not configured. Never logs
  * the API key.

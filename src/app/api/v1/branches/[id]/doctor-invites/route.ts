@@ -6,7 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { conflict, isUniqueViolation, notFound, unprocessable } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { generateInviteCode, hashToken } from "@/lib/auth";
-import { sendEmail, inviteEmailHtml } from "@/lib/notifications";
+import { sendEmail, inviteEmailHtml, branchAccessEmailHtml } from "@/lib/notifications";
 import { requireBranchAccess } from "@/lib/permissions";
 import { getInviteSpecializations } from "@/lib/specializations";
 
@@ -67,6 +67,92 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       "One or more specializations were not found or inactive.",
     );
   }
+
+  // ── Same-clinic, different-branch fast-track ──────────────────────────
+  // If the doctor (by email) already has an active assignment at any branch
+  // of the same clinic, skip the invitation process entirely: create the
+  // new branch assignment directly and send an acknowledgement email.
+  const clinicId = String(branch.clinic_id);
+
+  const [existingClinicAssignment] = await pool.query<Row[]>(
+    `SELECT dba.id, dba.doctor_id, d.name AS doctor_name
+       FROM doctor_branch_assignments dba
+       JOIN doctors d ON d.id = dba.doctor_id
+       JOIN users u ON u.id = d.user_id
+       JOIN branches b ON b.id = dba.branch_id
+      WHERE b.clinic_id = ? AND u.email = ? AND dba.is_active = 1 AND dba.branch_id != ?
+      LIMIT 1`,
+    [clinicId, body.email, branchId],
+  );
+
+  if (existingClinicAssignment[0]) {
+    const existingAssignment = existingClinicAssignment[0];
+
+    const [alreadyAssignedToTarget] = await pool.query<Row[]>(
+      `SELECT dba.id FROM doctor_branch_assignments dba
+        WHERE dba.branch_id = ? AND dba.doctor_id = ? AND dba.is_active = 1`,
+      [branchId, existingAssignment.doctor_id],
+    );
+    if (alreadyAssignedToTarget[0]) {
+      throw conflict("DOCTOR_ALREADY_ASSIGNED", "This doctor is already assigned to this branch.");
+    }
+
+    const assignmentId = newId();
+    await withTransaction(async (conn) => {
+      await conn.query(
+        `INSERT INTO doctor_branch_assignments
+           (id, doctor_id, branch_id, fee_amount, currency, is_active, slot_type)
+         VALUES (?, ?, ?, ?, ?, 1, ?)`,
+        [
+          assignmentId,
+          existingAssignment.doctor_id,
+          branchId,
+          body.fee_amount,
+          body.currency,
+          body.slot_type,
+        ],
+      );
+      for (const slot of body.slot_template) {
+        await conn.query(
+          `INSERT INTO doctor_slot_templates
+             (id, doctor_branch_assignment_id, weekday, start_time, end_time, slot_duration_minutes, start_date, end_date)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [newId(), assignmentId, slot.weekday, slot.start_time, slot.end_time, slot.slot_duration_minutes, slot.start_date, slot.end_date ?? null],
+        );
+      }
+    });
+
+    const [clinicRow] = await pool.query<Row[]>(
+      `SELECT name FROM clinics WHERE id = ?`,
+      [clinicId],
+    );
+    const clinicName = String(clinicRow[0]?.name ?? "the clinic");
+
+    await sendEmail(
+      body.email,
+      `Dr. ${body.name}, you've been added to ${branch.name}`,
+      `You have been added to ${branch.name} under ${clinicName}. You can now manage your schedule and appointments at this branch using your existing MediBook account.`,
+      branchAccessEmailHtml({
+        doctorName: body.name,
+        branchName: branch.name,
+        clinicName,
+      }),
+    );
+
+    return json(
+      {
+        type: "direct_assignment" as const,
+        id: assignmentId,
+        branch_id: branchId,
+        email: body.email,
+        doctor_id: existingAssignment.doctor_id,
+        specializations: specializationRows.map((r) => ({ id: r.id, name: r.name })),
+        status: "active",
+      },
+      201,
+    );
+  }
+  // ── End same-clinic fast-track ────────────────────────────────────────
 
   const [existing] = await pool.query<Row[]>(
     `SELECT status FROM doctor_invites WHERE branch_id = ? AND email = ? ORDER BY created_at DESC LIMIT 1`,
@@ -160,6 +246,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
 
   return json(
     {
+      type: "invite" as const,
       id,
       branch_id: branchId,
       email: body.email,
