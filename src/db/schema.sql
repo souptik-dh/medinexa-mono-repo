@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS users (
   phone VARCHAR(32) NULL,
   date_of_birth DATE NULL,
   gender ENUM('male','female','other','prefer_not_to_say') NULL,
+  height_cm DECIMAL(5,2) NULL,
+  weight_kg DECIMAL(5,2) NULL,
+  bmi DECIMAL(4,1) NULL,
   address VARCHAR(500) NULL,
   nearby_location VARCHAR(500) NULL,
   city VARCHAR(255) NULL,
@@ -404,12 +407,13 @@ CREATE TABLE IF NOT EXISTS appointment_patients (
   CONSTRAINT fk_appt_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+-- changed_by NULL = system/cron (e.g. the overdue-appointment auto-cancel sweep).
 CREATE TABLE IF NOT EXISTS appointment_status_log (
   id CHAR(36) NOT NULL,
   appointment_id CHAR(36) NOT NULL,
   from_status VARCHAR(16) NULL,
   to_status VARCHAR(16) NOT NULL,
-  changed_by CHAR(36) NOT NULL,
+  changed_by CHAR(36) NULL,
   changed_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   note VARCHAR(500) NULL,
   PRIMARY KEY (id),
@@ -493,6 +497,38 @@ CREATE TABLE IF NOT EXISTS patient_devices (
   PRIMARY KEY (id),
   KEY idx_patient_devices_patient (patient_id),
   CONSTRAINT fk_patient_devices_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS medications (
+  id CHAR(36) NOT NULL,
+  patient_id CHAR(36) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  dosage VARCHAR(100) NOT NULL,
+  frequency_label VARCHAR(100) NULL,
+  schedule_type ENUM('daily','monthly') NOT NULL DEFAULT 'daily',
+  day_of_month TINYINT UNSIGNED NULL,
+  times JSON NOT NULL,
+  prescriber VARCHAR(255) NULL,
+  refill_date DATE NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY idx_medications_patient (patient_id),
+  CONSTRAINT fk_medications_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS medication_doses (
+  id CHAR(36) NOT NULL,
+  medication_id CHAR(36) NOT NULL,
+  patient_id CHAR(36) NOT NULL,
+  dose_date DATE NOT NULL,
+  scheduled_time VARCHAR(5) NOT NULL,
+  taken_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_medication_dose (medication_id, dose_date, scheduled_time),
+  KEY idx_doses_patient_date (patient_id, dose_date),
+  CONSTRAINT fk_doses_medication FOREIGN KEY (medication_id) REFERENCES medications(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS prescriptions (
@@ -788,12 +824,13 @@ CREATE TABLE IF NOT EXISTS lab_test_prescriptions (
   CONSTRAINT fk_ltp_appointment FOREIGN KEY (appointment_id) REFERENCES lab_test_appointments(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+-- changed_by NULL = system/cron (e.g. the overdue-appointment auto-cancel sweep).
 CREATE TABLE IF NOT EXISTS lab_test_appointment_status_log (
   id CHAR(36) NOT NULL,
   appointment_id CHAR(36) NOT NULL,
   from_status VARCHAR(16) NULL,
   to_status VARCHAR(16) NOT NULL,
-  changed_by CHAR(36) NOT NULL,
+  changed_by CHAR(36) NULL,
   changed_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   note VARCHAR(500) NULL,
   PRIMARY KEY (id),

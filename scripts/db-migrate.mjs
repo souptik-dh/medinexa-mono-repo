@@ -211,6 +211,20 @@ try {
     console.log('Applied migration: users nearby_location/city/district/pin_code/state/post_office');
   }
 
+  const [userVitalsCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'height_cm'`,
+  );
+  if (Number(userVitalsCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE users
+         ADD COLUMN height_cm DECIMAL(5,2) NULL AFTER gender,
+         ADD COLUMN weight_kg DECIMAL(5,2) NULL AFTER height_cm,
+         ADD COLUMN bmi DECIMAL(4,1) NULL AFTER weight_kg`,
+    );
+    console.log('Applied migration: users height_cm/weight_kg/bmi');
+  }
+
   const [resetTokenTables] = await conn.query(
     `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'password_reset_tokens'`,
@@ -1078,6 +1092,37 @@ try {
       );
     }
     console.log(`Applied migration: backfilled ${missingSubs.length} clinic subscription(s) with trial period`);
+  }
+
+  const [medScheduleCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'medications' AND COLUMN_NAME = 'schedule_type'`,
+  );
+  if (Number(medScheduleCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE medications
+         ADD COLUMN schedule_type ENUM('daily','monthly') NOT NULL DEFAULT 'daily' AFTER frequency_label,
+         ADD COLUMN day_of_month TINYINT UNSIGNED NULL AFTER schedule_type`,
+    );
+    console.log('Applied migration: medications schedule_type/day_of_month');
+  }
+
+  const [apptStatusLogChangedByCols] = await conn.query(
+    `SELECT IS_NULLABLE FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'appointment_status_log' AND COLUMN_NAME = 'changed_by'`,
+  );
+  if (apptStatusLogChangedByCols[0] && apptStatusLogChangedByCols[0].IS_NULLABLE === 'NO') {
+    await conn.query(`ALTER TABLE appointment_status_log MODIFY COLUMN changed_by CHAR(36) NULL`);
+    console.log('Applied migration: appointment_status_log.changed_by nullable (system/cron entries)');
+  }
+
+  const [labStatusLogChangedByCols] = await conn.query(
+    `SELECT IS_NULLABLE FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'lab_test_appointment_status_log' AND COLUMN_NAME = 'changed_by'`,
+  );
+  if (labStatusLogChangedByCols[0] && labStatusLogChangedByCols[0].IS_NULLABLE === 'NO') {
+    await conn.query(`ALTER TABLE lab_test_appointment_status_log MODIFY COLUMN changed_by CHAR(36) NULL`);
+    console.log('Applied migration: lab_test_appointment_status_log.changed_by nullable (system/cron entries)');
   }
 
   console.log('Schema applied successfully.');

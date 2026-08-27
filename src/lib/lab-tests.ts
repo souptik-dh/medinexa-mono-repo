@@ -362,7 +362,7 @@ export async function writeLabTestStatusLog(
   appointmentId: string,
   from: string | null,
   to: string,
-  changedBy: string,
+  changedBy: string | null,
   note: string | null,
 ): Promise<void> {
   const logId = newId();
@@ -402,7 +402,7 @@ export async function transitionLabAppointment(
   conn: PoolConnection,
   appointment: Row,
   toStatus: LabAptStatus,
-  changedBy: string,
+  changedBy: string | null,
   note: string | null = null,
 ): Promise<void> {
   const allowedFrom = LAB_APT_TRANSITIONS[appointment.status as LabAptStatus];

@@ -114,7 +114,7 @@ export async function writeStatusLog(
   appointmentId: string,
   from: string | null,
   to: string,
-  changedBy: string,
+  changedBy: string | null,
   note: string | null,
 ): Promise<void> {
   await conn.query(
@@ -156,7 +156,7 @@ export async function transition(
   conn: PoolConnection,
   appointment: Row,
   toStatus: ApptStatus,
-  changedBy: string,
+  changedBy: string | null,
   allowedFrom: string[],
   note: string | null = null,
 ): Promise<void> {

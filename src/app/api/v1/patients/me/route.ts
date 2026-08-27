@@ -6,6 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { badRequest, notFound } from "@/lib/errors";
 
 const SELECT_FIELDS = `u.id, u.name, u.first_name, u.last_name, u.email, u.phone, u.date_of_birth, u.gender,
+       u.height_cm, u.weight_kg, u.bmi,
        u.address, u.nearby_location, u.city, u.district, u.pin_code, u.state, u.post_office,
        u.photo_url, u.preferred_clinic_id, u.preferred_branch_id,
        pc.name AS preferred_clinic_name, pb.name AS preferred_branch_name,
@@ -28,6 +29,9 @@ function toProfile(u: Row) {
     phone: u.phone,
     date_of_birth: u.date_of_birth,
     gender: u.gender,
+    height_cm: u.height_cm === null || u.height_cm === undefined ? null : Number(u.height_cm),
+    weight_kg: u.weight_kg === null || u.weight_kg === undefined ? null : Number(u.weight_kg),
+    bmi: u.bmi === null || u.bmi === undefined ? null : Number(u.bmi),
     address: u.address,
     nearby_location: u.nearby_location,
     city: u.city,
@@ -67,6 +71,8 @@ const patchSchema = z.object({
     .nullable()
     .optional(),
   gender: z.enum(GENDERS).nullable().optional(),
+  height_cm: z.number().positive().max(300).nullable().optional(),
+  weight_kg: z.number().positive().max(500).nullable().optional(),
   address: z.string().trim().min(1).max(500).optional(),
   nearby_location: z.string().trim().max(500).nullable().optional(),
   city: z.string().trim().max(255).nullable().optional(),
@@ -93,6 +99,8 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
     "phone",
     "date_of_birth",
     "gender",
+    "height_cm",
+    "weight_kg",
     "address",
     "nearby_location",
     "city",
@@ -105,6 +113,23 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
       fields.push(`${key} = ?`);
       params.push(body[key]);
     }
+  }
+
+  if (body.height_cm !== undefined || body.weight_kg !== undefined) {
+    const [rows] = await pool.query<Row[]>(
+      `SELECT height_cm, weight_kg FROM users WHERE id = ?`,
+      [auth.userId],
+    );
+    const height = body.height_cm !== undefined ? body.height_cm : rows[0]?.height_cm;
+    const weight = body.weight_kg !== undefined ? body.weight_kg : rows[0]?.weight_kg;
+    const heightNum = height === null || height === undefined ? null : Number(height);
+    const weightNum = weight === null || weight === undefined ? null : Number(weight);
+    const bmi =
+      heightNum && weightNum
+        ? Math.round((weightNum / (heightNum / 100) ** 2) * 10) / 10
+        : null;
+    fields.push("bmi = ?");
+    params.push(bmi);
   }
 
   if (body.first_name !== undefined) {

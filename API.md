@@ -27,14 +27,15 @@ Live implementation reference for the MediBook API. Every endpoint below documen
 14. [Payment ledger](#payment-ledger)
 15. [Prescriptions](#prescriptions)
 16. [Medical documents](#medical-documents)
-17. [Notifications](#notifications)
-18. [Files (signed URLs)](#files-signed-urls)
-19. [Subscriptions & billing](#subscriptions--billing)
-20. [Super Admin platform](#super-admin-platform)
-21. [Webhooks](#webhooks)
-22. [Error codes](#error-codes)
-23. [Status transition table](#status-transition-table)
-24. [Lab test status transitions](#lab-test-status-transitions)
+17. [Medications](#medications)
+18. [Notifications](#notifications)
+19. [Files (signed URLs)](#files-signed-urls)
+20. [Subscriptions & billing](#subscriptions--billing)
+21. [Super Admin platform](#super-admin-platform)
+22. [Webhooks](#webhooks)
+23. [Error codes](#error-codes)
+24. [Status transition table](#status-transition-table)
+25. [Lab test status transitions](#lab-test-status-transitions)
 
 ---
 
@@ -1557,14 +1558,20 @@ Auth: `clinic_owner` (must own the clinic) **or** `branch_staff` with `doctors:m
       "doctor_degree": "MBBS, MD",
       "smc_name": "Medical Council of India",
       "branches": [
-        { "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b", "branch_name": "Sunrise — Andheri" }
+        {
+          "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
+          "branch_name": "Sunrise — Andheri",
+          "fee_amount": 500,
+          "currency": "INR",
+          "slot_type": "fixed"
+        }
       ]
     }
   ]
 }
 ```
 
-`branches` lists every branch of *this* clinic the doctor is currently active at (a doctor can be active at more than one).
+`branches` lists every branch of *this* clinic the doctor is currently active at (a doctor can be active at more than one), including the `fee_amount`/`currency`/`slot_type` of that specific assignment — clients use these to prefill sensible defaults (same fee/booking style) when adding the doctor to yet another branch via the `doctor_id` fast-track above.
 
 **Errors:** `404 CLINIC_NOT_FOUND`.
 
@@ -2264,6 +2271,9 @@ Auth: `patient`. Returns the caller's own profile, including their preferred cli
   "phone": "+919876543210",
   "date_of_birth": "1994-03-12",
   "gender": "female",
+  "height_cm": 165.5,
+  "weight_kg": 58.2,
+  "bmi": 21.2,
   "address": "123 Link Road, Andheri West",
   "nearby_location": "Near Andheri Station",
   "city": "Mumbai",
@@ -2301,6 +2311,8 @@ Auth: `patient`. Partial update of the caller's own profile — see [Partial upd
 | `phone` | string?\|null | max 32 |
 | `date_of_birth` | string?\|null | `YYYY-MM-DD`, cannot be in the future |
 | `gender` | string?\|null | one of `male`, `female`, `other`, `prefer_not_to_say` |
+| `height_cm` | number?\|null | 0 < value ≤ 300. Recomputes `bmi` from the resulting height/weight |
+| `weight_kg` | number?\|null | 0 < value ≤ 500. Recomputes `bmi` from the resulting height/weight |
 | `address` | string? | 1–500 chars |
 | `nearby_location` | string?\|null | max 500 |
 | `city` | string?\|null | max 255 |
@@ -2310,6 +2322,8 @@ Auth: `patient`. Partial update of the caller's own profile — see [Partial upd
 | `post_office` | string?\|null | max 255 |
 | `preferred_clinic_id` | string (UUID)?\|null | must be an existing, non-deleted clinic. Setting to `null` also clears `preferred_branch_id` |
 | `preferred_branch_id` | string (UUID)?\|null | must be an existing, non-deleted branch. Also sets `preferred_clinic_id` to that branch's clinic (overriding any `preferred_clinic_id` in the same request). Setting to `null` clears only the branch |
+
+`bmi` is not a request field — it's derived server-side from `height_cm` and `weight_kg` (using the new value if sent, otherwise the value already on file) and stored whenever either changes. It's `null` until both are known.
 
 **Response `200`**: same shape as `GET /patients/me`.
 
@@ -3626,6 +3640,139 @@ Auth: `doctor` **only**, and only with a non-cancelled appointment relationship 
 
 ---
 
+## Medications
+
+Patient-managed medication list with a daily or monthly dosing schedule, used to drive the in-app medication tracker (today's schedule, adherence, refill reminders) and on-device local-notification reminders. Distinct from `current_medications` on the [medical profile](#patients) (a free-text note field) and from [Prescriptions](#prescriptions) (clinician-issued, tied to an appointment) — this is the patient's own self-reported list of what they take and when.
+
+`Medication` object:
+
+```json
+{
+  "id": "8f7e6d5c-4b3a-2908-1f0e-9d8c7b6a5f4e",
+  "patient_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "name": "Lisinopril",
+  "dosage": "10mg",
+  "frequency_label": "Once daily",
+  "schedule_type": "daily",
+  "day_of_month": null,
+  "times": ["08:00"],
+  "prescriber": "Dr. Sarah Chen",
+  "refill_date": "2026-09-15",
+  "is_active": true,
+  "created_at": "2026-08-01T09:30:00Z",
+  "updated_at": "2026-08-01T09:30:00Z"
+}
+```
+
+`times` is a list of `HH:MM` (24h) dosing times, 1–10 entries — each one is a schedule slot a dose can be logged against. `schedule_type` is `daily` (default — a dose is due every calendar day at each entry in `times`) or `monthly` (a dose is due only on `day_of_month` of each month, at each entry in `times`); `day_of_month` (1–31) is required when `schedule_type` is `monthly` and must be `null` otherwise — the server clears it automatically when `schedule_type` is set back to `daily`. A month with fewer days than `day_of_month` (e.g. `31` in February) simply has no due date that month. `frequency_label`, `prescriber`, and `refill_date` are free-form/optional and exist for display only (nothing server-side depends on them).
+
+### GET /patients/me/medications
+
+Auth: `patient`.
+
+**Query:** `?active=true|false` (optional — filter by `is_active`; omit to return all)
+
+**Response `200`**
+
+```json
+{ "items": [ /* Medication objects, active first then by created_at desc */ ] }
+```
+
+### POST /patients/me/medications
+
+Auth: `patient`.
+
+**Request body**
+
+```json
+{ "name": "Lisinopril", "dosage": "10mg", "times": ["08:00"], "frequency_label": "Once daily" }
+```
+
+```json
+{ "name": "B12 Injection", "dosage": "1000mcg", "schedule_type": "monthly", "day_of_month": 1, "times": ["09:00"] }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string | 1–255 chars |
+| `dosage` | string | 1–100 chars |
+| `times` | string[] | 1–10 items, each `HH:MM` 24h |
+| `frequency_label` | string?\|null | max 100 |
+| `schedule_type` | string? | `daily` (default) or `monthly` |
+| `day_of_month` | number?\|null | 1–31. Required if `schedule_type` is `monthly`; rejected (`400`) if sent while `schedule_type` is `daily` |
+| `prescriber` | string?\|null | max 255 |
+| `refill_date` | string?\|null | `YYYY-MM-DD` |
+
+**Response `201`** — Medication object (`is_active: true`).
+
+**Errors:** `400 VALIDATION_ERROR`.
+
+### PATCH /patients/me/medications/:id
+
+Auth: `patient` (owner only). Partial update — see [Partial updates](#partial-updates). Also used to pause/resume a medication via `is_active`.
+
+**Request body** (any subset of the `POST` fields, plus)
+
+```json
+{ "is_active": false }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `is_active` | boolean? | pause (`false`) / resume (`true`) — doesn't affect existing dose logs |
+
+Setting `schedule_type` to `daily` clears `day_of_month` automatically (no need to send it as `null`). If `day_of_month` is sent without `schedule_type`, it's validated against the medication's *current* `schedule_type`.
+
+**Response `200`** — Medication object.
+
+**Errors:** `400 VALIDATION_ERROR`, `404 MEDICATION_NOT_FOUND`.
+
+### DELETE /patients/me/medications/:id
+
+Auth: `patient` (owner only). Also deletes all of its dose logs (`ON DELETE CASCADE`).
+
+**Response `204 No Content`**
+
+**Errors:** `404 MEDICATION_NOT_FOUND`.
+
+### GET /patients/me/medications/doses
+
+Auth: `patient`. Returns logged doses in a date range — used to render "today's schedule" (taken vs. pending/missed, by comparing against `times` client-side) and to compute weekly adherence.
+
+**Query:** `?from=YYYY-MM-DD&to=YYYY-MM-DD` (both required)
+
+**Response `200`**
+
+```json
+{ "items": [ { "id": "...", "medication_id": "...", "patient_id": "...", "dose_date": "2026-08-27", "scheduled_time": "08:00", "taken_at": "2026-08-27T08:05:00Z" } ] }
+```
+
+**Errors:** `400 VALIDATION_ERROR` (missing/bad `from`/`to`).
+
+### POST /patients/me/medications/doses
+
+Auth: `patient`. Logs a dose as taken ("Take" button). Idempotent — logging the same `medication_id` + `dose_date` + `scheduled_time` twice returns the original log, not a duplicate (unique per slot per day).
+
+**Request body**
+
+```json
+{ "medication_id": "8f7e6d5c-4b3a-2908-1f0e-9d8c7b6a5f4e", "dose_date": "2026-08-27", "scheduled_time": "08:00" }
+```
+
+**Response `201`** — dose log object (same shape as the `GET` items above).
+
+**Errors:** `400 VALIDATION_ERROR`, `404 MEDICATION_NOT_FOUND`.
+
+### DELETE /patients/me/medications/doses/:id
+
+Auth: `patient` (owner only). Un-marks a dose as taken.
+
+**Response `204 No Content`**
+
+**Errors:** `404 DOSE_NOT_FOUND`.
+
+---
+
 ## Notifications
 
 `Notification` object:
@@ -4234,6 +4381,18 @@ The sweep: expires any `TRIAL` past `trial_ends_at` or `ACTIVE` past `period_end
 
 **Errors:** (only when neither auth path is satisfied) `401 UNAUTHORIZED`, `403 INSUFFICIENT_ROLE`, `403 NOT_SUPER_ADMIN`.
 
+### POST /super-admin/system/process-overdue-appointments
+
+Rate limited `30/min`. Manually triggers the same sweep that otherwise runs automatically **every 15 minutes in the background** (started at server boot — see below) — useful to force an immediate pass rather than as a required trigger.
+
+Auth: **either** header `x-cron-secret` exactly matching the server's `CRON_SECRET` env var (for an external scheduler, no bearer token needed), **or** a Super Admin bearer token. If `CRON_SECRET` isn't configured, only the Super Admin path works.
+
+**Response `200`** — `{ "message": "Overdue appointment sweep complete.", "result": { "cancelledDoctorAppointments": 2, "cancelledLabTestAppointments": 1 } }`
+
+The sweep: cancels any doctor appointment still `pending`/`confirmed`, or lab test appointment still `PENDING`/`APPROVED`, once its scheduled date+time has passed (checked in the branch's own timezone, same `hasSlotPassedInTz` logic the `.../complete` endpoints use to gate early completion). `paid` doctor appointments are deliberately excluded — same guard as the branch-closure auto-cancel cascade, since cancelling a paid-but-missed visit has refund implications a human should decide. Each cancelled appointment gets an `appointment_status_log`/`lab_test_appointment_status_log` row with `changed_by: null` (the existing "NULL = system/cron" convention), and the patient is notified in-app and by email (same as any other auto-cancel — it's a surprise to them, so it's never silent). A Super-Admin-triggered sweep is itself audit-logged (`appointments.overdue_sweep_triggered`); a cron-secret-triggered one is not.
+
+**Errors:** (only when neither auth path is satisfied) `401 UNAUTHORIZED`, `403 INSUFFICIENT_ROLE`, `403 NOT_SUPER_ADMIN`.
+
 ---
 
 ## Webhooks
@@ -4264,7 +4423,7 @@ Payment-gateway webhook receiver — the automatic counterpart to the client-dri
 
 **Side effects (on "applied" only, one transaction, row locked):** `subscription_payments` → `PAID`, `verification_method: "webhook"`, `verified_by: <gateway payment id>`; `clinic_subscriptions` → `ACTIVE` (period extended, same "never lose unused time" stacking as manual verify); `subscription_history` row (`source: "webhook"`); in-app `subscription_activated` notification to the owner. No email/push is sent from this path either. Replays and unknown/malformed payloads write nothing.
 
-**Background job note:** subscription expiry/warning processing is **not** something you need to hit an endpoint for — `src/instrumentation.ts` starts an in-process hourly sweep at server boot (first run 30s after boot) that calls the exact same logic as `POST /super-admin/system/process-subscriptions` above.
+**Background job note:** subscription expiry/warning processing is **not** something you need to hit an endpoint for — `src/instrumentation.ts` starts an in-process hourly sweep at server boot (first run 30s after boot) that calls the exact same logic as `POST /super-admin/system/process-subscriptions` above. The same file also starts a 15-minute overdue-appointment sweep (first run 30s after boot) calling the exact same logic as `POST /super-admin/system/process-overdue-appointments` above.
 
 ---
 
@@ -4297,7 +4456,7 @@ Payment-gateway webhook receiver — the automatic counterpart to the client-dri
 | `FEE_OWNER_CONTROLLED` | 403 | Doctor tried to change the fee |
 | `INVALID_SIGNED_URL` | 403 | Bad/expired file URL signature |
 | `NOT_SUPER_ADMIN` | 403 | `sys_admin` role present but no active `super_admins` grant |
-| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` / `EXCEPTION_NOT_FOUND` / `CLOSURE_NOT_FOUND` / `TEST_NOT_FOUND` / `SCHEDULE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
+| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `MEDICATION_NOT_FOUND` / `DOSE_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` / `EXCEPTION_NOT_FOUND` / `CLOSURE_NOT_FOUND` / `TEST_NOT_FOUND` / `SCHEDULE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
 | `USER_NOT_FOUND` / `SUPER_ADMIN_NOT_FOUND` / `PAYMENT_NOT_FOUND` / `SUBSCRIPTION_NOT_FOUND` | 404 | Super Admin / subscription resource missing |
 | `INVITE_EXPIRED` / `OTP_EXPIRED` / `RESET_TOKEN_EXPIRED` | 410 | Expired one-time code |
 | `FILE_TOO_LARGE` | 413 | Upload exceeds size limit |
@@ -4346,6 +4505,7 @@ Payment-gateway webhook receiver — the automatic counterpart to the client-dri
 | `confirmed` | `cancelled` | `PATCH /appointments/:id/cancel` | patient, branch_staff, clinic_owner |
 | `paid` | `completed` | `PATCH /appointments/:id/complete` | branch_staff, clinic_owner |
 | `paid` | `cancelled` | `PATCH /appointments/:id/cancel` | branch_staff, clinic_owner |
+| `pending`/`confirmed` | `cancelled` | overdue sweep — see `POST /super-admin/system/process-overdue-appointments` | system (automatic, once `scheduled_date`/`scheduled_time` has passed) |
 
 Any other transition returns `409 INVALID_STATUS_TRANSITION`. The `paid → completed` transition additionally requires `scheduled_date`/`scheduled_time` to have passed (branch timezone), else `409 APPOINTMENT_NOT_YET_DUE`.
 
@@ -4359,6 +4519,7 @@ Any other transition returns `409 INVALID_STATUS_TRANSITION`. The `paid → comp
 | `PENDING` | `CANCELLED` | `POST /lab-test-appointments/:id/cancel` | patient, clinic_owner, branch_staff |
 | `APPROVED` | `COMPLETED` | `POST /clinic/lab-test-appointments/:id/complete` | clinic_owner, branch_staff |
 | `APPROVED` | `CANCELLED` | `POST /lab-test-appointments/:id/cancel` | patient, clinic_owner, branch_staff |
+| `PENDING`/`APPROVED` | `CANCELLED` | overdue sweep — see `POST /super-admin/system/process-overdue-appointments` | system (automatic, once `appointment_date`/`start_time` has passed) |
 
 Any other transition returns `409 INVALID_STATUS_TRANSITION`. The `APPROVED → COMPLETED` transition additionally requires `appointment_date`/`start_time` to have passed (branch timezone), else `409 APPOINTMENT_NOT_YET_DUE`.
 
