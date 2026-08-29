@@ -5,7 +5,6 @@ const allowedOrigins = [
   "http://localhost:3001",
   "https://medinexa-clinic.onrender.com",
   "https://healthcare.jido.co.in",
-  "https://awake-up-git-main-sids-projects-85c8cf36.vercel.app/",
   "http://localhost:8081",
   "http://localhost:4200", // jido-healthcare-app: ng serve
   "http://localhost:8100", // jido-healthcare-app: ionic serve
