@@ -1537,6 +1537,64 @@ The `doctor_id` path is stricter than the `email` path: it 404s (`DOCTOR_NOT_IN_
 
 **Errors:** `409 INVITE_ALREADY_PENDING`, `409 DOCTOR_ALREADY_ASSIGNED` (doctor already assigned to *this* branch — applies to both the normal and fast-track cases), `404 DOCTOR_NOT_IN_CLINIC` (`doctor_id` given but has no active assignment anywhere in this clinic), `422 SPECIALIZATION_NOT_FOUND`.
 
+### NMC registration lookup
+
+`GET /doctors/verify-registration` looks a `reg_no` up against the National Medical Commission's public Indian Medical Register, so clinic staff can confirm a doctor's registration number (and pre-fill `smc_name`/`doctor_degree`) before passing it to `POST /branches/:id/doctor-invites` above. Like trade license validation, it's a stateless proxy — it never touches a `doctors` row, and the caller is responsible for using the returned fields when filling in the invite.
+
+### GET /doctors/verify-registration
+
+Auth: `clinic_owner` or `branch_staff`. Rate limited 200/min. Proxies a lookup against the NMC's public registry server-side. The upstream service matches `reg_no` as a substring, not exact, so this endpoint filters the upstream results down to a single exact match itself.
+
+**Query:** `?reg_no=12345` (required, max 64 chars)
+
+**Response `200`** (always `200` — a not-found registration number and an upstream failure both come back as a normal response, not an HTTP error)
+
+Found:
+```json
+{
+  "success": true,
+  "registration_no": "12345",
+  "found": true,
+  "doctor": {
+    "doctorId": 12589894,
+    "registrationNo": "12345",
+    "name": "Nirmal Kumar Basu",
+    "fatherOrHusbandName": null,
+    "smcName": "West Bengal Medical Council",
+    "registrationDate": "13/02/1939",
+    "yearOfRegistration": 1939,
+    "doctorDegree": "M.B. (CAL U) 1938",
+    "university": "CAL U",
+    "yearOfPassing": "1938",
+    "address": "79/B, Chittaranjan Avenue, Calcutta  ; West Bengal",
+    "removed": false
+  }
+}
+```
+
+Not found:
+```json
+{
+  "success": true,
+  "registration_no": "not-a-real-reg-no",
+  "found": false,
+  "doctor": null
+}
+```
+
+NMC registry unreachable or returned something unparseable:
+```json
+{
+  "success": false,
+  "registration_no": "12345",
+  "found": false,
+  "doctor": null,
+  "message": "Unable to verify NMC registration number at this time. Please try again."
+}
+```
+
+**Errors:** `400 VALIDATION_ERROR` (missing or too-long `reg_no`), `401 UNAUTHORIZED`, `403 INSUFFICIENT_ROLE`, `429 RATE_LIMITED`.
+
 ### GET /clinics/:clinicId/doctors
 
 Auth: `clinic_owner` (must own the clinic) **or** `branch_staff` with `doctors:manage` (their branch must belong to this clinic). Lists doctors already actively assigned somewhere in this clinic — powers the "add existing doctor" picker used to build the `doctor_id` fast-track request above, so clinic staff can pick a doctor instead of retyping their email from memory. Doctor `email` is intentionally not exposed here.
@@ -4548,7 +4606,8 @@ Any other transition returns `409 INVALID_STATUS_TRANSITION`. The `APPROVED → 
 POST /auth/clinic-owner/register
 POST /clinics                       {name, trade_license_number}
 POST /clinics/:clinicId/branches    {name, address, phone, timezone, trade_license_number}
-POST /branches/:id/doctor-invites   {name, specialization_ids, email, fee_amount, currency, slot_type, slot_template}
+GET  /doctors/verify-registration   ?reg_no=MC-123456   → confirms reg_no against the NMC registry, pre-fills smc_name/doctor_degree
+POST /branches/:id/doctor-invites   {name, specialization_ids, email, fee_amount, currency, slot_type, slot_template, reg_no, smc_name, doctor_degree}
   → invite code emailed to the doctor
 POST /auth/doctor/accept-invite     {email, invite_code, password, reg_no}
 GET  /branches/:id/doctors          → doctor now listed
