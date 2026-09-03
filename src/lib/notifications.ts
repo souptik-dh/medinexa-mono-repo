@@ -515,7 +515,7 @@ export async function sendOtpSms(
 ): Promise<void> {
   await sendSms(
     phone,
-    `Your Jido Healthcare verification code is ${otp}. It expires in ${expiryMinutes} minutes. Do not share this code with anyone.`,
+    `Your Jido Healthcare confirmation code is ${otp}. It expires in ${expiryMinutes} minutes. Do not share this code with anyone.`,
   );
 }
 
