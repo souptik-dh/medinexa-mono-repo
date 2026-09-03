@@ -1,15 +1,26 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
-import { parseBody, emailSchema } from "@/lib/validators";
-import { loginWithPassword } from "@/lib/auth-flows";
+import { parseBody, phoneSchema } from "@/lib/validators";
+import { sendPhoneOtp } from "@/lib/auth-flows";
+import { pool, type Row } from "@/lib/db";
 
-const schema = z.object({
-  email: emailSchema,
-  password: z.string().min(1),
-});
+const schema = z.object({ phone: phoneSchema });
 
+/**
+ * Clinic owner login, step 1: sends a one-time code to the phone. Step 2
+ * verifies via POST /auth/clinic-owner/verify-otp.
+ */
 export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
   const body = parseBody(schema, await readJson(ctx.request));
-  const result = await loginWithPassword(body.email, body.password, "clinic_owner");
-  return json({ access_token: result.access_token, refresh_token: result.refresh_token, user: result.user });
+
+  const [users] = await pool.query<Row[]>(
+    `SELECT email FROM users WHERE phone = ? AND role = 'clinic_owner' AND status = 'active' LIMIT 1`,
+    [body.phone],
+  );
+  const result = await sendPhoneOtp({
+    phone: body.phone,
+    email: users[0]?.email ?? null,
+    purpose: "clinic_owner_login",
+  });
+  return json(result);
 });

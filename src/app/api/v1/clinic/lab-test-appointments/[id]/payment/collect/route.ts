@@ -7,6 +7,7 @@ import { createPatientNotification } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict, notFound } from "@/lib/errors";
+import { issueReceipt } from "@/lib/receipts";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
 
@@ -79,5 +80,37 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     `SELECT * FROM lab_test_payments WHERE appointment_id = ? ORDER BY updated_at DESC LIMIT 1`,
     [id],
   );
+
+  await issueReceipt(pool, {
+    sourceType: "lab_test_appointment",
+    sourceId: appointment.id,
+    eventType: "payment_received",
+    patientId: appointment.patient_id,
+    clinicId: appointment.clinic_id,
+    branchId: appointment.branch_id,
+    amount: Number(appointment.price),
+    currency: appointment.currency,
+    paymentMethod: "PAY_AT_CLINIC",
+    referenceNo: body.reference_no ?? null,
+    generatedBy: auth.userId,
+    details: {
+      patient_name: appointment.patient_name ?? null,
+      test_name: appointment.test_name ?? null,
+      clinic_name: appointment.clinic_name ?? null,
+      branch_name: appointment.branch_name ?? null,
+      branch_address: appointment.branch_address ?? null,
+      branch_phone: appointment.branch_phone ?? null,
+      appointment_number: appointment.appointment_number,
+      service_mode: appointment.service_mode,
+      scheduled_date: appointment.appointment_date,
+      scheduled_time: appointment.start_time,
+      amount: Number(appointment.price),
+      currency: appointment.currency,
+      payment_method: "PAY_AT_CLINIC",
+      reference_no: body.reference_no ?? null,
+      paid: true,
+    },
+  });
+
   return json(serializeLabTestPayment(rows[0]));
 });

@@ -6,8 +6,9 @@ CREATE TABLE IF NOT EXISTS users (
   name VARCHAR(255) NULL,
   first_name VARCHAR(150) NULL,
   last_name VARCHAR(150) NULL,
-  email VARCHAR(255) NOT NULL,
+  email VARCHAR(255) NULL,
   phone VARCHAR(32) NULL,
+  phone_verified TINYINT(1) NOT NULL DEFAULT 0,
   date_of_birth DATE NULL,
   gender ENUM('male','female','other','prefer_not_to_say') NULL,
   height_cm DECIMAL(5,2) NULL,
@@ -29,7 +30,8 @@ CREATE TABLE IF NOT EXISTS users (
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
-  UNIQUE KEY uniq_users_email (email),
+  UNIQUE KEY uniq_users_phone (phone),
+  KEY idx_users_email (email),
   KEY idx_users_preferred_clinic (preferred_clinic_id),
   KEY idx_users_preferred_branch (preferred_branch_id)
 ) ENGINE=InnoDB;
@@ -50,14 +52,16 @@ CREATE TABLE IF NOT EXISTS refresh_tokens (
 
 CREATE TABLE IF NOT EXISTS otp_codes (
   id CHAR(36) NOT NULL,
-  email VARCHAR(255) NOT NULL,
-  purpose ENUM('branch_staff_login') NOT NULL,
+  phone VARCHAR(32) NULL,
+  email VARCHAR(255) NULL,
+  purpose ENUM('branch_staff_login','patient_login','clinic_owner_login','doctor_login','phone_verification') NOT NULL,
   code_hash CHAR(64) NOT NULL,
   expires_at DATETIME(3) NOT NULL,
   attempts TINYINT NOT NULL DEFAULT 0,
   verified_at DATETIME(3) NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
+  KEY idx_otp_phone (phone),
   KEY idx_otp_email (email)
 ) ENGINE=InnoDB;
 
@@ -237,7 +241,7 @@ CREATE TABLE IF NOT EXISTS doctor_specializations (
 CREATE TABLE IF NOT EXISTS doctor_invites (
   id CHAR(36) NOT NULL,
   branch_id CHAR(36) NOT NULL,
-  email VARCHAR(255) NOT NULL,
+  email VARCHAR(255) NULL,
   name VARCHAR(255) NOT NULL,
   specialization VARCHAR(255) NULL,
   phone VARCHAR(32) NULL,
@@ -254,9 +258,11 @@ CREATE TABLE IF NOT EXISTS doctor_invites (
   invited_by CHAR(36) NOT NULL,
   expires_at DATETIME(3) NOT NULL,
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  invite_pending_key VARCHAR(552) GENERATED ALWAYS AS (COALESCE(email, phone)) STORED,
   PRIMARY KEY (id),
-  UNIQUE KEY uniq_invite_pending (branch_id, email, status),
+  UNIQUE KEY uniq_invite_pending (branch_id, invite_pending_key, status),
   KEY idx_invite_email (email),
+  KEY idx_invite_phone (phone),
   CONSTRAINT fk_invite_branch FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
@@ -995,4 +1001,31 @@ CREATE TABLE IF NOT EXISTS lab_test_payments (
   CONSTRAINT fk_ltpay_appointment FOREIGN KEY (appointment_id) REFERENCES lab_test_appointments(id) ON DELETE CASCADE,
   CONSTRAINT fk_ltpay_patient FOREIGN KEY (patient_id) REFERENCES users(id),
   CONSTRAINT fk_ltpay_collected_by FOREIGN KEY (collected_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS receipts (
+  id CHAR(36) NOT NULL,
+  receipt_number VARCHAR(32) NOT NULL,
+  source_type ENUM('appointment','lab_test_appointment') NOT NULL,
+  source_id CHAR(36) NOT NULL,
+  event_type ENUM('booking_confirmed','payment_received','completed') NOT NULL,
+  patient_id CHAR(36) NOT NULL,
+  clinic_id CHAR(36) NOT NULL,
+  branch_id CHAR(36) NOT NULL,
+  amount DECIMAL(10,2) NULL,
+  currency CHAR(3) NOT NULL DEFAULT 'INR',
+  payment_method VARCHAR(20) NULL,
+  reference_no VARCHAR(255) NULL,
+  generated_by CHAR(36) NULL,
+  details_json JSON NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_receipt_number (receipt_number),
+  UNIQUE KEY uniq_receipt_source_event (source_type, source_id, event_type),
+  KEY idx_receipt_patient (patient_id, created_at),
+  KEY idx_receipt_source (source_type, source_id),
+  CONSTRAINT fk_receipt_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_receipt_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
+  CONSTRAINT fk_receipt_branch FOREIGN KEY (branch_id) REFERENCES branches(id),
+  CONSTRAINT fk_receipt_generated_by FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;

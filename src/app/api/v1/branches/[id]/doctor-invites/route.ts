@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
-import { parseBody, emailSchema, idSchema } from "@/lib/validators";
+import { parseBody, emailSchema, idSchema, phoneSchema } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { badRequest, conflict, isUniqueViolation, notFound, unprocessable } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { generateInviteCode, hashToken } from "@/lib/auth";
-import { sendEmail, inviteEmailHtml, branchAccessEmailHtml } from "@/lib/notifications";
+import { sendEmail, inviteEmailHtml, branchAccessEmailHtml, sendInviteSms, sendSms } from "@/lib/notifications";
 import { requireBranchAccess } from "@/lib/permissions";
 import { getInviteSpecializations } from "@/lib/specializations";
 
@@ -34,14 +34,13 @@ const createSchema = z
   .object({
     // Picking an existing clinic doctor (see GET /clinics/:clinicId/doctors)
     // identifies them by id and skips the invite process entirely - see the
-    // "doctor_id fast-track" below. Otherwise `name`/`email` describe who to
-    // invite (or, if they already exist elsewhere in this clinic, who to
-    // fast-track by email - see "Same-clinic, different-branch fast-track").
+    // "doctor_id fast-track" below. Otherwise `name` plus a phone number (and
+    // optionally an email) describe who to invite.
     doctor_id: idSchema.optional(),
     name: z.string().trim().min(1).max(255).optional(),
     specialization_ids: z.array(idSchema).min(1).max(10),
     email: emailSchema.optional(),
-    phone: z.string().trim().max(32).optional().nullable(),
+    phone: phoneSchema.optional(),
     reg_no: z.string().trim().max(64).optional().nullable(),
     smc_name: z.string().trim().max(255).optional().nullable(),
     doctor_degree: z.string().trim().max(100).optional().nullable(),
@@ -51,8 +50,8 @@ const createSchema = z
     slot_type: z.enum(["fixed", "sequential"]).default("fixed"),
     slot_template: slotTemplateSchema,
   })
-  .refine((body) => body.doctor_id || (body.name && body.email), {
-    message: "Either doctor_id, or both name and email, are required.",
+  .refine((body) => body.doctor_id || (body.name && (body.email || body.phone)), {
+    message: "Either doctor_id, or name plus an email or phone, are required.",
   });
 
 export const POST = api({ rateLimit: 200 }, async (ctx) => {
@@ -87,7 +86,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   // an acknowledgement email instead of an invite.
   const clinicId = String(branch.clinic_id);
 
-  const directAssign = async (doctorId: string, doctorName: string, doctorEmail: string) => {
+  const directAssign = async (doctorId: string, doctorName: string, doctorEmail: string | null, doctorPhone: string | null) => {
     const [alreadyAssignedToTarget] = await pool.query<Row[]>(
       `SELECT dba.id FROM doctor_branch_assignments dba
         WHERE dba.branch_id = ? AND dba.doctor_id = ? AND dba.is_active = 1`,
@@ -121,16 +120,24 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     );
     const clinicName = String(clinicRow[0]?.name ?? "the clinic");
 
-    await sendEmail(
-      doctorEmail,
-      `Dr. ${doctorName}, you've been added to ${branch.name}`,
-      `You have been added to ${branch.name} under ${clinicName}. You can now manage your schedule and appointments at this branch using your existing MediBook account.`,
-      branchAccessEmailHtml({
-        doctorName,
-        branchName: branch.name,
-        clinicName,
-      }),
-    );
+    if (doctorEmail) {
+      await sendEmail(
+        doctorEmail,
+        `Dr. ${doctorName}, you've been added to ${branch.name}`,
+        `You have been added to ${branch.name} under ${clinicName}. You can now manage your schedule and appointments at this branch using your existing MediBook account.`,
+        branchAccessEmailHtml({
+          doctorName,
+          branchName: branch.name,
+          clinicName,
+        }),
+      );
+    }
+    if (doctorPhone) {
+      await sendSms(
+        doctorPhone,
+        `Dr. ${doctorName}, you have been added to ${branch.name} under ${clinicName}. You can now manage your schedule and appointments using your existing MediBook account.`,
+      );
+    }
 
     return json(
       {
@@ -138,6 +145,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         id: assignmentId,
         branch_id: branchId,
         email: doctorEmail,
+        phone: doctorPhone,
         doctor_id: doctorId,
         specializations: specializationRows.map((r) => ({ id: r.id, name: r.name })),
         status: "active",
@@ -148,7 +156,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
 
   if (body.doctor_id) {
     const [existingClinicAssignment] = await pool.query<Row[]>(
-      `SELECT d.id AS doctor_id, d.name AS doctor_name, u.email
+      `SELECT d.id AS doctor_id, d.name AS doctor_name, u.email, u.phone
          FROM doctor_branch_assignments dba
          JOIN doctors d ON d.id = dba.doctor_id
          JOIN users u ON u.id = d.user_id
@@ -167,35 +175,69 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     return directAssign(
       String(existingAssignment.doctor_id),
       String(existingAssignment.doctor_name),
-      String(existingAssignment.email),
+      existingAssignment.email ? String(existingAssignment.email) : null,
+      existingAssignment.phone ? String(existingAssignment.phone) : null,
     );
   }
 
-  // No doctor_id: createSchema's refine guarantees name+email are present,
-  // re-asserted here to narrow the types for the rest of this handler.
-  if (!body.email || !body.name) {
-    throw badRequest("VALIDATION_ERROR", "name and email are required.");
+  // No doctor_id: createSchema's refine guarantees name plus email/phone are
+  // present, re-asserted here to narrow the types for the rest of this handler.
+  if (!body.name || (!body.email && !body.phone)) {
+    throw badRequest("VALIDATION_ERROR", "name and an email or phone are required.");
   }
 
+  // Fast-track lookup: match an existing doctor at another branch of the same
+  // clinic by email OR phone.
+  const matchExpr = body.email && body.phone
+    ? `(u.email = ? OR u.phone = ?)`
+    : body.email
+      ? `u.email = ?`
+      : `u.phone = ?`;
+  const matchArgs = body.email && body.phone
+    ? [clinicId, body.email, body.phone, branchId]
+    : body.email
+      ? [clinicId, body.email, branchId]
+      : [clinicId, body.phone, branchId];
+
   const [existingClinicAssignment] = await pool.query<Row[]>(
-    `SELECT dba.id, dba.doctor_id, d.name AS doctor_name
+    `SELECT dba.id, dba.doctor_id, d.name AS doctor_name, u.email AS doctor_email, u.phone AS doctor_phone
        FROM doctor_branch_assignments dba
        JOIN doctors d ON d.id = dba.doctor_id
        JOIN users u ON u.id = d.user_id
        JOIN branches b ON b.id = dba.branch_id
-      WHERE b.clinic_id = ? AND u.email = ? AND dba.is_active = 1 AND dba.branch_id != ?
+      WHERE b.clinic_id = ? AND ${matchExpr} AND dba.is_active = 1 AND dba.branch_id != ?
       LIMIT 1`,
-    [clinicId, body.email, branchId],
+    matchArgs,
   );
 
   if (existingClinicAssignment[0]) {
-    return directAssign(String(existingClinicAssignment[0].doctor_id), body.name, body.email);
+    return directAssign(
+      String(existingClinicAssignment[0].doctor_id),
+      body.name,
+      existingClinicAssignment[0].doctor_email ? String(existingClinicAssignment[0].doctor_email) : null,
+      existingClinicAssignment[0].doctor_phone ? String(existingClinicAssignment[0].doctor_phone) : null,
+    );
   }
   // ── End same-clinic fast-track ────────────────────────────────────────
 
+  // Look for an existing invite/assignment for this doctor (by email or phone).
+  // NOTE: this query targets doctor_invites (columns email/phone without any
+  // table alias), so use a dedicated match expression.
+  const inviteMatchExpr = body.email && body.phone
+    ? `(email = ? OR phone = ?)`
+    : body.email
+      ? `email = ?`
+      : `phone = ?`;
+  const inviteMatchArgs = body.email && body.phone
+    ? [branchId, body.email, body.phone]
+    : body.email
+      ? [branchId, body.email]
+      : [branchId, body.phone!];
   const [existing] = await pool.query<Row[]>(
-    `SELECT status FROM doctor_invites WHERE branch_id = ? AND email = ? ORDER BY created_at DESC LIMIT 1`,
-    [branchId, body.email],
+    `SELECT status FROM doctor_invites
+      WHERE branch_id = ? AND (${inviteMatchExpr})
+      ORDER BY created_at DESC LIMIT 1`,
+    inviteMatchArgs,
   );
   if (existing[0]) {
     if (existing[0].status === "pending") {
@@ -210,8 +252,12 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     `SELECT dba.id FROM doctor_branch_assignments dba
        JOIN doctors d ON d.id = dba.doctor_id
        JOIN users u ON u.id = d.user_id
-      WHERE dba.branch_id = ? AND u.email = ? AND dba.is_active = 1`,
-    [branchId, body.email],
+      WHERE dba.branch_id = ? AND (${matchExpr}) AND dba.is_active = 1`,
+    body.email && body.phone
+      ? [branchId, body.email, body.phone]
+      : body.email
+        ? [branchId, body.email]
+        : [branchId, body.phone!],
   );
   if (assignments[0]) {
     throw conflict("DOCTOR_ALREADY_ASSIGNED", "This doctor is already assigned to this branch.");
@@ -233,7 +279,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         [
           id,
           branchId,
-          body.email,
+          body.email ?? null,
           body.name,
           body.phone ?? null,
           body.fee_amount,
@@ -263,32 +309,51 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     throw err;
   }
 
-  const acceptUrlParams = new URLSearchParams({ email: body.email, code: inviteCode });
+  const acceptUrlParams = new URLSearchParams({ code: inviteCode });
+  if (body.email) acceptUrlParams.set("email", body.email);
+  if (body.phone) acceptUrlParams.set("phone", body.phone);
   if (body.reg_no) acceptUrlParams.set("reg_no", body.reg_no);
   const acceptUrl = `${process.env.APP_URL ?? ""}/doctor/accept-invite?${acceptUrlParams.toString()}`;
 
-  const inviteBody = `You've been invited to join ${branch.name} on MediBook.\n\nAccept your invitation here: ${acceptUrl}\n\nYour one-time invite code is: ${inviteCode}\n\nThis code expires in 7 days.`;
-  await sendEmail(
-    body.email,
-    `Dr. ${body.name}, you've been invited to ${branch.name}`,
-    inviteBody,
-    inviteEmailHtml({
-      heading: "Clinic Join Invitation",
-      intro: `You've been invited to join ${branch.name} on MediBook. Use the details below to accept your invitation and complete setup.`,
-      code: inviteCode,
-      codeLabel: "Your One-Time Invite Code",
-      ctaLabel: "Accept Invitation",
-      ctaUrl: acceptUrl,
-      note: "This invite code and link expire in 7 days.",
-    }),
-  );
+  // Send the invitation via email (if present) and/or SMS (if phone present).
+  if (body.email) {
+    const inviteBody = `You've been invited to join ${branch.name} on MediBook.\n\nAccept your invitation here: ${acceptUrl}\n\nYour one-time invite code is: ${inviteCode}\n\nThis code expires in 7 days.`;
+    await sendEmail(
+      body.email,
+      `Dr. ${body.name}, you've been invited to ${branch.name}`,
+      inviteBody,
+      inviteEmailHtml({
+        heading: "Clinic Join Invitation",
+        intro: `You've been invited to join ${branch.name} on MediBook. Use the details below to accept your invitation and complete setup.`,
+        code: inviteCode,
+        codeLabel: "Your One-Time Invite Code",
+        ctaLabel: "Accept Invitation",
+        ctaUrl: acceptUrl,
+        note: "This invite code and link expire in 7 days.",
+      }),
+    );
+  }
+  if (body.phone) {
+    const [clinicNameRow] = await pool.query<Row[]>(
+      `SELECT name FROM clinics WHERE id = ?`,
+      [clinicId],
+    );
+    const clinicName = String(clinicNameRow[0]?.name ?? "a clinic");
+    await sendInviteSms({
+      phone: body.phone,
+      doctorName: body.name,
+      clinicName,
+      inviteUrl: acceptUrl,
+    });
+  }
 
   return json(
     {
       type: "invite" as const,
       id,
       branch_id: branchId,
-      email: body.email,
+      email: body.email ?? null,
+      phone: body.phone ?? null,
       reg_no: body.reg_no ?? null,
       smc_name: body.smc_name ?? null,
       doctor_degree: body.doctor_degree ?? null,
@@ -306,7 +371,7 @@ export const GET = api(undefined, async (ctx) => {
   await requireBranchAccess(pool, auth, branchId, "doctors:manage");
 
   const [rows] = await pool.query<Row[]>(
-    `SELECT id, name, email, reg_no, smc_name, doctor_degree, status, expires_at, created_at
+    `SELECT id, name, email, phone, reg_no, smc_name, doctor_degree, status, expires_at, created_at
        FROM doctor_invites WHERE branch_id = ? ORDER BY created_at DESC`,
     [branchId],
   );
@@ -316,6 +381,7 @@ export const GET = api(undefined, async (ctx) => {
       id: r.id,
       name: r.name,
       email: r.email,
+      phone: r.phone,
       reg_no: r.reg_no,
       specializations: specializationsByInvite.get(String(r.id)) ?? [],
       smc_name: r.smc_name,

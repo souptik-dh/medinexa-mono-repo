@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
-import { parseBody, emailSchema } from "@/lib/validators";
+import { parseBody, phoneSchema } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { getOwnedBranch } from "@/lib/scope";
 import { conflict, isUniqueViolation } from "@/lib/errors";
 import { newId } from "@/lib/ids";
-import { sendEmail, emailHtml } from "@/lib/notifications";
+import { sendSms } from "@/lib/notifications";
 import {
   BRANCH_STAFF_PERMISSIONS,
   DEFAULT_BRANCH_STAFF_PERMISSIONS,
@@ -56,7 +56,7 @@ export const GET = api(undefined, async (ctx) => {
 
 const createSchema = z.object({
   name: z.string().trim().min(1).max(255),
-  email: emailSchema,
+  phone: phoneSchema,
   permissions: z.array(z.enum(BRANCH_STAFF_PERMISSIONS)).optional(),
 });
 
@@ -78,8 +78,8 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   try {
     await withTransaction(async (conn) => {
       await conn.query(
-        `INSERT INTO users (id, name, email, role, status) VALUES (?, ?, ?, 'branch_staff', 'active')`,
-        [userId, body.name, body.email],
+        `INSERT INTO users (id, name, phone, role, status) VALUES (?, ?, ?, 'branch_staff', 'active')`,
+        [userId, body.name, body.phone],
       );
       await conn.query(
         `INSERT INTO branch_staff (id, branch_id, user_id, added_by, permissions_json) VALUES (?, ?, ?, ?, ?)`,
@@ -90,26 +90,21 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     if (isUniqueViolation(err)) {
       throw conflict(
         "STAFF_ALREADY_EXISTS_FOR_BRANCH",
-        "This email is already registered as staff for this branch.",
+        "This phone number is already registered as staff for this branch.",
       );
     }
     throw err;
   }
 
-  const staffBody = "You can now log in to Jido Healthcare using the email-based OTP flow. Use the OTP sent to your email at login.";
-  await sendEmail(
-    body.email,
-    "You've been added as branch staff",
-    staffBody,
-    emailHtml(staffBody),
-  );
+  const staffSms = "You can now log in to Jido Healthcare as branch staff. Use phone-based OTP login with this number.";
+  await sendSms(body.phone, `Jido Healthcare: ${staffSms}`);
 
   return json(
     {
       id: staffId,
       branch_id: branchId,
       name: body.name,
-      email: body.email,
+      phone: body.phone,
       added_by: auth.userId,
       permissions,
       created_at: new Date().toISOString(),

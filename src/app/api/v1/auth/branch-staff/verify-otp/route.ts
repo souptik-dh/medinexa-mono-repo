@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
-import { parseBody, emailSchema } from "@/lib/validators";
-import { pool, type Row } from "@/lib/db";
+import { parseBody, phoneSchema, otpSchema } from "@/lib/validators";
+import { pool, parseDbTimestamp, type Row } from "@/lib/db";
 import { hashToken, issueTokens } from "@/lib/auth";
 import { loadRoleBindings } from "@/lib/auth-flows";
 import { loadStaffPermissions } from "@/lib/permissions";
@@ -10,8 +10,8 @@ import { ApiError, forbidden, unauthorized } from "@/lib/errors";
 const MAX_ATTEMPTS = 5;
 
 const schema = z.object({
-  email: emailSchema,
-  otp: z.string().regex(/^\d{6}$/, "OTP must be 6 digits."),
+  phone: phoneSchema,
+  otp: otpSchema,
 });
 
 export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
@@ -19,14 +19,14 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
 
   const [codes] = await pool.query<Row[]>(
     `SELECT * FROM otp_codes
-      WHERE email = ? AND purpose = 'branch_staff_login' AND verified_at IS NULL
+      WHERE phone = ? AND purpose = 'branch_staff_login' AND verified_at IS NULL
       ORDER BY created_at DESC LIMIT 1`,
-    [body.email],
+    [body.phone],
   );
   const code = codes[0];
-  if (!code) throw unauthorized("INVALID_OTP", "No pending OTP found for this email.");
+  if (!code) throw unauthorized("INVALID_OTP", "No pending OTP found for this phone number.");
 
-  const expired = new Date(code.expires_at).getTime() < Date.now();
+  const expired = parseDbTimestamp(code.expires_at).getTime() < Date.now();
   const attemptCount = Number(code.attempts);
 
   if (attemptCount >= MAX_ATTEMPTS) {
@@ -37,7 +37,7 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
     throw new ApiError(410, "OTP_EXPIRED", "This OTP has expired. Request a new one.");
   }
 
-  if (hashToken(`${body.email}:${body.otp}`) !== code.code_hash) {
+  if (hashToken(`${body.phone}:${body.otp}`) !== code.code_hash) {
     await pool.query(`UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?`, [code.id]);
     throw unauthorized("INVALID_OTP", "Incorrect OTP. Please try again.");
   }
@@ -46,8 +46,8 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
 
   const [users] = await pool.query<Row[]>(
     `SELECT u.* FROM users u JOIN branch_staff bs ON bs.user_id = u.id
-      WHERE u.email = ? AND u.role = 'branch_staff' AND u.status = 'active'`,
-    [body.email],
+      WHERE u.phone = ? AND u.role = 'branch_staff' AND u.status = 'active'`,
+    [body.phone],
   );
   const user = users[0];
   if (!user) throw forbidden("ACCOUNT_DISABLED", "This staff account is no longer active.");
@@ -68,7 +68,8 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
     user: {
       id: user.id,
       name: user.name,
-      email: user.email,
+      phone: user.phone,
+      email: user.email ?? null,
       role: user.role,
       branch_id: branchId,
       permissions,

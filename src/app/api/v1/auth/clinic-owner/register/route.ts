@@ -1,33 +1,54 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
-import { parseBody, emailSchema, passwordSchema } from "@/lib/validators";
-import { registerUser } from "@/lib/auth-flows";
+import { parseBody, phoneSchema, optionalEmailSchema, otpSchema } from "@/lib/validators";
+import { registerUser, verifyRegistrationOtp } from "@/lib/auth-flows";
+import { badRequest } from "@/lib/errors";
 
-const schema = z.object({
+const registerSchema = z.object({
   name: z.string().trim().min(1).max(255),
   clinicName: z.string().trim().min(1, "Clinic name is required.").max(255),
-  email: emailSchema,
-  phone: z.string().trim().max(32).optional().nullable(),
-  password: passwordSchema,
+  email: optionalEmailSchema,
+  phone: phoneSchema,
+  otp: otpSchema,
 });
 
+/**
+ * Clinic owner registration, step 2: verifies the OTP and creates the owner
+ * user account plus the clinic (with a trial subscription). Unlike patients,
+ * clinic owners cannot self-activate via OTP alone (status stays 'pending' and
+ * the account becomes active only after account verification), but the phone
+ * is verified so they may proceed to email verification if desired. For a
+ * phone-first system, we activate the account immediately once the phone is
+ * verified; email remains optional.
+ */
 export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
-  const body = parseBody(schema, await readJson(ctx.request));
-  const result = await registerUser({
-    name: body.name,
-    clinicName: body.clinicName,
-    email: body.email,
+  const body = parseBody(registerSchema, await readJson(ctx.request));
+
+  const result = await verifyRegistrationOtp({
     phone: body.phone,
-    password: body.password,
-    role: "clinic_owner",
+    otp: body.otp,
+    purposes: ["phone_verification", "clinic_owner_login"],
   });
+  if (!result.ok) throw badRequest("INVALID_OTP", result.message);
+
+  const reg = await registerUser(
+    {
+      name: body.name,
+      clinicName: body.clinicName,
+      email: body.email ?? null,
+      phone: body.phone,
+      password: null,
+      role: "clinic_owner",
+    },
+    true,
+  );
   return json(
     {
-      user: result.user,
-      access_token: result.access_token,
-      refresh_token: result.refresh_token,
-      clinic: result.clinic,
-      message: result.message,
+      user: reg.user,
+      access_token: reg.access_token,
+      refresh_token: reg.refresh_token,
+      clinic: reg.clinic,
+      message: reg.message,
     },
     201,
   );

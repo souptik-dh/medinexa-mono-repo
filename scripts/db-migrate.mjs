@@ -1125,6 +1125,200 @@ try {
     console.log('Applied migration: lab_test_appointment_status_log.changed_by nullable (system/cron entries)');
   }
 
+  // ── Phone-based authentication migrations ──────────────────────────────
+
+  // Add phone column to users if missing (needed for phone-based auth)
+  const [usersPhoneCol] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'phone'`,
+  );
+  if (Number(usersPhoneCol[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE users ADD COLUMN phone VARCHAR(32) NULL AFTER email`,
+    );
+    console.log('Applied migration: users.phone');
+  }
+
+  // Make users.email nullable (phone becomes primary identifier)
+  const [emailNullable] = await conn.query(
+    `SELECT IS_NULLABLE FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'email'`,
+  );
+  if (emailNullable[0] && emailNullable[0].IS_NULLABLE === 'NO') {
+    await conn.query(`ALTER TABLE users MODIFY COLUMN email VARCHAR(255) NULL`);
+    console.log('Applied migration: users.email nullable');
+  }
+
+  // Add phone_verified column to users
+  const [phoneVerifiedCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'phone_verified'`,
+  );
+  if (Number(phoneVerifiedCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE users ADD COLUMN phone_verified TINYINT(1) NOT NULL DEFAULT 0 AFTER phone`,
+    );
+    console.log('Applied migration: users.phone_verified');
+  }
+
+  // Add unique constraint on users.phone (drop first if it already exists non-uniquely)
+  const [phoneKeyRows] = await conn.query(
+    `SELECT INDEX_NAME FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'phone' AND NON_UNIQUE = 1`,
+  );
+  for (const row of phoneKeyRows) {
+    await conn.query(`ALTER TABLE users DROP INDEX \`${row.INDEX_NAME}\``);
+    console.log(`Dropped non-unique index ${row.INDEX_NAME} on users.phone`);
+  }
+  const [phoneUniqueRows] = await conn.query(
+    `SELECT INDEX_NAME FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'phone' AND NON_UNIQUE = 0 AND INDEX_NAME LIKE 'uniq_%'`,
+  );
+  if (phoneUniqueRows.length === 0) {
+    // A unique index on phone requires each (non-NULL) value to be unique. Legacy/test
+    // rows can hold duplicate phone values (e.g. shared demo numbers), so null out the
+    // phone on every duplicate except the earliest row per phone before creating the index.
+    await conn.query(
+      `UPDATE users u
+          JOIN (
+            SELECT phone, MIN(id) AS keep_id
+              FROM users
+             WHERE phone IS NOT NULL
+             GROUP BY phone
+            HAVING COUNT(*) > 1
+          ) dups ON dups.phone = u.phone AND u.id <> dups.keep_id
+          SET u.phone = NULL`,
+    );
+    const [dupAfter] = await conn.query(
+      `SELECT COUNT(*) AS cnt FROM (
+         SELECT phone FROM users WHERE phone IS NOT NULL GROUP BY phone HAVING COUNT(*) > 1
+       ) d`,
+    );
+    if (Number(dupAfter[0].cnt) > 0) {
+      const [dups] = await conn.query(
+        `SELECT phone, COUNT(*) AS cnt FROM users WHERE phone IS NOT NULL GROUP BY phone HAVING COUNT(*) > 1`,
+      );
+      throw new Error(
+        `Cannot add unique key users.uniq_users_phone: duplicate phone values remain: ${JSON.stringify(dups)}. Re-run after deduplicating in MySQL.`,
+      );
+    }
+    await conn.query(`ALTER TABLE users ADD UNIQUE KEY uniq_users_phone (phone)`);
+    console.log('Applied migration: users.uniq_users_phone (deduplicated duplicate phones)');
+  }
+
+  // Drop unique constraint on users.email (email is now optional, not a unique auth identifier)
+  const [emailUniqueRows] = await conn.query(
+    `SELECT INDEX_NAME FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'email' AND NON_UNIQUE = 0 AND INDEX_NAME LIKE 'uniq_%'`,
+  );
+  for (const row of emailUniqueRows) {
+    await conn.query(`ALTER TABLE users DROP INDEX \`${row.INDEX_NAME}\``);
+    console.log(`Dropped unique index ${row.INDEX_NAME} on users.email`);
+  }
+  // Ensure there's still a non-unique index on email for lookups
+  const [emailIdxRows] = await conn.query(
+    `SELECT INDEX_NAME FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'email' AND NON_UNIQUE = 1`,
+  );
+  if (emailIdxRows.length === 0) {
+    await conn.query(`ALTER TABLE users ADD INDEX idx_users_email (email)`);
+    console.log('Applied migration: users.idx_users_email (non-unique)');
+  }
+
+  // Update otp_codes: add phone column, expand purpose ENUM, make email nullable
+  const [otpPhoneCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'otp_codes' AND COLUMN_NAME = 'phone'`,
+  );
+  if (Number(otpPhoneCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE otp_codes
+        ADD COLUMN phone VARCHAR(32) NULL AFTER email,
+        ADD INDEX idx_otp_phone (phone)`,
+    );
+    console.log('Applied migration: otp_codes.phone');
+  }
+
+  // Expand otp_codes.purpose ENUM
+  const [otpPurposeCol] = await conn.query(
+    `SELECT COLUMN_TYPE FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'otp_codes' AND COLUMN_NAME = 'purpose'`,
+  );
+  const currentEnum = otpPurposeCol[0]?.COLUMN_TYPE ?? '';
+  if (!currentEnum.includes('patient_login')) {
+    await conn.query(
+      `ALTER TABLE otp_codes
+        MODIFY COLUMN purpose ENUM('branch_staff_login','patient_login','clinic_owner_login','doctor_login','phone_verification') NOT NULL`,
+    );
+    console.log('Applied migration: otp_codes.purpose expanded');
+  }
+
+  // Make otp_codes.email nullable
+  const [otpEmailNullable] = await conn.query(
+    `SELECT IS_NULLABLE FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'otp_codes' AND COLUMN_NAME = 'email'`,
+  );
+  if (otpEmailNullable[0] && otpEmailNullable[0].IS_NULLABLE === 'NO') {
+    await conn.query(`ALTER TABLE otp_codes MODIFY COLUMN email VARCHAR(255) NULL`);
+    console.log('Applied migration: otp_codes.email nullable');
+  }
+
+  // Update doctor_invites: make email nullable, update unique constraint, add phone index
+  const [diEmailNullable] = await conn.query(
+    `SELECT IS_NULLABLE FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_invites' AND COLUMN_NAME = 'email'`,
+  );
+  if (diEmailNullable[0] && diEmailNullable[0].IS_NULLABLE === 'NO') {
+    await conn.query(`ALTER TABLE doctor_invites MODIFY COLUMN email VARCHAR(255) NULL`);
+    console.log('Applied migration: doctor_invites.email nullable');
+  }
+
+  // Add phone index to doctor_invites
+  const [diPhoneIdx] = await conn.query(
+    `SELECT INDEX_NAME FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_invites' AND COLUMN_NAME = 'phone'`,
+  );
+  if (diPhoneIdx.length === 0) {
+    await conn.query(`ALTER TABLE doctor_invites ADD INDEX idx_invite_phone (phone)`);
+    console.log('Applied migration: doctor_invites.idx_invite_phone');
+  }
+
+  const [receiptsTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'receipts'`,
+  );
+  if (Number(receiptsTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE receipts (
+        id CHAR(36) NOT NULL,
+        receipt_number VARCHAR(32) NOT NULL,
+        source_type ENUM('appointment','lab_test_appointment') NOT NULL,
+        source_id CHAR(36) NOT NULL,
+        event_type ENUM('booking_confirmed','payment_received','completed') NOT NULL,
+        patient_id CHAR(36) NOT NULL,
+        clinic_id CHAR(36) NOT NULL,
+        branch_id CHAR(36) NOT NULL,
+        amount DECIMAL(10,2) NULL,
+        currency CHAR(3) NOT NULL DEFAULT 'INR',
+        payment_method VARCHAR(20) NULL,
+        reference_no VARCHAR(255) NULL,
+        generated_by CHAR(36) NULL,
+        details_json JSON NOT NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_receipt_number (receipt_number),
+        UNIQUE KEY uniq_receipt_source_event (source_type, source_id, event_type),
+        KEY idx_receipt_patient (patient_id, created_at),
+        KEY idx_receipt_source (source_type, source_id),
+        CONSTRAINT fk_receipt_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE CASCADE,
+        CONSTRAINT fk_receipt_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
+        CONSTRAINT fk_receipt_branch FOREIGN KEY (branch_id) REFERENCES branches(id),
+        CONSTRAINT fk_receipt_generated_by FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE SET NULL
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: receipts table');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();

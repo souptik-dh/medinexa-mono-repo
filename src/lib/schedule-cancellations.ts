@@ -1,11 +1,11 @@
 import { pool, type Row } from "@/lib/db";
-import { createPatientNotification, sendEmail, detailsEmailHtml } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms } from "@/lib/notifications";
 
 // Shared by the branch-closure and doctor-leave routes: once a closure/leave has cascaded
 // into cancelling pre-existing appointments (see autoCancelAppointmentsInRange /
 // autoCancelLabTestAppointmentsInRange), these notify each affected patient in-app and by
-// email — unlike a manual cancel, an auto-cancel is a surprise to the patient, so it always
-// gets an email, not just an in-app notification.
+// email (and SMS, when a phone is on file) — unlike a manual cancel, an auto-cancel is a
+// surprise to the patient, so it always gets an email/SMS, not just an in-app notification.
 
 export async function notifyAutoCancelledDoctorAppointments(
   cancelled: Row[],
@@ -15,7 +15,7 @@ export async function notifyAutoCancelledDoctorAppointments(
   if (cancelled.length === 0) return;
   const [rows] = await pool.query<Row[]>(
     `SELECT a.id, a.patient_id, a.scheduled_date, a.scheduled_time,
-            u.name AS patient_name, u.email AS patient_email, d.name AS doctor_name
+            u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone, d.name AS doctor_name
        FROM appointments a
        JOIN users u ON u.id = a.patient_id
        JOIN doctors d ON d.id = a.doctor_id
@@ -30,6 +30,12 @@ export async function notifyAutoCancelledDoctorAppointments(
       time: r.scheduled_time,
       reason,
     });
+    if (r.patient_phone) {
+      await sendSms(
+        r.patient_phone,
+        `Jido Healthcare: Your appointment with Dr. ${r.doctor_name} on ${r.scheduled_date} at ${r.scheduled_time} has been cancelled. Reason: ${reason}`,
+      );
+    }
     if (r.patient_email) {
       await sendEmail(
         r.patient_email,
@@ -59,7 +65,7 @@ export async function notifyAutoCancelledLabTestAppointments(
   if (cancelled.length === 0) return;
   const [rows] = await pool.query<Row[]>(
     `SELECT a.id, a.patient_id, a.appointment_number, a.appointment_date, a.start_time,
-            u.name AS patient_name, u.email AS patient_email, lt.name AS test_name
+            u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone, lt.name AS test_name
        FROM lab_test_appointments a
        JOIN users u ON u.id = a.patient_id
        JOIN lab_tests lt ON lt.id = a.test_id
@@ -76,6 +82,12 @@ export async function notifyAutoCancelledLabTestAppointments(
       time: r.start_time,
       reason,
     });
+    if (r.patient_phone) {
+      await sendSms(
+        r.patient_phone,
+        `Jido Healthcare: Your ${r.test_name} appointment on ${r.appointment_date} at ${r.start_time} has been cancelled. Reason: ${reason}`,
+      );
+    }
     if (r.patient_email) {
       await sendEmail(
         r.patient_email,

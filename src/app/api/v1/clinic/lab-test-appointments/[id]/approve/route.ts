@@ -14,10 +14,12 @@ import {
   sendEmail,
   detailsEmailHtml,
   patientEmailHtml,
+  sendSms,
 } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest } from "@/lib/errors";
+import { issueReceipt } from "@/lib/receipts";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
 
@@ -90,7 +92,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   });
 
   const [patientRows] = await pool.query<RowDataPacket[]>(
-    `SELECT name, email FROM users WHERE id = ?`,
+    `SELECT name, email, phone FROM users WHERE id = ?`,
     [appointment.patient_id],
   );
   const patient = patientRows[0];
@@ -113,7 +115,41 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   if (patient?.email) {
     await sendEmail(patient.email, `Lab Test Confirmed — ${appointment.appointment_number}`, "", emailHtml);
   }
+  if (patient?.phone) {
+    await sendSms(
+      patient.phone,
+      `Jido Healthcare: Your lab test appointment ${appointment.appointment_number} (${appointment.test_name}) at ${appointment.branch_name} on ${appointment.appointment_date} at ${appointment.start_time} has been confirmed.`,
+    );
+  }
 
   const updated = await getLabTestAppointmentInScope(pool, id, auth);
+
+  await issueReceipt(pool, {
+    sourceType: "lab_test_appointment",
+    sourceId: updated.id,
+    eventType: "booking_confirmed",
+    patientId: updated.patient_id,
+    clinicId: updated.clinic_id,
+    branchId: updated.branch_id,
+    amount: Number(updated.price),
+    currency: updated.currency,
+    generatedBy: auth.userId,
+    details: {
+      patient_name: updated.patient_name ?? null,
+      test_name: updated.test_name ?? null,
+      clinic_name: updated.clinic_name ?? null,
+      branch_name: updated.branch_name ?? null,
+      branch_address: updated.branch_address ?? null,
+      branch_phone: updated.branch_phone ?? null,
+      appointment_number: updated.appointment_number,
+      service_mode: updated.service_mode,
+      scheduled_date: updated.appointment_date,
+      scheduled_time: updated.start_time,
+      price: Number(updated.price),
+      currency: updated.currency,
+      paid: updated.payment_status === "PAID",
+    },
+  });
+
   return json(serializeLabTestAppointment(updated));
 });

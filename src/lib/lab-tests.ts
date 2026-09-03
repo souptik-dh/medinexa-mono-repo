@@ -309,7 +309,7 @@ export async function getLabTestAppointmentInScope(
     `SELECT a.*,
             lt.name AS test_name, lt.code AS test_code, lt.category AS test_category,
             lt.description AS test_description,
-            b.name AS branch_name, b.phone AS branch_phone, b.timezone AS branch_timezone,
+            b.name AS branch_name, b.phone AS branch_phone, b.timezone AS branch_timezone, b.address AS branch_address,
             c.name AS clinic_name,
             u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
             u.date_of_birth AS patient_dob, u.gender AS patient_gender

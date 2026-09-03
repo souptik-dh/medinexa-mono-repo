@@ -1,16 +1,20 @@
-import { pool, withTransaction, type Row } from "@/lib/db";
+import { pool, withTransaction, parseDbTimestamp, type Row } from "@/lib/db";
 import {
   hashPassword,
   issueTokens,
   verifyPassword,
   generateVerificationToken,
+  generateOtp,
+  hashToken,
 } from "@/lib/auth";
-import { conflict, forbidden, unauthorized, badRequest, isUniqueViolation } from "@/lib/errors";
+import { conflict, forbidden, unauthorized, badRequest, isUniqueViolation, ApiError } from "@/lib/errors";
 import { newId, type Role } from "@/lib/ids";
-import { sendEmail, emailHtml } from "@/lib/notifications";
+import { sendEmail, emailHtml, sendOtpDual } from "@/lib/notifications";
 import { ensureClinicSubscription } from "@/lib/subscriptions";
 
 const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+const OTP_TTL_MS = 10 * 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
 
 async function sendVerificationEmail(userId: string, email: string, name: string): Promise<void> {
   const { raw, hash } = generateVerificationToken();
@@ -39,7 +43,7 @@ async function sendVerificationEmail(userId: string, email: string, name: string
 export interface PublicUser {
   id: string;
   name: string | null;
-  email: string;
+  email: string | null;
   phone: string | null;
   address?: string | null;
   nearby_location?: string | null;
@@ -59,11 +63,191 @@ export interface PublicClinic {
   created_at: string;
 }
 
+export type OtpPurpose =
+  | "branch_staff_login"
+  | "patient_login"
+  | "clinic_owner_login"
+  | "doctor_login"
+  | "phone_verification";
+
+export type OtpResult =
+  | { ok: true; message?: string; otp?: string; expires_at?: string }
+  | { ok: false; message: string };
+
+/**
+ * Generates and sends a one-time password to a user's phone (SMS) and email
+ * (dual channel). Unsigned — the OTP is stored hashed and keyed by phone.
+ * Returns a generic message so this cannot be used to enumerate users.
+ */
+export async function sendPhoneOtp(opts: {
+  phone: string;
+  email?: string | null;
+  purpose: OtpPurpose;
+}): Promise<OtpResult> {
+  const otp = generateOtp();
+  const expiresAt = new Date(Date.now() + OTP_TTL_MS)
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", " ");
+  await pool.query(
+    `INSERT INTO otp_codes (id, phone, email, purpose, code_hash, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [newId(), opts.phone, opts.email ?? null, opts.purpose, hashToken(`${opts.phone}:${otp}`), expiresAt],
+  );
+  await sendOtpDual({
+    phone: opts.phone,
+    email: opts.email,
+    otp,
+    expiryMinutes: OTP_TTL_MS / 60_000,
+  });
+  return {
+    ok: true,
+    message: "If an account exists for this phone number, an OTP has been sent.",
+    // TEMP: exposed in the API response for local testing only — remove before production.
+    otp,
+    expires_at: expiresAt,
+  };
+}
+
+/**
+ * Loads the OTP code specifically for a phone + purpose, following the same
+ * attempt/expiry semantics as the existing branch-staff flow.
+ */
+async function fetchPendingOtp(phone: string, purpose: string): Promise<Row | null> {
+  const [codes] = await pool.query<Row[]>(
+    `SELECT * FROM otp_codes
+      WHERE phone = ? AND purpose = ? AND verified_at IS NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [phone, purpose],
+  );
+  return codes[0] ?? null;
+}
+
+/**
+ * Verifies a phone+OTP pair, marks the code used, and issues tokens for the
+ * matching user. Used for login across all roles.
+ */
+export async function verifyPhoneOtpAndLogin(opts: {
+  phone: string;
+  otp: string;
+  role: Role;
+  purpose: OtpPurpose;
+}): Promise<{ user: PublicUser; access_token: string; refresh_token: string; requires_password_setup: boolean }> {
+  const code = await fetchPendingOtp(opts.phone, opts.purpose);
+  if (!code) throw unauthorized("INVALID_OTP", "No pending OTP found for this phone number.");
+
+  const expired = parseDbTimestamp(code.expires_at).getTime() < Date.now();
+  const attempts = Number(code.attempts);
+  if (attempts >= OTP_MAX_ATTEMPTS) {
+    throw unauthorized("OTP_MAX_ATTEMPTS", "Too many failed attempts. Request a new OTP.");
+  }
+  if (expired) {
+    await pool.query(`UPDATE otp_codes SET verified_at = UTC_TIMESTAMP(3) WHERE id = ?`, [code.id]);
+    throw new ApiError(410, "OTP_EXPIRED", "This OTP has expired. Request a new one.");
+  }
+  if (hashToken(`${opts.phone}:${opts.otp}`) !== code.code_hash) {
+    await pool.query(`UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?`, [code.id]);
+    throw unauthorized("INVALID_OTP", "Incorrect OTP. Please try again.");
+  }
+  await pool.query(`UPDATE otp_codes SET verified_at = UTC_TIMESTAMP(3) WHERE id = ?`, [code.id]);
+
+  const [users] = await pool.query<Row[]>(
+    `SELECT * FROM users WHERE phone = ? AND role = ? AND status = 'active'`,
+    [opts.phone, opts.role],
+  );
+  const user = users[0];
+  if (!user) throw unauthorized("ACCOUNT_NOT_FOUND", "No active account found for this phone number.");
+
+  const { branchId, doctorId } = await loadRoleBindings(user.id, opts.role);
+  const { access_token, refresh_token } = await issueTokens({
+    id: user.id,
+    role: opts.role,
+    branchId,
+    doctorId,
+  });
+  const pub: PublicUser = {
+    id: user.id,
+    name: user.name,
+    email: user.email ?? null,
+    phone: user.phone ?? null,
+    role: user.role,
+  };
+  return {
+    user: pub,
+    access_token,
+    refresh_token,
+    requires_password_setup: !user.password_hash,
+  };
+}
+
+/**
+ * Verifies a phone+OTP pair and marks the phone as verified on the given user.
+ * Used when a user adds/changes their phone number (phone_verification purpose).
+ */
+export async function verifyPhoneOnly(opts: {
+  phone: string;
+  otp: string;
+  userId: string;
+}): Promise<void> {
+  const code = await fetchPendingOtp(opts.phone, "phone_verification");
+  if (!code) throw unauthorized("INVALID_OTP", "No pending OTP found for this phone number.");
+  const expired = parseDbTimestamp(code.expires_at).getTime() < Date.now();
+  if (Number(code.attempts) >= OTP_MAX_ATTEMPTS) {
+    throw unauthorized("OTP_MAX_ATTEMPTS", "Too many failed attempts. Request a new OTP.");
+  }
+  if (expired) {
+    throw new ApiError(410, "OTP_EXPIRED", "This OTP has expired. Request a new one.");
+  }
+  if (hashToken(`${opts.phone}:${opts.otp}`) !== code.code_hash) {
+    await pool.query(`UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?`, [code.id]);
+    throw unauthorized("INVALID_OTP", "Incorrect OTP. Please try again.");
+  }
+  await pool.query(`UPDATE otp_codes SET verified_at = UTC_TIMESTAMP(3) WHERE id = ?`, [code.id]);
+  await pool.query(
+    `UPDATE users SET phone = ?, phone_verified = 1 WHERE id = ?`,
+    [opts.phone, opts.userId],
+  );
+}
+
+/**
+ * Verifies a phone+OTP pair that was issued with any of the given purposes
+ * (registration OTPs are sent via the 'phone_verification' purpose, but an
+ * unused login OTP is also acceptable). Pre-registration there is no account
+ * yet, so this only marks the code used — it does not issue tokens or touch
+ * the users table.
+ */
+export async function verifyRegistrationOtp(opts: {
+  phone: string;
+  otp: string;
+  purposes: OtpPurpose[];
+}): Promise<OtpResult> {
+  const [codes] = await pool.query<Row[]>(
+    `SELECT * FROM otp_codes
+      WHERE phone = ? AND purpose IN (?) AND verified_at IS NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [opts.phone, opts.purposes],
+  );
+  const code = codes[0];
+  if (!code) return { ok: false, message: "No pending OTP found for this phone number." };
+  if (Number(code.attempts) >= OTP_MAX_ATTEMPTS) {
+    return { ok: false, message: "Too many failed attempts. Request a new OTP." };
+  }
+  if (parseDbTimestamp(code.expires_at).getTime() < Date.now()) {
+    return { ok: false, message: "This OTP has expired. Request a new one." };
+  }
+  if (hashToken(`${opts.phone}:${opts.otp}`) !== code.code_hash) {
+    await pool.query(`UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?`, [code.id]);
+    return { ok: false, message: "Incorrect OTP. Please try again." };
+  }
+  await pool.query(`UPDATE otp_codes SET verified_at = UTC_TIMESTAMP(3) WHERE id = ?`, [code.id]);
+  return { ok: true };
+}
+
 interface RegisterInput {
   name: string;
   clinicName?: string;
-  email: string;
-  phone?: string | null;
+  email?: string | null;
+  phone: string;
   address?: string | null;
   nearby_location?: string | null;
   city?: string | null;
@@ -71,25 +255,27 @@ interface RegisterInput {
   pin_code?: string | null;
   state?: string | null;
   post_office?: string | null;
-  password: string;
+  password?: string | null;
   role: "patient" | "clinic_owner";
+  phoneVerified?: boolean;
 }
 
-export async function registerUser(input: RegisterInput) {
-  const passwordHash = await hashPassword(input.password);
+export async function registerUser(input: RegisterInput, verified: boolean) {
+  const passwordHash = input.password ? await hashPassword(input.password) : null;
   const id = newId();
-  const status = input.role === "clinic_owner" ? "pending" : "active";
+  const status = input.role === "clinic_owner" && !verified ? "pending" : "active";
   let clinic: PublicClinic | null = null;
   try {
     await withTransaction(async (conn) => {
       await conn.query(
-        `INSERT INTO users (id, name, email, phone, address, nearby_location, city, district, pin_code, state, post_office, photo_url, password_hash, role, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO users (id, name, email, phone, phone_verified, address, nearby_location, city, district, pin_code, state, post_office, photo_url, password_hash, role, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           id,
           input.name,
-          input.email,
-          input.phone ?? null,
+          input.email ?? null,
+          input.phone,
+          verified ? 1 : 0,
           input.address ?? null,
           input.nearby_location ?? null,
           input.city ?? null,
@@ -128,15 +314,21 @@ export async function registerUser(input: RegisterInput) {
     });
   } catch (err) {
     if (isUniqueViolation(err)) {
-      throw conflict("EMAIL_ALREADY_REGISTERED", "An account with this email already exists.");
+      const msg = String((err as { message?: string }).message ?? "");
+      if (msg.includes("uniq_users_phone")) {
+        throw conflict("PHONE_ALREADY_REGISTERED", "An account with this phone number already exists.");
+      }
+      if (msg.includes("email")) {
+        throw conflict("EMAIL_ALREADY_REGISTERED", "An account with this email already exists.");
+      }
     }
     throw err;
   }
   const user: PublicUser = {
     id,
     name: input.name,
-    email: input.email,
-    phone: input.phone ?? null,
+    email: input.email ?? null,
+    phone: input.phone,
     address: input.address ?? null,
     nearby_location: input.nearby_location ?? null,
     city: input.city ?? null,
@@ -147,14 +339,16 @@ export async function registerUser(input: RegisterInput) {
     role: input.role,
   };
 
-  if (input.role === "clinic_owner") {
-    await sendVerificationEmail(id, input.email, input.name);
+  if (status === "pending") {
+    if (input.email) {
+      await sendVerificationEmail(id, input.email, input.name);
+    }
     return {
       user,
       access_token: null,
       refresh_token: null,
       clinic,
-      message: "Registration successful. Check your email to verify your account before logging in.",
+      message: "Registration successful. Verify your phone with the OTP to activate your account.",
     };
   }
 
@@ -191,20 +385,20 @@ export async function loadRoleBindings(userId: string, role: Role): Promise<{
 }
 
 export async function loginWithPassword(
-  email: string,
+  phone: string,
   password: string,
   role: Role,
 ): Promise<{ user: PublicUser; access_token: string; refresh_token: string }> {
-  const [rows] = await pool.query<Row[]>(`SELECT * FROM users WHERE email = ?`, [email]);
+  const [rows] = await pool.query<Row[]>(`SELECT * FROM users WHERE phone = ?`, [phone]);
   const user = rows[0];
   if (!user || user.role !== role) {
-    throw unauthorized("INVALID_CREDENTIALS", "Invalid email or password.");
+    throw unauthorized("INVALID_CREDENTIALS", "Invalid phone number or password.");
   }
   if (user.status === "pending") {
     if (role === "clinic_owner") {
       throw forbidden(
-        "EMAIL_NOT_VERIFIED",
-        "Please verify your email before logging in. Check your inbox for the verification link.",
+        "PHONE_NOT_VERIFIED",
+        "Please verify your phone number before logging in. Check your phone for the OTP.",
       );
     }
     throw forbidden("INVITE_NOT_ACCEPTED", "Your invite has not been accepted yet.");
@@ -213,7 +407,7 @@ export async function loginWithPassword(
     throw unauthorized("ACCOUNT_DISABLED", "This account is disabled.");
   }
   const ok = await verifyPassword(password, user.password_hash);
-  if (!ok) throw unauthorized("INVALID_CREDENTIALS", "Invalid email or password.");
+  if (!ok) throw unauthorized("INVALID_CREDENTIALS", "Invalid phone number or password.");
 
   const { branchId, doctorId } = await loadRoleBindings(user.id, role);
   const { access_token, refresh_token } = await issueTokens({
@@ -225,7 +419,7 @@ export async function loginWithPassword(
   const pub: PublicUser = {
     id: user.id,
     name: user.name,
-    email: user.email,
+    email: user.email ?? null,
     phone: user.phone ?? null,
     role: user.role,
   };

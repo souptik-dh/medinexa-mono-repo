@@ -1,47 +1,26 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
-import { parseBody, emailSchema } from "@/lib/validators";
-import { loginWithPassword, loadRoleBindings } from "@/lib/auth-flows";
+import { parseBody, phoneSchema } from "@/lib/validators";
+import { sendPhoneOtp } from "@/lib/auth-flows";
 import { pool, type Row } from "@/lib/db";
-import { getDoctorSpecializations } from "@/lib/specializations";
 
-const schema = z.object({
-  email: emailSchema,
-  password: z.string().min(1),
-});
+const schema = z.object({ phone: phoneSchema });
 
+/**
+ * Doctor login, step 1: sends a one-time code to the phone. Step 2 verifies
+ * via POST /auth/doctor/verify-otp.
+ */
 export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
   const body = parseBody(schema, await readJson(ctx.request));
-  const result = await loginWithPassword(body.email, body.password, "doctor");
 
-  const { doctorId } = await loadRoleBindings(result.user.id, "doctor");
-  const [doctors] = await pool.query<Row[]>(
-    `SELECT id, name, phone, certificate_url, bio FROM doctors WHERE id = ? AND deleted_at IS NULL`,
-    [doctorId],
+  const [users] = await pool.query<Row[]>(
+    `SELECT email FROM users WHERE phone = ? AND role = 'doctor' AND status = 'active' LIMIT 1`,
+    [body.phone],
   );
-  const doc = doctors[0];
-  const specializationsByDoctor = doc ? await getDoctorSpecializations(pool, [String(doc.id)]) : null;
-
-  return json({
-    access_token: result.access_token,
-    refresh_token: result.refresh_token,
-    user: result.user,
-    doctor: doc
-      ? {
-          id: doc.id,
-          name: doc.name,
-          specializations: specializationsByDoctor?.get(String(doc.id)) ?? [],
-          phone: doc.phone,
-          certificate_url: doc.certificate_url,
-          bio: doc.bio,
-        }
-      : {
-          id: result.user.id,
-          name: result.user.name,
-          specializations: [],
-          phone: null,
-          certificate_url: null,
-          bio: null,
-        },
+  const result = await sendPhoneOtp({
+    phone: body.phone,
+    email: users[0]?.email ?? null,
+    purpose: "doctor_login",
   });
+  return json(result);
 });

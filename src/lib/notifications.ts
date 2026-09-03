@@ -205,6 +205,19 @@ export async function branchContactEmails(
   return rows.map((r) => r.email as string);
 }
 
+export async function branchContactPhones(
+  db: Pick<PoolConnection, "query">,
+  branchId: string,
+): Promise<string[]> {
+  const [rows] = await db.query<RowDataPacket[]>(
+    `SELECT u.phone FROM branch_staff bs JOIN users u ON u.id = bs.user_id WHERE bs.branch_id = ? AND u.phone IS NOT NULL
+     UNION
+     SELECT co.phone FROM branches b JOIN clinics c ON c.id = b.clinic_id JOIN users co ON co.id = c.owner_user_id WHERE b.id = ? AND co.phone IS NOT NULL`,
+    [branchId, branchId],
+  );
+  return rows.map((r) => r.phone as string);
+}
+
 export async function clinicOwnerContact(
   db: Pick<PoolConnection, "query">,
   clinicId: string,
@@ -460,10 +473,105 @@ export async function sendEmail(
 }
 
 /**
- * SMS delivery is not configured in .env (Brevo SMS needs a sender number).
- * Falls back to logging so flows remain traceable. Wire to the Brevo SMS API
- * (or any provider) here when a sender is provisioned.
+ * SMS delivery through the Jido SMS Gateway (credentials in .env via
+ * SMS_API_KEY, an optional SMS_API_URL override). Falls back to a console log
+ * in local dev when SMS_API_KEY is not configured. Never throws.
  */
 export async function sendSms(to: string, body: string): Promise<void> {
-  console.log(`[sms:stub] to=${to} body=${body}`);
+  const apiKey = process.env.SMS_API_KEY;
+  const apiUrl =
+    process.env.SMS_API_URL ??
+    "https://jido-sms-gateway.onrender.com/api/3rdparty/v1/messages";
+  if (!apiKey) {
+    console.log(`[sms:stub] to=${to} body=${body}`);
+    return;
+  }
+  try {
+    const res = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Basic ${apiKey}`,
+      },
+      body: JSON.stringify({
+        textMessage: { text: body },
+        phoneNumbers: [to],
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error(`[sms] Gateway rejected send to ${to} (${res.status}): ${detail}`);
+    }
+  } catch (err) {
+    console.error(`[sms] send to ${to} failed:`, err);
+  }
+}
+
+/** Sends a one-time login/password code via SMS. */
+export async function sendOtpSms(
+  phone: string,
+  otp: string,
+  expiryMinutes: number,
+): Promise<void> {
+  await sendSms(
+    phone,
+    `Your Jido Healthcare verification code is ${otp}. It expires in ${expiryMinutes} minutes. Do not share this code with anyone.`,
+  );
+}
+
+/**
+ * Sends a one-time code via BOTH SMS and email (if an email is on file).
+ * Failures never reject the caller.
+ */
+export async function sendOtpDual(opts: {
+  phone: string;
+  email?: string | null;
+  otp: string;
+  expiryMinutes: number;
+}): Promise<void> {
+  const smsPromise = sendOtpSms(opts.phone, opts.otp, opts.expiryMinutes);
+  const emailPromise = opts.email
+    ? sendEmail(
+        opts.email,
+        "Your Jido Healthcare login code",
+        `Your one-time login code is ${opts.otp}. It expires in ${opts.expiryMinutes} minutes. Do not share this code with anyone.`,
+        otpEmailHtml(opts.otp, opts.expiryMinutes),
+      )
+    : Promise.resolve();
+  await Promise.allSettled([smsPromise, emailPromise]);
+}
+
+/** Sends a doctor invitation link via SMS. */
+export async function sendInviteSms(opts: {
+  phone: string;
+  doctorName: string;
+  clinicName: string;
+  inviteUrl: string;
+}): Promise<void> {
+  await sendSms(
+    opts.phone,
+    `Dr. ${opts.doctorName}, you have been invited to join ${opts.clinicName} on MediBook. Accept your invitation here: ${opts.inviteUrl}`,
+  );
+}
+
+/**
+ * Sends an SMS to a user's registered phone number, if one is on file.
+ * Used to mirror email notifications over SMS (per the dual-channel policy).
+ * Never throws; silently no-ops when the user has no phone.
+ */
+export async function sendSmsIfPhone(
+  db: Pick<PoolConnection, "query">,
+  userId: string,
+  message: string,
+): Promise<void> {
+  try {
+    const [rows] = await db.query<RowDataPacket[]>(
+      `SELECT phone FROM users WHERE id = ? AND phone IS NOT NULL`,
+      [userId],
+    );
+    const phone = rows[0]?.phone as string | undefined;
+    if (phone) await sendSms(phone, message);
+  } catch (err) {
+    console.error(`[sms] failed to send to user ${userId}:`, err);
+  }
 }

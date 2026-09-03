@@ -13,6 +13,16 @@ export const pool: Pool = createPool({
 
 export type Row = RowDataPacket;
 
+/**
+ * Parses a MySQL DATETIME string (returned as "YYYY-MM-DD HH:mm:ss[.SSS]" by
+ * this pool's dateStrings:true + timezone:"Z" config) as UTC. A plain
+ * `new Date(value)` on a space-separated string is parsed as local time by
+ * V8, which silently corrupts expiry comparisons on any non-UTC host.
+ */
+export function parseDbTimestamp(value: string): Date {
+  return new Date(`${value.replace(" ", "T")}Z`);
+}
+
 export async function withTransaction<T>(
   fn: (conn: PoolConnection) => Promise<T>,
 ): Promise<T> {

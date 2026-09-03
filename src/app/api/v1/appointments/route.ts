@@ -7,7 +7,7 @@ import { badRequest, conflict, notFound, unprocessable, isUniqueViolation } from
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { scopeWhere, serializeAppointment, APPT_STATUSES } from "@/lib/appointments";
-import { notifyBranchStaff, createNotification, branchContactEmails, sendEmail, detailsEmailHtml } from "@/lib/notifications";
+import { notifyBranchStaff, createNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, sendSms } from "@/lib/notifications";
 import {
   todayInTz,
   weekdayInTz,
@@ -23,7 +23,7 @@ import { assertClinicOperational } from "@/lib/subscriptions";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-export const GET = api(undefined, async (ctx) => {
+export const GET = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient", "branch_staff", "doctor", "clinic_owner"]);
   const sp = ctx.request.nextUrl.searchParams;
   const { limit, cursor } = parsePagination(sp);
@@ -71,6 +71,7 @@ export const GET = api(undefined, async (ctx) => {
                (SELECT d.name FROM doctors d WHERE d.id = a.doctor_id) AS doctor_name,
                (SELECT d.photo_url FROM doctors d WHERE d.id = a.doctor_id) AS doctor_photo_url,
                (SELECT b.name FROM branches b WHERE b.id = a.branch_id) AS branch_name,
+               (SELECT b.phone FROM branches b WHERE b.id = a.branch_id) AS branch_phone,
                ap.relationship AS visitor_relationship, ap.name AS visitor_name,
                ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender
           FROM appointments a
@@ -320,7 +321,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     }
 
     // Independent reads — none depends on the others — so they run as one round trip.
-    const [[rows], [details], recipients] = await Promise.all([
+    const [[rows], [details], recipients, recipientPhones] = await Promise.all([
       pool.query<Row[]>(
         `SELECT a.*, ap.relationship AS visitor_relationship, ap.name AS visitor_name,
                 ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender
@@ -340,11 +341,13 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         [id],
       ),
       branchContactEmails(pool, body.branch_id),
+      branchContactPhones(pool, body.branch_id),
     ]);
     const info = details[0];
     if (info) {
       const isForSelf = patientDetails.relationship === "self";
       const subject = `New appointment booked — ${patientDetails.name} with Dr. ${info.doctor_name}`;
+      const smsText = `Jido Healthcare: New appointment booked — ${patientDetails.name} with Dr. ${info.doctor_name} on ${body.date} at ${scheduledTime} at ${info.branch_name}.`;
       const emailBody = [
         `A new appointment has been booked at ${info.branch_name}.`,
         "",
@@ -380,9 +383,10 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
           },
         ],
       });
-      // sendEmail already catches its own errors — no reason to hold the response on
-      // Brevo's round trip once the booking itself is committed.
+      // sendEmail/sendSms already catch their own errors — no reason to hold the response
+      // on the round trips once the booking itself is committed.
       void Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody, emailHtmlBody)));
+      void Promise.all(recipientPhones.map((phone) => sendSms(phone, smsText)));
     }
 
     return { status: 201, body: serializeAppointment(rows[0]) };

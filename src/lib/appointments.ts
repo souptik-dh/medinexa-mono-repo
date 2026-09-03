@@ -58,6 +58,7 @@ export function serializeAppointment(r: Row) {
     doctor_name: r.doctor_name ?? null,
     doctor_photo_url: r.doctor_photo_url ?? null,
     branch_name: r.branch_name ?? null,
+    branch_phone: r.branch_phone ?? null,
     ...(r.patient_name !== undefined
       ? {
           patient: {

@@ -8,7 +8,7 @@ import {
   auditLabAction,
   serializeLabTestAppointment,
 } from "@/lib/lab-tests";
-import { createPatientNotification, sendEmail, detailsEmailHtml } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest } from "@/lib/errors";
@@ -53,11 +53,17 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   });
 
   const [patientRows] = await pool.query<RowDataPacket[]>(
-    `SELECT name, email FROM users WHERE id = ?`,
+    `SELECT name, email, phone FROM users WHERE id = ?`,
     [appointment.patient_id],
   );
   const patient = patientRows[0];
 
+  if (patient?.phone) {
+    await sendSms(
+      patient.phone,
+      `Jido Healthcare: Your lab test booking ${appointment.appointment_number} (${appointment.test_name}) has been rejected. Reason: ${body.reason}`,
+    );
+  }
   if (patient?.email) {
     await sendEmail(
       patient.email,

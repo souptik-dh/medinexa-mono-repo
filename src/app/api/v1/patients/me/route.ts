@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
-import { parseBody, idSchema } from "@/lib/validators";
+import { parseBody, idSchema, phoneSchema } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { badRequest, notFound } from "@/lib/errors";
 
-const SELECT_FIELDS = `u.id, u.name, u.first_name, u.last_name, u.email, u.phone, u.date_of_birth, u.gender,
+const SELECT_FIELDS = `u.id, u.name, u.first_name, u.last_name, u.email, u.phone, u.phone_verified, u.date_of_birth, u.gender,
        u.height_cm, u.weight_kg, u.bmi,
        u.address, u.nearby_location, u.city, u.district, u.pin_code, u.state, u.post_office,
        u.photo_url, u.preferred_clinic_id, u.preferred_branch_id,
@@ -27,6 +27,7 @@ function toProfile(u: Row) {
     last_name: u.last_name,
     email: u.email,
     phone: u.phone,
+    phone_verified: u.phone_verified === 1 || u.phone_verified === true,
     date_of_birth: u.date_of_birth,
     gender: u.gender,
     height_cm: u.height_cm === null || u.height_cm === undefined ? null : Number(u.height_cm),
@@ -64,7 +65,7 @@ const patchSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   first_name: z.string().trim().min(1).max(150).optional(),
   last_name: z.string().trim().min(1).max(150).optional(),
-  phone: z.string().trim().max(32).nullable().optional(),
+  phone: phoneSchema.nullable().optional(),
   date_of_birth: z
     .string()
     .regex(DATE_RE, "date_of_birth must be YYYY-MM-DD.")

@@ -14,6 +14,28 @@ export function parseBody<T extends ZodTypeAny>(
 }
 
 export const emailSchema = z.string().trim().toLowerCase().email("Invalid email address.");
+export const optionalEmailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .email("Invalid email address.")
+  .optional()
+  .nullable();
+export const phoneSchema = z
+  .string()
+  .trim()
+  .regex(/^(\+91)?[6-9]\d{9}$/, "Invalid Indian phone number. Use a 10-digit mobile number.")
+  .refine((v) => {
+    const digits = v.replace(/\D/g, "");
+    const local = digits.length === 12 ? digits.slice(2) : digits.slice(-10);
+    return /^[6-9]/.test(local);
+  }, "Invalid Indian phone number. Must start with 6-9.")
+  .transform((v) => {
+    const digits = v.replace(/\D/g, "");
+    const local = digits.length === 12 ? digits.slice(2) : digits.slice(-10);
+    return `+91${local}`;
+  });
+export const otpSchema = z.string().regex(/^\d{6}$/, "OTP must be 6 digits.");
 export const passwordSchema = z
   .string()
   .min(8, "Password must be at least 8 characters.")

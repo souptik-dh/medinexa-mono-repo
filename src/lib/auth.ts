@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
-import { pool, type Row } from "@/lib/db";
+import { pool, parseDbTimestamp, type Row } from "@/lib/db";
 import { ApiError, unauthorized } from "@/lib/errors";
 import { newId, type Role } from "@/lib/ids";
 import type { NextRequest } from "next/server";
@@ -15,7 +15,8 @@ const JWT_SECRET = new TextEncoder().encode(
 export interface AuthContext {
   userId: string;
   role: Role;
-  email: string;
+  email: string | null;
+  phone: string | null;
   branchId: string | null;
   doctorId: string | null;
 }
@@ -95,7 +96,7 @@ export async function verifyAccessToken(token: string): Promise<{ sub: string; r
 
 async function loadUser(userId: string): Promise<(AuthContext & { status: string }) | null> {
   const [rows] = await pool.query<Row[]>(
-    `SELECT u.id, u.email, u.role, u.status, bs.branch_id, d.id AS doctor_id
+    `SELECT u.id, u.email, u.phone, u.role, u.status, bs.branch_id, d.id AS doctor_id
        FROM users u
        LEFT JOIN branch_staff bs ON bs.user_id = u.id
        LEFT JOIN doctors d ON d.user_id = u.id AND d.deleted_at IS NULL
@@ -106,7 +107,8 @@ async function loadUser(userId: string): Promise<(AuthContext & { status: string
   if (!row) return null;
   return {
     userId: row.id,
-    email: row.email,
+    email: row.email ?? null,
+    phone: row.phone ?? null,
     role: row.role,
     status: row.status,
     branchId: row.branch_id ?? null,
@@ -139,7 +141,7 @@ export async function rotateRefreshToken(raw: string): Promise<{ access_token: s
     const row = rows[0];
     if (!row) throw unauthorized("REFRESH_TOKEN_INVALID", "Refresh token is invalid.");
     if (row.revoked_at) throw unauthorized("REFRESH_TOKEN_INVALID", "Refresh token has been revoked.");
-    if (new Date(String(row.expires_at).replace(" ", "T") + "Z").getTime() <= Date.now())
+    if (parseDbTimestamp(String(row.expires_at)).getTime() <= Date.now())
       throw unauthorized("REFRESH_TOKEN_INVALID", "Refresh token has expired.");
 
     const user = await loadUser(row.user_id);
@@ -206,6 +208,7 @@ export async function parseAuthContext(request: NextRequest): Promise<AuthContex
     userId: user.userId,
     role: user.role,
     email: user.email,
+    phone: user.phone,
     branchId: user.branchId,
     doctorId: user.doctorId,
   };

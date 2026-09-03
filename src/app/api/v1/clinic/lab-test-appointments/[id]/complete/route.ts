@@ -8,10 +8,11 @@ import {
   serializeLabTestAppointment,
 } from "@/lib/lab-tests";
 import { hasSlotPassedInTz } from "@/lib/availability";
-import { createPatientNotification, sendEmail, detailsEmailHtml } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict } from "@/lib/errors";
+import { issueReceipt } from "@/lib/receipts";
 import type { RowDataPacket } from "mysql2/promise";
 
 export const POST = api({ rateLimit: 200 }, async (ctx) => {
@@ -53,11 +54,17 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   });
 
   const [patientRows] = await pool.query<RowDataPacket[]>(
-    `SELECT name, email FROM users WHERE id = ?`,
+    `SELECT name, email, phone FROM users WHERE id = ?`,
     [appointment.patient_id],
   );
   const patient = patientRows[0];
 
+  if (patient?.phone) {
+    await sendSms(
+      patient.phone,
+      `Jido Healthcare: Your lab test (${appointment.test_name}) for ${appointment.appointment_number} has been completed.`,
+    );
+  }
   if (patient?.email) {
     await sendEmail(
       patient.email,
@@ -78,5 +85,34 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   }
 
   const updated = await getLabTestAppointmentInScope(pool, id, auth);
+
+  await issueReceipt(pool, {
+    sourceType: "lab_test_appointment",
+    sourceId: updated.id,
+    eventType: "completed",
+    patientId: updated.patient_id,
+    clinicId: updated.clinic_id,
+    branchId: updated.branch_id,
+    amount: Number(updated.price),
+    currency: updated.currency,
+    paymentMethod: updated.payment_method ?? null,
+    generatedBy: auth.userId,
+    details: {
+      patient_name: updated.patient_name ?? null,
+      test_name: updated.test_name ?? null,
+      clinic_name: updated.clinic_name ?? null,
+      branch_name: updated.branch_name ?? null,
+      branch_address: updated.branch_address ?? null,
+      branch_phone: updated.branch_phone ?? null,
+      appointment_number: updated.appointment_number,
+      service_mode: updated.service_mode,
+      scheduled_date: updated.appointment_date,
+      scheduled_time: updated.start_time,
+      price: Number(updated.price),
+      currency: updated.currency,
+      paid: updated.payment_status === "PAID",
+    },
+  });
+
   return json(serializeLabTestAppointment(updated));
 });

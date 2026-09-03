@@ -13,8 +13,10 @@ import {
   notifyBranchStaff,
   createNotification,
   branchContactEmails,
+  branchContactPhones,
   sendEmail,
   detailsEmailHtml,
+  sendSms,
 } from "@/lib/notifications";
 import { runIdempotent } from "@/lib/idempotency";
 import { assertClinicOperational } from "@/lib/subscriptions";
@@ -224,6 +226,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     const appointment = saved[0];
 
     const staffEmails = await branchContactEmails(pool, body.branch_id);
+    const staffPhones = await branchContactPhones(pool, body.branch_id);
     const [patientRows] = await pool.query<RowDataPacket[]>(
       `SELECT name, email FROM users WHERE id = ?`,
       [auth.userId],
@@ -247,6 +250,11 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
 
     for (const email of staffEmails) {
       await sendEmail(email, emailSubject, "", emailBody);
+    }
+
+    const smsText = `Jido Healthcare: New lab test booking ${appointmentNumber} (${blt.test_name}) at ${branch.name} on ${body.appointment_date} at ${body.start_time} — please review and approve/reject.`;
+    for (const phone of staffPhones) {
+      await sendSms(phone, smsText);
     }
 
     return { status: 201, body: serializeLabTestAppointment(appointment) };

@@ -7,7 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:migrate": "node --env-file=.env scripts/db-migrate.mjs"
+    "db:migrate": "node --env-file=.env scripts/db-migrate.mjs",
+    "db:set-clinic-owner-passwords": "node --env-file=.env scripts/set-clinic-owner-passwords.mjs",
+    "db:truncate-all": "node --env-file=.env scripts/truncate-all-tables.mjs",
+    "db:create-super-admin": "node --env-file=.env scripts/create-super-admin.mjs"
   },
   "dependencies": {
     "@types/bcryptjs": "^2.4.6",

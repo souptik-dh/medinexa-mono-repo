@@ -4,7 +4,7 @@ import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 import { scopeWhere, serializeAppointment } from "@/lib/appointments";
 
-export const GET = api(undefined, async (ctx) => {
+export const GET = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient", "branch_staff", "doctor", "clinic_owner"]);
   const { where, params } = scopeWhere(auth);
 
@@ -13,6 +13,7 @@ export const GET = api(undefined, async (ctx) => {
             d.name AS doctor_name,
             d.photo_url AS doctor_photo_url,
             b.name AS branch_name,
+            b.phone AS branch_phone,
             u.name AS patient_name,
             u.email AS patient_email,
             u.phone AS patient_phone,

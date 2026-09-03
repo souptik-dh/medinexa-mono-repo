@@ -1,17 +1,20 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
-import { parseBody, passwordSchema } from "@/lib/validators";
-import { pool, withTransaction, type Row } from "@/lib/db";
+import { parseBody, phoneSchema, otpSchema, passwordSchema } from "@/lib/validators";
+import { pool, parseDbTimestamp, type Row } from "@/lib/db";
 import { hashPassword, hashToken } from "@/lib/auth";
-import { ApiError, badRequest } from "@/lib/errors";
-import type { ResultSetHeader } from "mysql2/promise";
+import { ApiError, badRequest, unauthorized } from "@/lib/errors";
 
 const schema = z.object({
-  token: z.string().min(1).max(512),
+  phone: phoneSchema,
+  otp: otpSchema,
   new_password: passwordSchema,
   confirm_password: z.string().min(1).max(128),
 });
 
+/**
+ * Password reset, step 2: verifies the phone OTP and sets a new password.
+ */
 export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
   const body = parseBody(schema, await readJson(ctx.request));
 
@@ -23,44 +26,33 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
     );
   }
 
-  const [tokens] = await pool.query<Row[]>(
-    `SELECT * FROM password_reset_tokens WHERE token_hash = ? AND used_at IS NULL`,
-    [hashToken(body.token)],
+  const [codes] = await pool.query<Row[]>(
+    `SELECT * FROM otp_codes
+      WHERE phone = ? AND purpose = 'phone_verification' AND verified_at IS NULL
+      ORDER BY created_at DESC LIMIT 1`,
+    [body.phone],
   );
-  const token = tokens[0];
-  if (!token) {
-    throw badRequest(
-      "RESET_TOKEN_INVALID",
-      "This password reset link is invalid. Request a new one.",
-    );
+  const code = codes[0];
+  if (!code) throw unauthorized("INVALID_OTP", "No pending OTP found for this phone number.");
+  if (parseDbTimestamp(code.expires_at).getTime() < Date.now()) {
+    throw new ApiError(410, "OTP_EXPIRED", "This OTP has expired. Request a new one.");
   }
-  if (Date.parse(`${token.expires_at}Z`) < Date.now()) {
-    throw new ApiError(
-      410,
-      "RESET_TOKEN_EXPIRED",
-      "This password reset link has expired. Request a new one.",
-    );
+  if (hashToken(`${body.phone}:${body.otp}`) !== code.code_hash) {
+    await pool.query(`UPDATE otp_codes SET attempts = attempts + 1 WHERE id = ?`, [code.id]);
+    throw unauthorized("INVALID_OTP", "Incorrect OTP. Please try again.");
   }
+
+  const [users] = await pool.query<Row[]>(
+    `SELECT id FROM users WHERE phone = ? AND status = 'active'`,
+    [body.phone],
+  );
+  const user = users[0];
+  if (!user) throw unauthorized("ACCOUNT_NOT_FOUND", "No active account found for this phone number.");
 
   const passwordHash = await hashPassword(body.new_password);
 
-  await withTransaction(async (conn) => {
-    const [claim] = await conn.query<ResultSetHeader>(
-      `UPDATE password_reset_tokens SET used_at = UTC_TIMESTAMP(3)
-        WHERE id = ? AND used_at IS NULL`,
-      [token.id],
-    );
-    if (claim.affectedRows !== 1) {
-      throw badRequest(
-        "RESET_TOKEN_INVALID",
-        "This password reset link has already been used. Request a new one.",
-      );
-    }
-    await conn.query(`UPDATE users SET password_hash = ? WHERE id = ?`, [
-      passwordHash,
-      token.user_id,
-    ]);
-  });
+  await pool.query(`UPDATE otp_codes SET verified_at = UTC_TIMESTAMP(3) WHERE id = ?`, [code.id]);
+  await pool.query(`UPDATE users SET password_hash = ? WHERE id = ?`, [passwordHash, user.id]);
 
   return json({
     message: "Your password has been updated. You can now log in with your new password.",

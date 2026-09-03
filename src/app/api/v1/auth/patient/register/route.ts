@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
-import { parseBody, emailSchema, passwordSchema } from "@/lib/validators";
-import { registerUser } from "@/lib/auth-flows";
+import { parseBody, phoneSchema, optionalEmailSchema, otpSchema } from "@/lib/validators";
+import { registerUser, verifyRegistrationOtp } from "@/lib/auth-flows";
+import { badRequest } from "@/lib/errors";
 
-const schema = z.object({
+const registerSchema = z.object({
   name: z.string().trim().min(1).max(255),
-  email: emailSchema,
-  phone: z.string().trim().max(32).optional().nullable(),
+  email: optionalEmailSchema,
+  phone: phoneSchema,
   address: z.string().trim().min(1).max(500),
   nearby_location: z.string().trim().max(500).optional().nullable(),
   city: z.string().trim().max(255).optional().nullable(),
@@ -14,30 +15,44 @@ const schema = z.object({
   pin_code: z.string().trim().max(20).optional().nullable(),
   state: z.string().trim().max(255).optional().nullable(),
   post_office: z.string().trim().max(255).optional().nullable(),
-  password: passwordSchema,
+  otp: otpSchema,
 });
 
 export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
-  const body = parseBody(schema, await readJson(ctx.request));
-  const result = await registerUser({
-    name: body.name,
-    email: body.email,
+  const body = parseBody(registerSchema, await readJson(ctx.request));
+
+  // The phone must be verified with an OTP before the account is created.
+  // Registration is a 2-step flow: POST /auth/patient/send-otp delivers the
+  // code, then this endpoint verifies it and creates the account.
+  const result = await verifyRegistrationOtp({
     phone: body.phone,
-    address: body.address,
-    nearby_location: body.nearby_location,
-    city: body.city,
-    district: body.district,
-    pin_code: body.pin_code,
-    state: body.state,
-    post_office: body.post_office,
-    password: body.password,
-    role: "patient",
+    otp: body.otp,
+    purposes: ["phone_verification", "patient_login"],
   });
+  if (!result.ok) throw badRequest("INVALID_OTP", result.message);
+
+  const reg = await registerUser(
+    {
+      name: body.name,
+      email: body.email ?? null,
+      phone: body.phone,
+      address: body.address,
+      nearby_location: body.nearby_location ?? null,
+      city: body.city ?? null,
+      district: body.district ?? null,
+      pin_code: body.pin_code ?? null,
+      state: body.state ?? null,
+      post_office: body.post_office ?? null,
+      password: null,
+      role: "patient",
+    },
+    true,
+  );
   return json(
     {
-      user: result.user,
-      access_token: result.access_token,
-      refresh_token: result.refresh_token,
+      user: reg.user,
+      access_token: reg.access_token,
+      refresh_token: reg.refresh_token,
     },
     201,
   );
