@@ -507,6 +507,43 @@ export async function sendSms(to: string, body: string): Promise<void> {
   }
 }
 
+/**
+ * WhatsApp delivery through a local WAHA instance (see whatsapp.md). Configured via
+ * WAHA_BASE_URL (default http://localhost:3000), WAHA_API_KEY, and WAHA_SESSION
+ * (default "default"). Falls back to a console log in local dev when WAHA_API_KEY
+ * is not configured. Never throws.
+ */
+export async function sendWhatsapp(to: string, body: string): Promise<void> {
+  const apiKey = process.env.WAHA_API_KEY;
+  const baseUrl = process.env.WAHA_BASE_URL ?? "http://localhost:3000";
+  const session = process.env.WAHA_SESSION ?? "default";
+  if (!apiKey) {
+    console.log(`[whatsapp:stub] to=${to} body=${body}`);
+    return;
+  }
+  const chatId = `${to.replace(/\D/g, "")}@c.us`;
+  try {
+    const res = await fetch(`${baseUrl}/api/sendText`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Api-Key": apiKey,
+      },
+      body: JSON.stringify({
+        session,
+        chatId,
+        text: body,
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error(`[whatsapp] WAHA rejected send to ${to} (${res.status}): ${detail}`);
+    }
+  } catch (err) {
+    console.error(`[whatsapp] send to ${to} failed:`, err);
+  }
+}
+
 /** Sends a one-time login/password code via SMS. */
 export async function sendOtpSms(
   phone: string,
@@ -519,8 +556,20 @@ export async function sendOtpSms(
   );
 }
 
+/** Sends a one-time login/password code via WhatsApp. */
+export async function sendOtpWhatsapp(
+  phone: string,
+  otp: string,
+  expiryMinutes: number,
+): Promise<void> {
+  await sendWhatsapp(
+    phone,
+    `Your Jido Healthcare confirmation code is ${otp}. It expires in ${expiryMinutes} minutes. Do not share this code with anyone.`,
+  );
+}
+
 /**
- * Sends a one-time code via BOTH SMS and email (if an email is on file).
+ * Sends a one-time code via SMS, email (if an email is on file), and WhatsApp.
  * Failures never reject the caller.
  */
 export async function sendOtpDual(opts: {
@@ -530,6 +579,7 @@ export async function sendOtpDual(opts: {
   expiryMinutes: number;
 }): Promise<void> {
   const smsPromise = sendOtpSms(opts.phone, opts.otp, opts.expiryMinutes);
+  const whatsappPromise = sendOtpWhatsapp(opts.phone, opts.otp, opts.expiryMinutes);
   const emailPromise = opts.email
     ? sendEmail(
         opts.email,
@@ -538,7 +588,7 @@ export async function sendOtpDual(opts: {
         otpEmailHtml(opts.otp, opts.expiryMinutes),
       )
     : Promise.resolve();
-  await Promise.allSettled([smsPromise, emailPromise]);
+  await Promise.allSettled([smsPromise, whatsappPromise, emailPromise]);
 }
 
 /** Sends a doctor invitation link via SMS. */

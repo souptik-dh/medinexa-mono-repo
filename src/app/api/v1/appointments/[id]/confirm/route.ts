@@ -2,7 +2,7 @@ import { api, json } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { notFound } from "@/lib/errors";
@@ -64,10 +64,9 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
       paid: false,
     },
   });
-  const smsConfirm = () => sendSms(
-    info.patient_phone,
-    `Jido Healthcare: Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`,
-  );
+  const confirmText = `Jido Healthcare: Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
+  const smsConfirm = () => sendSms(info.patient_phone, confirmText);
+  const whatsappConfirm = () => sendWhatsapp(info.patient_phone, confirmText);
   if (info?.patient_email) {
     const confirmBody = `Hi ${info.patient_name ?? "there"},\n\nYour appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
     const confirmHtml = detailsEmailHtml({
@@ -87,7 +86,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
       confirmHtml,
     );
   }
-  if (info?.patient_phone) await smsConfirm();
+  if (info?.patient_phone) await Promise.allSettled([smsConfirm(), whatsappConfirm()]);
 
   return json(serializeAppointment(appointment));
 });
