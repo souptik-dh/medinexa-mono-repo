@@ -3,11 +3,17 @@ import { pool, withTransaction, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
 import { hasSlotPassedInTz } from "@/lib/availability";
-import { createPatientNotification } from "@/lib/notifications";
+import {
+  createPatientNotification,
+  notifyPhonesSmsWhatsapp,
+  branchContactPhones,
+  sendWhatsappFile,
+} from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { conflict, notFound } from "@/lib/errors";
 import { issueReceipt } from "@/lib/receipts";
+import { buildReceiptPdf } from "@/lib/pdf";
 
 export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["branch_staff", "clinic_owner"]);
@@ -33,7 +39,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
 
   const [details] = await pool.query<Row[]>(
-    `SELECT u.name AS patient_name, d.name AS doctor_name,
+    `SELECT u.name AS patient_name, u.phone AS patient_phone, d.name AS doctor_name,
             b.name AS branch_name, b.address AS branch_address, b.phone AS branch_phone, c.name AS clinic_name
        FROM appointments a
        JOIN users u ON u.id = a.patient_id
@@ -45,7 +51,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   );
   const info = details[0];
 
-  await issueReceipt(pool, {
+  const receipt = await issueReceipt(pool, {
     sourceType: "appointment",
     sourceId: appointment.id,
     eventType: "completed",
@@ -70,6 +76,42 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
       paid: true,
     },
   });
+
+  const clinicPhones = await branchContactPhones(pool, appointment.branch_id);
+  void notifyPhonesSmsWhatsapp(
+    clinicPhones,
+    `Jido Healthcare: Consultation for ${info?.patient_name ?? "a patient"} with Dr. ${info?.doctor_name} at ${info?.branch_name} has been completed.`,
+  );
+
+  if (info?.patient_phone) {
+    void notifyPhonesSmsWhatsapp(
+      [info.patient_phone],
+      `Jido Healthcare: Your consultation with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been completed.`,
+    );
+    if (receipt) {
+      const pdf = buildReceiptPdf({
+        title: "Consultation Completion Receipt",
+        receiptNumber: receipt.receiptNumber,
+        issuedAt: new Date().toISOString(),
+        clinicName: info.clinic_name ?? "Clinic",
+        branchName: info.branch_name,
+        branchAddress: info.branch_address ?? null,
+        branchPhone: info.branch_phone ?? null,
+        patientName: info.patient_name ?? "Patient",
+        rows: [
+          { label: "Doctor", value: `Dr. ${info.doctor_name}` },
+          { label: "Date & Time", value: `${appointment.scheduled_date} at ${appointment.scheduled_time}` },
+        ],
+        amount: { label: "Amount", value: `${Number(appointment.fee_amount)} ${appointment.currency}`, due: false },
+        copy: "patient",
+      });
+      void sendWhatsappFile(
+        info.patient_phone,
+        { filename: `receipt-${receipt.receiptNumber}.pdf`, mimetype: "application/pdf", data: pdf },
+        "Your consultation receipt",
+      );
+    }
+  }
 
   return json(serializeAppointment(appointment));
 });

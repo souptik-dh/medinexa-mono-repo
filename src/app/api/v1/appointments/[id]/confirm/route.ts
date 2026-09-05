@@ -2,11 +2,21 @@ import { api, json } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp } from "@/lib/notifications";
+import {
+  createPatientNotification,
+  sendEmail,
+  detailsEmailHtml,
+  sendSms,
+  sendWhatsapp,
+  sendWhatsappFile,
+  notifyPhonesSmsWhatsapp,
+  branchContactPhones,
+} from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { notFound } from "@/lib/errors";
 import { issueReceipt } from "@/lib/receipts";
+import { buildReceiptPdf } from "@/lib/pdf";
 
 export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["branch_staff", "clinic_owner"]);
@@ -87,7 +97,38 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
       confirmHtml,
     );
   }
-  if (info?.patient_phone) await Promise.allSettled([smsConfirm(), whatsappConfirm()]);
+  if (info?.patient_phone) {
+    await Promise.allSettled([smsConfirm(), whatsappConfirm()]);
+    if (receipt) {
+      const pdf = buildReceiptPdf({
+        title: "Booking Confirmation Receipt",
+        receiptNumber: receipt.receiptNumber,
+        issuedAt: new Date().toISOString(),
+        clinicName: info.clinic_name ?? "Clinic",
+        branchName: info.branch_name,
+        branchAddress: info.branch_address ?? null,
+        branchPhone: info.branch_phone ?? null,
+        patientName: info.patient_name ?? "Patient",
+        rows: [
+          { label: "Doctor", value: `Dr. ${info.doctor_name}` },
+          { label: "Date & Time", value: `${appointment.scheduled_date} at ${appointment.scheduled_time}` },
+        ],
+        amount: { label: "Amount Due", value: `${Number(appointment.fee_amount)} ${appointment.currency}`, due: true },
+        copy: "patient",
+      });
+      void sendWhatsappFile(
+        info.patient_phone,
+        { filename: `receipt-${receipt.receiptNumber}.pdf`, mimetype: "application/pdf", data: pdf },
+        "Your booking confirmation receipt",
+      );
+    }
+  }
+
+  const clinicPhones = await branchContactPhones(pool, appointment.branch_id);
+  void notifyPhonesSmsWhatsapp(
+    clinicPhones,
+    `Jido Healthcare: Appointment with Dr. ${info.doctor_name} for ${info.patient_name ?? "a patient"} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`,
+  );
 
   return json(serializeAppointment(appointment));
 });

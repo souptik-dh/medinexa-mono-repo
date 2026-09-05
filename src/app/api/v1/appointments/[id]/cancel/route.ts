@@ -6,7 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createPatientNotification, notifyBranchStaff, sendWhatsapp } from "@/lib/notifications";
+import { createPatientNotification, notifyBranchStaff, notifyPhonesSmsWhatsapp, branchContactPhones } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 
 const schema = z.object({
@@ -52,23 +52,22 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const appointment = rows[0];
   if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
 
-  if (auth.role !== "patient") {
-    const [details] = await pool.query<Row[]>(
-      `SELECT u.phone AS patient_phone, d.name AS doctor_name, b.name AS branch_name
-         FROM appointments a
-         JOIN users u ON u.id = a.patient_id
-         JOIN doctors d ON d.id = a.doctor_id
-         JOIN branches b ON b.id = a.branch_id
-        WHERE a.id = ?`,
-      [ctx.params.id],
-    );
-    const info = details[0];
-    if (info?.patient_phone) {
-      void sendWhatsapp(
-        info.patient_phone,
-        `Jido Healthcare: Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been cancelled.${body.reason ? ` Reason: ${body.reason}` : ""}`,
-      );
-    }
+  const [details] = await pool.query<Row[]>(
+    `SELECT u.phone AS patient_phone, d.name AS doctor_name, b.name AS branch_name
+       FROM appointments a
+       JOIN users u ON u.id = a.patient_id
+       JOIN doctors d ON d.id = a.doctor_id
+       JOIN branches b ON b.id = a.branch_id
+      WHERE a.id = ?`,
+    [ctx.params.id],
+  );
+  const info = details[0];
+  const cancelText = `Jido Healthcare: The appointment with Dr. ${info?.doctor_name} at ${info?.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been cancelled.${body.reason ? ` Reason: ${body.reason}` : ""}`;
+
+  const clinicPhones = await branchContactPhones(pool, appointment.branch_id);
+  void notifyPhonesSmsWhatsapp(clinicPhones, cancelText);
+  if (info?.patient_phone) {
+    void notifyPhonesSmsWhatsapp([info.patient_phone], cancelText);
   }
 
   return json(serializeAppointment(appointment));

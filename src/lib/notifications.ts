@@ -526,37 +526,40 @@ async function wahaSessionStatus(baseUrl: string, apiKey: string, session: strin
   }
 }
 
+async function wahaPost(baseUrl: string, apiKey: string, path: string, payload: unknown): Promise<Response> {
+  return fetch(`${baseUrl}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Api-Key": apiKey },
+    body: JSON.stringify(payload),
+  });
+}
+
 const WAHA_RECOVERY_POLL_MS = 1500;
 const WAHA_RECOVERY_MAX_POLLS = 5;
 
 /**
  * A WAHA session can drop out of WORKING (phone unlinked, WAHA process restarted
- * without persisted auth, etc), at which point /sendText answers 404 (session
+ * without persisted auth, etc), at which point a send endpoint answers 404 (session
  * doesn't exist) or 422 (session exists but isn't WORKING). Recreates/restarts the
- * session and retries the send once it reports WORKING again, so a dropped session
- * heals itself instead of silently losing every message until someone notices.
- * Runs detached from the triggering request — never blocks or throws.
+ * session and retries the original send once it reports WORKING again, so a dropped
+ * session heals itself instead of silently losing every message until someone
+ * notices. `sendPath`/`payload` are the exact endpoint and body to retry (e.g.
+ * /api/sendText or /api/sendFile). Runs detached from the triggering request —
+ * never blocks or throws.
  */
 async function recoverWahaSessionAndRetry(
   baseUrl: string,
   apiKey: string,
   session: string,
-  chatId: string,
-  text: string,
+  sendPath: string,
+  payload: unknown,
 ): Promise<void> {
   const status = await wahaSessionStatus(baseUrl, apiKey, session);
   try {
     if (status === null) {
-      await fetch(`${baseUrl}/api/sessions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Api-Key": apiKey },
-        body: JSON.stringify({ name: session, start: true }),
-      });
+      await wahaPost(baseUrl, apiKey, "/api/sessions", { name: session, start: true });
     } else if (status !== "WORKING") {
-      await fetch(`${baseUrl}/api/sessions/${session}/restart`, {
-        method: "POST",
-        headers: { "X-Api-Key": apiKey },
-      });
+      await wahaPost(baseUrl, apiKey, `/api/sessions/${session}/restart`, {});
     }
   } catch (err) {
     console.error(`[whatsapp] session recovery request for "${session}" failed:`, err);
@@ -567,11 +570,7 @@ async function recoverWahaSessionAndRetry(
     await new Promise((resolve) => setTimeout(resolve, WAHA_RECOVERY_POLL_MS));
     const current = await wahaSessionStatus(baseUrl, apiKey, session);
     if (current === "WORKING") {
-      const res = await fetch(`${baseUrl}/api/sendText`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Api-Key": apiKey },
-        body: JSON.stringify({ session, chatId, text }),
-      }).catch(() => null);
+      const res = await wahaPost(baseUrl, apiKey, sendPath, payload).catch(() => null);
       if (!res || !res.ok) {
         console.error(`[whatsapp] retry after session recovery still failed for session "${session}".`);
       }
@@ -598,31 +597,64 @@ export async function sendWhatsapp(to: string, body: string): Promise<void> {
     return;
   }
   const chatId = `${to.replace(/\D/g, "")}@c.us`;
+  const payload = { session, chatId, text: body };
   try {
-    const res = await fetch(`${baseUrl}/api/sendText`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Api-Key": apiKey,
-      },
-      body: JSON.stringify({
-        session,
-        chatId,
-        text: body,
-      }),
-    });
+    const res = await wahaPost(baseUrl, apiKey, "/api/sendText", payload);
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       console.error(`[whatsapp] WAHA rejected send to ${to} (${res.status}): ${detail}`);
       // Session expired/missing — recreate or restart it and retry in the background
       // rather than losing the message silently.
       if (res.status === 404 || res.status === 422) {
-        void recoverWahaSessionAndRetry(baseUrl, apiKey, session, chatId, body);
+        void recoverWahaSessionAndRetry(baseUrl, apiKey, session, "/api/sendText", payload);
       }
     }
   } catch (err) {
     console.error(`[whatsapp] send to ${to} failed:`, err);
   }
+}
+
+/**
+ * Sends a document (e.g. a receipt PDF) as a WhatsApp file attachment through WAHA's
+ * /api/sendFile. `data` is the raw file bytes — base64-encoded here, not by the caller.
+ * Same config/stub/recovery behavior as sendWhatsapp. Never throws.
+ */
+export async function sendWhatsappFile(
+  to: string,
+  file: { filename: string; mimetype: string; data: Buffer },
+  caption?: string,
+): Promise<void> {
+  const apiKey = process.env.WAHA_API_KEY;
+  const baseUrl = process.env.WAHA_BASE_URL ?? "http://localhost:3000";
+  const session = process.env.WAHA_SESSION ?? "default";
+  if (!apiKey) {
+    console.log(`[whatsapp:stub] to=${to} file=${file.filename}`);
+    return;
+  }
+  const chatId = `${to.replace(/\D/g, "")}@c.us`;
+  const payload = {
+    session,
+    chatId,
+    file: { mimetype: file.mimetype, filename: file.filename, data: file.data.toString("base64") },
+    caption,
+  };
+  try {
+    const res = await wahaPost(baseUrl, apiKey, "/api/sendFile", payload);
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.error(`[whatsapp] WAHA rejected file send to ${to} (${res.status}): ${detail}`);
+      if (res.status === 404 || res.status === 422) {
+        void recoverWahaSessionAndRetry(baseUrl, apiKey, session, "/api/sendFile", payload);
+      }
+    }
+  } catch (err) {
+    console.error(`[whatsapp] file send to ${to} failed:`, err);
+  }
+}
+
+/** Sends the same message to every phone number over both SMS and WhatsApp. */
+export async function notifyPhonesSmsWhatsapp(phones: string[], text: string): Promise<void> {
+  await Promise.all(phones.flatMap((phone) => [sendSms(phone, text), sendWhatsapp(phone, text)]));
 }
 
 /** Sends a one-time login/password code via SMS. */

@@ -7,7 +7,7 @@ import { badRequest, conflict, notFound, unprocessable, isUniqueViolation } from
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { scopeWhere, serializeAppointment, APPT_STATUSES } from "@/lib/appointments";
-import { notifyBranchStaff, createNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp } from "@/lib/notifications";
+import { notifyBranchStaff, createNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, notifyPhonesSmsWhatsapp } from "@/lib/notifications";
 import {
   todayInTz,
   weekdayInTz,
@@ -383,14 +383,14 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
           },
         ],
       });
-      // sendEmail/sendSms already catch their own errors — no reason to hold the response
-      // on the round trips once the booking itself is committed.
+      // sendEmail/notifyPhonesSmsWhatsapp already catch their own errors — no reason to
+      // hold the response on the round trips once the booking itself is committed.
       void Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody, emailHtmlBody)));
-      void Promise.all(recipientPhones.map((phone) => sendSms(phone, smsText)));
+      void notifyPhonesSmsWhatsapp(recipientPhones, smsText);
 
       if (info.patient_phone) {
-        void sendWhatsapp(
-          info.patient_phone,
+        void notifyPhonesSmsWhatsapp(
+          [info.patient_phone],
           `Jido Healthcare: Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${body.date} at ${scheduledTime} has been booked and is awaiting confirmation.`,
         );
       }

@@ -5,12 +5,22 @@ import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { badRequest, notFound } from "@/lib/errors";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createNotification, createPatientNotification, clinicOwnerContact, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp } from "@/lib/notifications";
+import {
+  createNotification,
+  createPatientNotification,
+  clinicOwnerContact,
+  sendEmail,
+  detailsEmailHtml,
+  sendWhatsappFile,
+  notifyPhonesSmsWhatsapp,
+  branchContactPhones,
+} from "@/lib/notifications";
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { issueReceipt } from "@/lib/receipts";
+import { buildReceiptPdf } from "@/lib/pdf";
 
 const schema = z.object({
   fee_amount: z.coerce.number().positive().max(1_000_000),
@@ -137,17 +147,41 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
         paid: true,
       },
     });
-    if (info?.owner_phone) {
-      await sendSms(
-        info.owner_phone,
-        `Jido Healthcare: Payment of ${body.fee_amount} ${appointment.currency} collected via ${body.method} from ${info.patient_name ?? "a patient"} at ${info.branch_name}.`,
-      );
-    }
+    const clinicPhones = await branchContactPhones(pool, appointment.branch_id);
+    void notifyPhonesSmsWhatsapp(
+      clinicPhones,
+      `Jido Healthcare: Payment of ${body.fee_amount} ${appointment.currency} collected via ${body.method} from ${info.patient_name ?? "a patient"} at ${info.branch_name}.`,
+    );
     if (info?.patient_phone) {
-      void sendWhatsapp(
-        info.patient_phone,
+      void notifyPhonesSmsWhatsapp(
+        [info.patient_phone],
         `Jido Healthcare: Payment of ${body.fee_amount} ${appointment.currency} received for your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time}.${receipt ? ` Receipt No: ${receipt.receiptNumber}.` : ""}`,
       );
+      if (receipt) {
+        const pdf = buildReceiptPdf({
+          title: "Payment Receipt",
+          receiptNumber: receipt.receiptNumber,
+          issuedAt: new Date().toISOString(),
+          clinicName: info.clinic_name ?? "Clinic",
+          branchName: info.branch_name,
+          branchAddress: info.branch_address ?? null,
+          branchPhone: info.branch_phone ?? null,
+          patientName: info.patient_name ?? "Patient",
+          rows: [
+            { label: "Doctor", value: `Dr. ${info.doctor_name}` },
+            { label: "Date & Time", value: `${appointment.scheduled_date} at ${appointment.scheduled_time}` },
+            { label: "Payment Method", value: body.method },
+            ...(body.reference_no ? [{ label: "Reference No.", value: body.reference_no }] : []),
+          ],
+          amount: { label: "Amount", value: `${body.fee_amount} ${appointment.currency}`, due: false },
+          copy: "patient",
+        });
+        void sendWhatsappFile(
+          info.patient_phone,
+          { filename: `receipt-${receipt.receiptNumber}.pdf`, mimetype: "application/pdf", data: pdf },
+          "Your payment receipt",
+        );
+      }
     }
     if (info?.owner_email) {
       const paymentBody = `A payment of ${body.fee_amount} ${appointment.currency} was collected via ${body.method} from ${info.patient_name ?? "a patient"} at ${info.branch_name}.${body.reference_no ? `\nReference: ${body.reference_no}` : ""}`;
