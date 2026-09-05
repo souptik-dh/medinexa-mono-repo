@@ -104,6 +104,17 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
          VALUES (?, ?, ?, ?, ?, 1, ?)`,
         [assignmentId, doctorId, branchId, body.fee_amount, body.currency, body.slot_type],
       );
+      // The doctor already exists (this is the same-clinic fast-track), but the
+      // invite form still lets the clinic pick specializations for this branch -
+      // e.g. adding "ENT" for a doctor previously only mapped to "General
+      // Physician". Persist any not already on the doctor's map, so search keeps
+      // matching on the doctor's full specialization set, not just their first one.
+      for (const specialization of specializationRows) {
+        await conn.query(
+          `INSERT IGNORE INTO doctor_specialization_map (id, doctor_id, specialization_id) VALUES (?, ?, ?)`,
+          [newId(), doctorId, specialization.id],
+        );
+      }
       for (const slot of body.slot_template) {
         await conn.query(
           `INSERT INTO doctor_slot_templates

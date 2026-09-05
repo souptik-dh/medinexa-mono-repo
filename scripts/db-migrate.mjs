@@ -61,6 +61,20 @@ try {
     console.log('Applied migration: doctors.smc_name, doctors.doctor_degree');
   }
 
+  // reg_no alone can collide across state medical councils, so the unique
+  // constraint is scoped to (reg_no, smc_name) instead. Older installs still
+  // have the single-column key; widen it in place.
+  const [regNoIndexCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctors' AND INDEX_NAME = 'uniq_doctors_reg_no'`,
+  );
+  if (Number(regNoIndexCols[0].cnt) === 1) {
+    await conn.query(
+      `ALTER TABLE doctors DROP INDEX uniq_doctors_reg_no, ADD UNIQUE KEY uniq_doctors_reg_no (reg_no, smc_name)`,
+    );
+    console.log('Applied migration: doctors.uniq_doctors_reg_no scoped to (reg_no, smc_name)');
+  }
+
   const [inviteSmcCols] = await conn.query(
     `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_invites' AND COLUMN_NAME = 'smc_name'`,

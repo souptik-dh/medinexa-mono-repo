@@ -4623,7 +4623,7 @@ Full operator view of one clinic — location, owner, licenses, subscription, br
   "subscription": { /* Subscription object */ },
   "branches": [ { "id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b", "name": "Sunrise — Andheri", "address": "12, SV Road, Andheri West, Mumbai 400058", "city": "Mumbai", "district": "Mumbai Suburban", "pin_code": "400058", "state": "Maharashtra", "phone": "+912240010010", "timezone": "Asia/Kolkata", "trade_license_validation_status": "VALID", "created_at": "2026-06-02T11:00:00Z" } ],
   "staff": [ { "user_id": "7c1d2e3f-4a5b-6c7d-8e9f-0a1b2c3d4e5f", "name": "Ritu Sharma", "email": "ritu@sunrise.example", "phone": "+919812345670", "account_status": "active", "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b", "branch_name": "Sunrise — Andheri", "added_at": "2026-06-05T08:00:00Z" } ],
-  "doctors": [ { "id": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d", "name": "Dr. Kavita Iyer", "specialization": "Cardiology", "reg_no": "MH-12345", "smc_name": "Maharashtra Medical Council", "degree": "MBBS, MD", "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b", "fee_amount": 800, "currency": "INR" } ],
+  "doctors": [ { "id": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d", "name": "Dr. Kavita Iyer", "specialization": "Cardiology", "specializations": [ { "id": "8a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d", "name": "Cardiology" } ], "reg_no": "MH-12345", "smc_name": "Maharashtra Medical Council", "degree": "MBBS, MD", "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b", "fee_amount": 800, "currency": "INR" } ],
   "lab_configuration": { "active_tests": 12, "categories": 4, "branch_test_links": 12 },
   "appointment_summary": { "by_status": { "pending": 3, "confirmed": 5, "completed": 40 }, "lab_tests_by_status": { "approved": 2, "completed": 18 }, "appointments_last_30d": 22, "collected_estimate_inr": 32000 },
   "created_at": "2026-06-01T09:30:00Z"
@@ -4939,7 +4939,7 @@ Payment-gateway webhook receiver — the automatic counterpart to the client-dri
 | `RATE_LIMITED` | 429 | Too many requests |
 | `EMAIL_ALREADY_REGISTERED` | 409 | Email already in use |
 | `PHONE_ALREADY_REGISTERED` | 409 | Phone already in use |
-| `REG_NO_ALREADY_REGISTERED` | 409 | Doctor registration number already in use |
+| `REG_NO_ALREADY_REGISTERED` | 409 | Doctor registration number already in use for the same medical council |
 | `INVITE_ALREADY_PENDING` | 409 | Duplicate pending invite |
 | `INVITE_ALREADY_ACCEPTED` | 409 | Invite already accepted |
 | `DOCTOR_ALREADY_ASSIGNED` | 409 | Doctor already at this branch |

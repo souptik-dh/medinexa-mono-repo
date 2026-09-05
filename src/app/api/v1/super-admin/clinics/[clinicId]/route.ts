@@ -8,6 +8,7 @@ import {
   serializeSubscription,
   getPlatformSettings,
 } from "@/lib/subscriptions";
+import { getDoctorSpecializations, specializationDisplayName } from "@/lib/specializations";
 
 /**
  * Full administrative view of a clinic: owner contact, branches, staff, doctors,
@@ -44,7 +45,7 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
     [clinicId],
   );
   const [doctors] = await pool.query<Row[]>(
-    `SELECT DISTINCT d.id, d.name, d.specialization, d.reg_no, d.smc_name, d.doctor_degree, dba.branch_id, dba.fee_amount, dba.currency
+    `SELECT DISTINCT d.id, d.name, d.reg_no, d.smc_name, d.doctor_degree, dba.branch_id, dba.fee_amount, dba.currency
        FROM doctor_branch_assignments dba
        JOIN branches b ON b.id = dba.branch_id
        JOIN doctors d ON d.id = dba.doctor_id AND d.deleted_at IS NULL
@@ -52,6 +53,7 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
       ORDER BY d.name ASC`,
     [clinicId],
   );
+  const specializationsByDoctor = await getDoctorSpecializations(pool, doctors.map((d) => String(d.id)));
   const [labConfig] = await pool.query<Row[]>(
     `SELECT
         (SELECT COUNT(*) FROM lab_tests lt WHERE lt.clinic_id = ? AND lt.status = 'active') AS active_tests,
@@ -133,17 +135,21 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
       branch_name: s.branch_name,
       added_at: s.created_at,
     })),
-    doctors: doctors.map((d) => ({
-      id: d.id,
-      name: d.name,
-      specialization: d.specialization,
-      reg_no: d.reg_no,
-      smc_name: d.smc_name,
-      degree: d.doctor_degree,
-      branch_id: d.branch_id,
-      fee_amount: Number(d.fee_amount),
-      currency: d.currency,
-    })),
+    doctors: doctors.map((d) => {
+      const specializations = specializationsByDoctor.get(String(d.id)) ?? [];
+      return {
+        id: d.id,
+        name: d.name,
+        specialization: specializationDisplayName(specializations),
+        specializations,
+        reg_no: d.reg_no,
+        smc_name: d.smc_name,
+        degree: d.doctor_degree,
+        branch_id: d.branch_id,
+        fee_amount: Number(d.fee_amount),
+        currency: d.currency,
+      };
+    }),
     lab_configuration: {
       active_tests: Number(labConfig[0]?.active_tests ?? 0),
       categories: Number(labConfig[0]?.categories ?? 0),

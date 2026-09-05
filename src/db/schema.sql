@@ -297,7 +297,9 @@ CREATE TABLE IF NOT EXISTS doctors (
   deleted_at DATETIME(3) NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uniq_doctors_user (user_id),
-  UNIQUE KEY uniq_doctors_reg_no (reg_no),
+  -- reg_no alone can collide across state medical councils (each council numbers
+  -- its own registrations independently), so uniqueness is scoped per council.
+  UNIQUE KEY uniq_doctors_reg_no (reg_no, smc_name),
   CONSTRAINT fk_doctors_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 

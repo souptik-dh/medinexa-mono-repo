@@ -163,7 +163,7 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
     if (isUniqueViolation(err)) {
       const msg = String((err as { message?: string }).message ?? "");
       if (msg.includes("uniq_doctors_reg_no")) {
-        throw conflict("REG_NO_ALREADY_REGISTERED", "A doctor with this registration number already exists.");
+        throw conflict("REG_NO_ALREADY_REGISTERED", "A doctor with this registration number and medical council already exists.");
       }
       if (msg.includes("uniq_users_phone")) {
         throw conflict("PHONE_ALREADY_REGISTERED", "An account with this phone number already exists.");
