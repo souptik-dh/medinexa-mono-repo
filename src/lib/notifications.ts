@@ -513,6 +513,82 @@ export async function sendSms(to: string, body: string): Promise<void> {
  * (default "default"). Falls back to a console log in local dev when WAHA_API_KEY
  * is not configured. Never throws.
  */
+async function wahaSessionStatus(baseUrl: string, apiKey: string, session: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${baseUrl}/api/sessions/${session}`, {
+      headers: { "X-Api-Key": apiKey },
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { status?: string };
+    return data.status ?? null;
+  } catch {
+    return null;
+  }
+}
+
+const WAHA_RECOVERY_POLL_MS = 1500;
+const WAHA_RECOVERY_MAX_POLLS = 5;
+
+/**
+ * A WAHA session can drop out of WORKING (phone unlinked, WAHA process restarted
+ * without persisted auth, etc), at which point /sendText answers 404 (session
+ * doesn't exist) or 422 (session exists but isn't WORKING). Recreates/restarts the
+ * session and retries the send once it reports WORKING again, so a dropped session
+ * heals itself instead of silently losing every message until someone notices.
+ * Runs detached from the triggering request — never blocks or throws.
+ */
+async function recoverWahaSessionAndRetry(
+  baseUrl: string,
+  apiKey: string,
+  session: string,
+  chatId: string,
+  text: string,
+): Promise<void> {
+  const status = await wahaSessionStatus(baseUrl, apiKey, session);
+  try {
+    if (status === null) {
+      await fetch(`${baseUrl}/api/sessions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Api-Key": apiKey },
+        body: JSON.stringify({ name: session, start: true }),
+      });
+    } else if (status !== "WORKING") {
+      await fetch(`${baseUrl}/api/sessions/${session}/restart`, {
+        method: "POST",
+        headers: { "X-Api-Key": apiKey },
+      });
+    }
+  } catch (err) {
+    console.error(`[whatsapp] session recovery request for "${session}" failed:`, err);
+    return;
+  }
+
+  for (let attempt = 0; attempt < WAHA_RECOVERY_MAX_POLLS; attempt++) {
+    await new Promise((resolve) => setTimeout(resolve, WAHA_RECOVERY_POLL_MS));
+    const current = await wahaSessionStatus(baseUrl, apiKey, session);
+    if (current === "WORKING") {
+      const res = await fetch(`${baseUrl}/api/sendText`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Api-Key": apiKey },
+        body: JSON.stringify({ session, chatId, text }),
+      }).catch(() => null);
+      if (!res || !res.ok) {
+        console.error(`[whatsapp] retry after session recovery still failed for session "${session}".`);
+      }
+      return;
+    }
+    // These need a human to scan a fresh QR code (or approve a passkey) — no amount
+    // of restarting will resolve them, so stop polling and say so plainly.
+    if (current === "SCAN_QR_CODE" || current === "PASSKEY_REQUIRED" || current === "PASSKEY_CONFIRMATION_REQUIRED") {
+      console.error(
+        `[whatsapp] session "${session}" needs re-authentication (status=${current}) — scan a fresh QR code to restore WhatsApp delivery.`,
+      );
+      return;
+    }
+  }
+  console.error(`[whatsapp] session "${session}" did not recover to WORKING after a restart attempt.`);
+}
+
 export async function sendWhatsapp(to: string, body: string): Promise<void> {
   const apiKey = process.env.WAHA_API_KEY;
   const baseUrl = process.env.WAHA_BASE_URL ?? "http://localhost:3000";
@@ -538,6 +614,11 @@ export async function sendWhatsapp(to: string, body: string): Promise<void> {
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       console.error(`[whatsapp] WAHA rejected send to ${to} (${res.status}): ${detail}`);
+      // Session expired/missing — recreate or restart it and retry in the background
+      // rather than losing the message silently.
+      if (res.status === 404 || res.status === 422) {
+        void recoverWahaSessionAndRetry(baseUrl, apiKey, session, chatId, body);
+      }
     }
   } catch (err) {
     console.error(`[whatsapp] send to ${to} failed:`, err);
