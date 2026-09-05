@@ -5,7 +5,7 @@ import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { badRequest, notFound } from "@/lib/errors";
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createNotification, createPatientNotification, clinicOwnerContact, sendEmail, detailsEmailHtml, sendSms } from "@/lib/notifications";
+import { createNotification, createPatientNotification, clinicOwnerContact, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp } from "@/lib/notifications";
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { assertBranchStaffPermission } from "@/lib/permissions";
@@ -96,7 +96,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
     if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
 
     const [details] = await pool.query<Row[]>(
-      `SELECT u.name AS patient_name, co.email AS owner_email, co.phone AS owner_phone,
+      `SELECT u.name AS patient_name, u.phone AS patient_phone, co.email AS owner_email, co.phone AS owner_phone,
               b.name AS branch_name, b.address AS branch_address, b.phone AS branch_phone, c.name AS clinic_name, d.name AS doctor_name
          FROM appointments a
          JOIN users u ON u.id = a.patient_id
@@ -109,7 +109,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
     );
     const info = details[0];
 
-    await issueReceipt(pool, {
+    const receipt = await issueReceipt(pool, {
       sourceType: "appointment",
       sourceId: appointment.id,
       eventType: "payment_received",
@@ -141,6 +141,12 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
       await sendSms(
         info.owner_phone,
         `Jido Healthcare: Payment of ${body.fee_amount} ${appointment.currency} collected via ${body.method} from ${info.patient_name ?? "a patient"} at ${info.branch_name}.`,
+      );
+    }
+    if (info?.patient_phone) {
+      void sendWhatsapp(
+        info.patient_phone,
+        `Jido Healthcare: Payment of ${body.fee_amount} ${appointment.currency} received for your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time}.${receipt ? ` Receipt No: ${receipt.receiptNumber}.` : ""}`,
       );
     }
     if (info?.owner_email) {

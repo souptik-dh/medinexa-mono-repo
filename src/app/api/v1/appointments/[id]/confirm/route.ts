@@ -40,7 +40,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   );
   const info = details[0];
 
-  await issueReceipt(pool, {
+  const receipt = await issueReceipt(pool, {
     sourceType: "appointment",
     sourceId: appointment.id,
     eventType: "booking_confirmed",
@@ -65,8 +65,9 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
     },
   });
   const confirmText = `Jido Healthcare: Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
+  const whatsappConfirmText = `${confirmText}${receipt ? ` Receipt No: ${receipt.receiptNumber}.` : ""}`;
   const smsConfirm = () => sendSms(info.patient_phone, confirmText);
-  const whatsappConfirm = () => sendWhatsapp(info.patient_phone, confirmText);
+  const whatsappConfirm = () => sendWhatsapp(info.patient_phone, whatsappConfirmText);
   if (info?.patient_email) {
     const confirmBody = `Hi ${info.patient_name ?? "there"},\n\nYour appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
     const confirmHtml = detailsEmailHtml({

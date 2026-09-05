@@ -17,6 +17,7 @@ import {
   sendEmail,
   detailsEmailHtml,
   sendSms,
+  sendWhatsapp,
 } from "@/lib/notifications";
 import { runIdempotent } from "@/lib/idempotency";
 import { assertClinicOperational } from "@/lib/subscriptions";
@@ -255,6 +256,13 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     const smsText = `Jido Healthcare: New lab test booking ${appointmentNumber} (${blt.test_name}) at ${branch.name} on ${body.appointment_date} at ${body.start_time} — please review and approve/reject.`;
     for (const phone of staffPhones) {
       await sendSms(phone, smsText);
+    }
+
+    if (appointment.patient_phone) {
+      void sendWhatsapp(
+        appointment.patient_phone,
+        `Jido Healthcare: Your lab test booking ${appointmentNumber} (${blt.test_name}) at ${branch.name} on ${body.appointment_date} at ${body.start_time} has been submitted and is awaiting approval.`,
+      );
     }
 
     return { status: 201, body: serializeLabTestAppointment(appointment) };

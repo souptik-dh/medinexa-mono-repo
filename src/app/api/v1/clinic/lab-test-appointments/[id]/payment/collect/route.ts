@@ -3,7 +3,7 @@ import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
 import { getLabTestAppointmentInScope, auditLabAction, serializeLabTestPayment } from "@/lib/lab-tests";
-import { createPatientNotification } from "@/lib/notifications";
+import { createPatientNotification, sendWhatsapp } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict, notFound } from "@/lib/errors";
@@ -81,7 +81,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     [id],
   );
 
-  await issueReceipt(pool, {
+  const receipt = await issueReceipt(pool, {
     sourceType: "lab_test_appointment",
     sourceId: appointment.id,
     eventType: "payment_received",
@@ -111,6 +111,13 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       paid: true,
     },
   });
+
+  if (appointment.patient_phone) {
+    void sendWhatsapp(
+      appointment.patient_phone,
+      `Jido Healthcare: Payment of ${appointment.price} ${appointment.currency} received for your lab test ${appointment.appointment_number} (${appointment.test_name}).${receipt ? ` Receipt No: ${receipt.receiptNumber}.` : ""}`,
+    );
+  }
 
   return json(serializeLabTestPayment(rows[0]));
 });

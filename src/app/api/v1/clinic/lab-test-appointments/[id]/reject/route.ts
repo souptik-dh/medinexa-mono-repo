@@ -8,7 +8,7 @@ import {
   auditLabAction,
   serializeLabTestAppointment,
 } from "@/lib/lab-tests";
-import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest } from "@/lib/errors";
@@ -59,10 +59,8 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const patient = patientRows[0];
 
   if (patient?.phone) {
-    await sendSms(
-      patient.phone,
-      `Jido Healthcare: Your lab test booking ${appointment.appointment_number} (${appointment.test_name}) has been rejected. Reason: ${body.reason}`,
-    );
+    const rejectText = `Jido Healthcare: Your lab test booking ${appointment.appointment_number} (${appointment.test_name}) has been rejected. Reason: ${body.reason}`;
+    await Promise.allSettled([sendSms(patient.phone, rejectText), sendWhatsapp(patient.phone, rejectText)]);
   }
   if (patient?.email) {
     await sendEmail(

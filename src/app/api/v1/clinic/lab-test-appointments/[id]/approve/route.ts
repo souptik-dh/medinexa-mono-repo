@@ -15,6 +15,7 @@ import {
   detailsEmailHtml,
   patientEmailHtml,
   sendSms,
+  sendWhatsapp,
 } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
@@ -116,10 +117,8 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     await sendEmail(patient.email, `Lab Test Confirmed — ${appointment.appointment_number}`, "", emailHtml);
   }
   if (patient?.phone) {
-    await sendSms(
-      patient.phone,
-      `Jido Healthcare: Your lab test appointment ${appointment.appointment_number} (${appointment.test_name}) at ${appointment.branch_name} on ${appointment.appointment_date} at ${appointment.start_time} has been confirmed.`,
-    );
+    const confirmText = `Jido Healthcare: Your lab test appointment ${appointment.appointment_number} (${appointment.test_name}) at ${appointment.branch_name} on ${appointment.appointment_date} at ${appointment.start_time} has been confirmed.`;
+    await Promise.allSettled([sendSms(patient.phone, confirmText), sendWhatsapp(patient.phone, confirmText)]);
   }
 
   const updated = await getLabTestAppointmentInScope(pool, id, auth);

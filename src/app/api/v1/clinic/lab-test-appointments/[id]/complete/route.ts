@@ -8,7 +8,7 @@ import {
   serializeLabTestAppointment,
 } from "@/lib/lab-tests";
 import { hasSlotPassedInTz } from "@/lib/availability";
-import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict } from "@/lib/errors";
@@ -60,10 +60,8 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const patient = patientRows[0];
 
   if (patient?.phone) {
-    await sendSms(
-      patient.phone,
-      `Jido Healthcare: Your lab test (${appointment.test_name}) for ${appointment.appointment_number} has been completed.`,
-    );
+    const completeText = `Jido Healthcare: Your lab test (${appointment.test_name}) for ${appointment.appointment_number} has been completed. Your report is now available.`;
+    await Promise.allSettled([sendSms(patient.phone, completeText), sendWhatsapp(patient.phone, completeText)]);
   }
   if (patient?.email) {
     await sendEmail(

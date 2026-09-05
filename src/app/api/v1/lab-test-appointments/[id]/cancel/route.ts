@@ -8,7 +8,7 @@ import {
   auditLabAction,
   serializeLabTestAppointment,
 } from "@/lib/lab-tests";
-import { createPatientNotification } from "@/lib/notifications";
+import { createPatientNotification, sendWhatsapp } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { forbidden } from "@/lib/errors";
 import { z } from "zod";
@@ -50,6 +50,13 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     date: appointment.appointment_date,
     time: appointment.start_time,
   });
+
+  if (appointment.patient_phone) {
+    void sendWhatsapp(
+      appointment.patient_phone,
+      `Jido Healthcare: Your lab test booking ${appointment.appointment_number} (${appointment.test_name}) has been cancelled.${body.reason ? ` Reason: ${body.reason}` : ""}`,
+    );
+  }
 
   const updated = await getLabTestAppointmentInScope(pool, id, auth);
   return json(serializeLabTestAppointment(updated));

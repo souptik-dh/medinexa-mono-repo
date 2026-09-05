@@ -7,7 +7,7 @@ import { badRequest, conflict, notFound, unprocessable, isUniqueViolation } from
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { scopeWhere, serializeAppointment, APPT_STATUSES } from "@/lib/appointments";
-import { notifyBranchStaff, createNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, sendSms } from "@/lib/notifications";
+import { notifyBranchStaff, createNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp } from "@/lib/notifications";
 import {
   todayInTz,
   weekdayInTz,
@@ -387,6 +387,13 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       // on the round trips once the booking itself is committed.
       void Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody, emailHtmlBody)));
       void Promise.all(recipientPhones.map((phone) => sendSms(phone, smsText)));
+
+      if (info.patient_phone) {
+        void sendWhatsapp(
+          info.patient_phone,
+          `Jido Healthcare: Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${body.date} at ${scheduledTime} has been booked and is awaiting confirmation.`,
+        );
+      }
     }
 
     return { status: 201, body: serializeAppointment(rows[0]) };
