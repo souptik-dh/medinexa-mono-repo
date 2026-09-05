@@ -534,20 +534,50 @@ async function wahaPost(baseUrl: string, apiKey: string, path: string, payload: 
   });
 }
 
-const WAHA_RECOVERY_POLL_MS = 1500;
-const WAHA_RECOVERY_MAX_POLLS = 5;
+const WAHA_RECOVERY_POLL_MS = 30_000;
+const WAHA_RECOVERY_MAX_DURATION_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+const WAHA_AUTH_REQUIRED_STATUSES = new Set([
+  "SCAN_QR_CODE",
+  "PASSKEY_REQUIRED",
+  "PASSKEY_CONFIRMATION_REQUIRED",
+]);
+
+const WAHA_ADMIN_ALERT_EMAIL = process.env.WAHA_ADMIN_ALERT_EMAIL ?? "souptikdhar4@gmail.com";
+
+// Guards against every message that fails during an outage spawning its own
+// polling loop against WAHA — only one recovery run per session at a time.
+const wahaRecoveryInFlight = new Set<string>();
 
 /**
  * A WAHA session can drop out of WORKING (phone unlinked, WAHA process restarted
- * without persisted auth, etc), at which point a send endpoint answers 404 (session
- * doesn't exist) or 422 (session exists but isn't WORKING). Recreates/restarts the
- * session and retries the original send once it reports WORKING again, so a dropped
- * session heals itself instead of silently losing every message until someone
- * notices. `sendPath`/`payload` are the exact endpoint and body to retry (e.g.
+ * without persisted auth, session logged out by WhatsApp, etc), at which point a
+ * send endpoint answers 404 (session doesn't exist) or 422 (session exists but
+ * isn't WORKING). Restarts the session once, then watches it for up to 2 hours —
+ * long enough for someone to notice and scan a fresh QR code — and retries the
+ * original send the moment it reports WORKING again, so a dropped session heals
+ * itself instead of silently losing every message until someone notices.
+ * `sendPath`/`payload` are the exact endpoint and body to retry (e.g.
  * /api/sendText or /api/sendFile). Runs detached from the triggering request —
  * never blocks or throws.
  */
 async function recoverWahaSessionAndRetry(
+  baseUrl: string,
+  apiKey: string,
+  session: string,
+  sendPath: string,
+  payload: unknown,
+): Promise<void> {
+  if (wahaRecoveryInFlight.has(session)) return;
+  wahaRecoveryInFlight.add(session);
+  try {
+    await runWahaSessionRecovery(baseUrl, apiKey, session, sendPath, payload);
+  } finally {
+    wahaRecoveryInFlight.delete(session);
+  }
+}
+
+async function runWahaSessionRecovery(
   baseUrl: string,
   apiKey: string,
   session: string,
@@ -566,7 +596,9 @@ async function recoverWahaSessionAndRetry(
     return;
   }
 
-  for (let attempt = 0; attempt < WAHA_RECOVERY_MAX_POLLS; attempt++) {
+  let loggedAuthRequired = false;
+  const deadline = Date.now() + WAHA_RECOVERY_MAX_DURATION_MS;
+  while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, WAHA_RECOVERY_POLL_MS));
     const current = await wahaSessionStatus(baseUrl, apiKey, session);
     if (current === "WORKING") {
@@ -576,16 +608,22 @@ async function recoverWahaSessionAndRetry(
       }
       return;
     }
-    // These need a human to scan a fresh QR code (or approve a passkey) — no amount
-    // of restarting will resolve them, so stop polling and say so plainly.
-    if (current === "SCAN_QR_CODE" || current === "PASSKEY_REQUIRED" || current === "PASSKEY_CONFIRMATION_REQUIRED") {
+    // These need a human to scan a fresh QR code (or approve a passkey) — restarting
+    // again won't help, but keep watching (instead of giving up) so delivery resumes
+    // on its own the moment someone re-authenticates.
+    if (current !== null && WAHA_AUTH_REQUIRED_STATUSES.has(current) && !loggedAuthRequired) {
+      loggedAuthRequired = true;
       console.error(
-        `[whatsapp] session "${session}" needs re-authentication (status=${current}) — scan a fresh QR code to restore WhatsApp delivery.`,
+        `[whatsapp] session "${session}" needs re-authentication (status=${current}) — scan a fresh QR code to restore WhatsApp delivery. Watching for up to 2 hours.`,
       );
-      return;
+      await sendEmail(
+        WAHA_ADMIN_ALERT_EMAIL,
+        `WhatsApp session "${session}" needs re-authentication`,
+        `The WAHA session "${session}" dropped to status ${current} and needs a fresh QR code scan (WhatsApp → Linked Devices) to restore WhatsApp delivery.\n\nMessages are queued to retry automatically once the session is back to WORKING, but only for up to 2 hours from now — please rescan soon.`,
+      );
     }
   }
-  console.error(`[whatsapp] session "${session}" did not recover to WORKING after a restart attempt.`);
+  console.error(`[whatsapp] session "${session}" did not recover to WORKING within 2 hours.`);
 }
 
 export async function sendWhatsapp(to: string, body: string): Promise<void> {
