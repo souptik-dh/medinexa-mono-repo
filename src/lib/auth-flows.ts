@@ -60,6 +60,7 @@ export interface PublicClinic {
   name: string;
   description: string | null;
   owner_id: string;
+  branch_count: number;
   created_at: string;
 }
 
@@ -308,6 +309,8 @@ export async function registerUser(input: RegisterInput, verified: boolean) {
           name: clinicName,
           description: null,
           owner_id: id,
+          // Just created in this same transaction, so it can't have any branches yet.
+          branch_count: 0,
           created_at: new Date().toISOString(),
         };
       }

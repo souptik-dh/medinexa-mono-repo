@@ -417,6 +417,7 @@ registration.
     "name": "Sunrise Clinic",
     "description": null,
     "owner_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+    "branch_count": 0,
     "created_at": "2026-08-09T12:00:00.000Z"
   }
 }
