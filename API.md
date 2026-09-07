@@ -469,7 +469,7 @@ issues tokens, plus the owned clinic summary.
     "role": "clinic_owner"
   },
   "requires_password_setup": false,
-  "clinic": { "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d", "name": "Sunrise Clinic", "description": null }
+  "clinic": { "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d", "name": "Sunrise Clinic", "description": null, "branch_count": 2 }
 }
 ```
 
@@ -501,7 +501,7 @@ summary, same as `verify-otp`.
     "phone": "+919876543211",
     "role": "clinic_owner"
   },
-  "clinic": { "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d", "name": "Sunrise Clinic", "description": null }
+  "clinic": { "id": "c6b9d2e1-8f6b-4e3a-9c1d-2b7a5e4f8c1d", "name": "Sunrise Clinic", "description": null, "branch_count": 2 }
 }
 ```
 
