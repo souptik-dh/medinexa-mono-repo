@@ -980,6 +980,7 @@ Auth: `clinic_owner`. Returns every clinic owned by the caller, each with its fu
       "clinical_establishment_reg_url": null,
       "created_at": "2026-08-01T09:30:00Z",
       "updated_at": "2026-08-01T09:30:00Z",
+      "branch_count": 1,
       "branches": [
         {
           "id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",

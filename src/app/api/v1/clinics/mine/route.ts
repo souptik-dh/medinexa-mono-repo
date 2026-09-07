@@ -41,6 +41,7 @@ export const GET = api(undefined, async (ctx) => {
       ...tradeLicenseValidationFields(clinic),
       created_at: clinic.created_at,
       updated_at: clinic.updated_at,
+      branch_count: (branchesByClinic.get(clinic.id) ?? []).length,
       branches: (branchesByClinic.get(clinic.id) ?? []).map((b) => ({
         id: b.id,
         clinic_id: b.clinic_id,
