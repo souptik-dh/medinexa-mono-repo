@@ -24,7 +24,8 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
 
   // Attach the clinic owned by this user
   const [clinics] = await pool.query<Row[]>(
-    `SELECT c.id, c.name, c.description
+    `SELECT c.id, c.name, c.description,
+            (SELECT COUNT(*) FROM branches b WHERE b.clinic_id = c.id AND b.deleted_at IS NULL) AS branch_count
        FROM clinics c WHERE c.owner_user_id = ? AND c.deleted_at IS NULL LIMIT 1`,
     [result.user.id],
   );
@@ -36,7 +37,12 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
     user: result.user,
     requires_password_setup: result.requires_password_setup,
     clinic: clinic
-      ? { id: clinic.id, name: clinic.name, description: clinic.description }
+      ? {
+          id: clinic.id,
+          name: clinic.name,
+          description: clinic.description,
+          branch_count: Number(clinic.branch_count),
+        }
       : null,
   });
 });
