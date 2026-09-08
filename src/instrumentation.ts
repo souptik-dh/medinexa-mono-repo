@@ -18,3 +18,5 @@ export async function register(): Promise<void> {
     console.error("[instrumentation] Failed to start appointment expiry cron:", err);
   }
 }
+
+
