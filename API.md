@@ -100,7 +100,7 @@ Limits are per authenticated user (`Authorization` token) unless the endpoint ke
 - All other mutating endpoints (status transitions such as confirm/cancel/complete/approve/reject, profile updates, device tokens, etc.) use the `200/min` default, set explicitly on the route.
 - **Subscription payments** — `POST /clinics/:clinicId/subscription/payments`, `POST /clinics/:clinicId/subscription/payments/:paymentId/verify`, `POST /clinics/:clinicId/subscription/reactivate`: `20/min`.
 - **`POST /auth/super-admin/login`:** `10/min` per IP.
-- **Super Admin writes** — grant/revoke a Super Admin (`POST`/`DELETE /super-admin/super-admins*`): `20/min`. Update a platform setting (`PATCH /super-admin/settings`), publish a new plan version (`POST /super-admin/plans`), and trigger the subscription sweep (`POST /super-admin/system/process-subscriptions`): `30/min`. Activate/deactivate a clinic or extend its subscription (`POST /super-admin/clinics/:clinicId/{activate,deactivate,subscription/extend}`): `60/min`. All other Super Admin `GET` endpoints use the `200/min` default.
+- **Super Admin writes** — grant/revoke a Super Admin (`POST`/`DELETE /super-admin/super-admins*`), send or cancel a subscription offer (`POST /super-admin/offers`, `POST /super-admin/offers/:offerId/cancel`): `20/min`. Update a platform setting (`PATCH /super-admin/settings`), publish a new plan version (`POST /super-admin/plans`), preview a subscription offer (`POST /super-admin/offers/preview`), and trigger the subscription sweep (`POST /super-admin/system/process-subscriptions`): `30/min`. Activate/deactivate a clinic or extend its subscription (`POST /super-admin/clinics/:clinicId/{activate,deactivate,subscription/extend}`): `60/min`. All other Super Admin `GET` endpoints use the `200/min` default.
 - **`POST /webhooks/subscription-payments`:** `120/min` per source IP (no user auth to key by).
 
 `429 RATE_LIMITED` responses include a `Retry-After` header (seconds until the window resets).
@@ -4266,9 +4266,9 @@ Auth: `patient` (owner only). Un-marks a dose as taken.
 }
 ```
 
-`type` ∈ `new_booking | booking_confirmed | payment_received | consultation_completed | prescription_ready | doctor_invited | doctor_invite_accepted | appointment_cancelled | lab_test_booked | lab_test_approved | lab_test_rejected | lab_test_cancelled | lab_test_completed | lab_test_payment_success | subscription_expiring | subscription_expired | subscription_activated | subscription_deactivated`
+`type` ∈ `new_booking | booking_confirmed | payment_received | consultation_completed | prescription_ready | doctor_invited | doctor_invite_accepted | appointment_cancelled | lab_test_booked | lab_test_approved | lab_test_rejected | lab_test_cancelled | lab_test_completed | lab_test_payment_success | subscription_expiring | subscription_expired | subscription_activated | subscription_deactivated | subscription_offer`
 
-**Delivery:** notifications are stored in-app and polled via the endpoints below. Patient-facing events (`booking_confirmed`, `payment_received`, `consultation_completed`, `prescription_ready`, and patient-cancelled/`appointment_cancelled` by staff) additionally fan out a **push** notification via Firebase Cloud Messaging to every device the patient is registered on (see [Device tokens](#device-tokens) below). Push failures never fail the triggering request. The four `subscription_*` types (clinic-owner-facing, from [Subscriptions & billing](#subscriptions--billing) and [Super Admin platform](#super-admin-platform)) are in-app only — no push or email is sent for them.
+**Delivery:** notifications are stored in-app and polled via the endpoints below. Patient-facing events (`booking_confirmed`, `payment_received`, `consultation_completed`, `prescription_ready`, and patient-cancelled/`appointment_cancelled` by staff) additionally fan out a **push** notification via Firebase Cloud Messaging to every device the patient is registered on (see [Device tokens](#device-tokens) below). Push failures never fail the triggering request. The `subscription_*` types (clinic-owner-facing, from [Subscriptions & billing](#subscriptions--billing) and [Super Admin platform](#super-admin-platform)) are in-app only — no FCM push is sent for them. `subscription_offer` is the one exception that also goes out over SMS/WhatsApp/email — see [Subscription offers](#post-super-adminoffers) — controlled per-campaign by the Super Admin, not by this endpoint.
 
 Booking and payment events also text the phone number on the patient's account, over **SMS** (Jido SMS Gateway, `SMS_API_KEY`) and/or **WhatsApp** (WAHA HTTP API, `WAHA_API_KEY` / `WAHA_BASE_URL` / `WAHA_SESSION` — see `whatsapp.md` for the underlying WAHA calls): `new_booking`, `booking_confirmed`, `appointment_cancelled`, `payment_received`, `lab_test_booked`, `lab_test_cancelled`, `lab_test_approved`, `lab_test_rejected`, `lab_test_completed`, and `lab_test_payment_success` all reach the patient over WhatsApp; `booking_confirmed`, `lab_test_approved`, `lab_test_rejected`, and `lab_test_completed` go out over SMS as well. If `WAHA_API_KEY` (or `SMS_API_KEY`) isn't configured, sends are stubbed to a server log instead of failing the request — like push, SMS/WhatsApp failures never fail the triggering request. If the WAHA session has dropped (phone unlinked, WAHA process restarted without persisted auth) and a send reports the session missing or not `WORKING`, the app automatically recreates/restarts the WAHA session in the background and retries the send once — this does not require a person to intervene unless WAHA itself needs a fresh QR scan (no persisted auth), which is logged rather than retried.
 
@@ -4413,11 +4413,13 @@ Every clinic has exactly one `clinic_subscriptions` row (lazily created on first
   "period_start": "2026-08-24T06:40:00.000Z",
   "period_end": "2026-09-24T06:40:00.000Z",
   "initiated_by": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "offer_recipient_id": null,
+  "discounted_months": null,
   "created_at": "2026-08-24T06:40:00.000Z"
 }
 ```
 
-`method` ∈ `upi | card | netbanking | wallet` when created through the client-facing initiate endpoint below (`cash`/`manual` exist in the DB enum but are only ever set by Super Admin/manual code paths). `status` ∈ `PENDING | PAID | FAILED`. `verification_method` ∈ `signature | webhook | manual`, `null` until verified. Paying never loses unused trial/paid time: the new paid period starts at whichever is later of "now" and the current `trial_ends_at`/`period_end`, so `period_start` can be later than `created_at`.
+`method` ∈ `upi | card | netbanking | wallet` when created through the client-facing initiate endpoint below (`cash`/`manual` exist in the DB enum but are only ever set by Super Admin/manual code paths). `status` ∈ `PENDING | PAID | FAILED`. `verification_method` ∈ `signature | webhook | manual`, `null` until verified. Paying never loses unused trial/paid time: the new paid period starts at whichever is later of "now" and the current `trial_ends_at`/`period_end`, so `period_start` can be later than `created_at`. `offer_recipient_id`/`discounted_months` are non-null only when a Super Admin [subscription offer](#post-super-adminoffers) was applied to this payment — see below.
 
 ### GET /clinics/:clinicId/subscription
 
@@ -4477,7 +4479,7 @@ Auth: `clinic_owner`, must own the clinic. Paginated (cursor, ordered newest fir
 
 ### POST /clinics/:clinicId/subscription/payments
 
-Auth: `clinic_owner`, must own the clinic. Rate limited `20/min`. Initiates a new payment attempt for one or more months at the plan's **current** price — the amount is always computed server-side (`plan.amount × months`); the client never sets it.
+Auth: `clinic_owner`, must own the clinic. Rate limited `20/min`. Initiates a new payment attempt for one or more months at the plan's **current** price — the amount is always computed server-side (`plan.amount × months`); the client never sets it. If the clinic has a still-usable Super Admin [subscription offer](#post-super-adminoffers), its discounted price is used instead for as many months as the offer has remaining, blended with the regular plan price for any months beyond that — entirely automatic, nothing to opt into.
 
 **Request body**
 
@@ -4535,7 +4537,7 @@ Auth: `clinic_owner`, must own the clinic. Rate limited `20/min`. `paymentId` ma
 
 **Errors:** `404 CLINIC_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `400 VALIDATION_ERROR`, `404 PAYMENT_NOT_FOUND`, `503 PAYMENT_VERIFICATION_UNAVAILABLE` (server payment secret not configured), `400 PAYMENT_SIGNATURE_INVALID` (also marks the payment `FAILED` if it was still `PENDING`), `409 PAYMENT_ALREADY_VERIFIED`, `409 PAYMENT_FAILED`, `404 SUBSCRIPTION_NOT_FOUND`.
 
-**Side effects:** on success — `subscription_payments` → `PAID`; `clinic_subscriptions` → `ACTIVE`, `is_trial: false`, `auto_renew: true`, period extended, any deactivation cleared; a `subscription_history` row (`source: "payment"`); an in-app `subscription_activated` notification to the clinic owner (no email/push).
+**Side effects:** on success — `subscription_payments` → `PAID`; `clinic_subscriptions` → `ACTIVE`, `is_trial: false`, `auto_renew: true`, period extended, any deactivation cleared; a `subscription_history` row (`source: "payment"`); an in-app `subscription_activated` notification to the clinic owner (no email/push); if the payment used a Super Admin offer, that offer's `months_remaining` is decremented by the number of months this payment actually discounted.
 
 ### POST /clinics/:clinicId/subscription/reactivate
 
@@ -4732,7 +4734,7 @@ Paginated (cursor, ordered newest first). `?action=&actor_user_id=&resource_type
 }
 ```
 
-`actor` is `null` if the acting user was later deleted. Known `action` values: `platform_setting.updated`, `super_admin.granted`, `super_admin.revoked`, `subscription_plan.price_changed`, `clinic.activated`, `clinic.deactivated`, `subscription.extended_months`, `subscription.extended_trial`, `subscription.sweep_triggered`.
+`actor` is `null` if the acting user was later deleted. Known `action` values: `platform_setting.updated`, `super_admin.granted`, `super_admin.revoked`, `subscription_plan.price_changed`, `clinic.activated`, `clinic.deactivated`, `subscription.extended_months`, `subscription.extended_trial`, `subscription.sweep_triggered`, `subscription_offer.sent`, `subscription_offer.cancelled`.
 
 ### GET /super-admin/settings
 
@@ -4845,6 +4847,114 @@ Rate limited `30/min`. Publishes a new active plan version (a price change) — 
 **Response `201`** — `{ "message": "New plan version published. It applies to payments initiated from now on; existing subscriptions are unaffected.", "plan_id": "...", "monthly_amount": 59, "currency": "INR", "trial_months": 2 }`
 
 **Errors:** `400 VALIDATION_ERROR`.
+
+### Subscription offers (discount campaigns)
+
+Lets a Super Admin grant one clinic — or a batch of clinics — a discounted monthly price for a fixed number of billing cycles (e.g. ₹40/month for 3 months instead of the current plan's ₹70/month), then notify them over SMS, WhatsApp, email (only if the clinic owner has one on file), and an in-app portal notification. The discount is picked up **automatically**: the clinic doesn't claim or activate anything — the next time it calls `POST /clinics/:clinicId/subscription/payments`, the price is computed off the offer instead of the plan for as many months as the offer still has remaining (a payment covering more months than remain on the offer is billed at a blend of the offer price and the regular plan price). Always call `POST /super-admin/offers/preview` first — it renders the exact per-clinic message and reports which channels will actually send, without writing anything or contacting any gateway.
+
+An offer's `channels` object controls which of the four channels are attempted at all; a channel can still be individually skipped per clinic if there's no phone/email on file. Message placeholders available in `message`: `{{clinic_name}}`, `{{regular_price}}`, `{{offer_price}}`, `{{currency}}`, `{{duration_months}}`, `{{valid_until}}`.
+
+### POST /super-admin/offers/preview
+
+Rate limited `30/min`. Dry run — no database writes, no SMS/WhatsApp/email sent.
+
+**Request body:**
+
+```json
+{
+  "clinic_ids": ["9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f"],
+  "title": "Diwali renewal offer",
+  "message": "Hi {{clinic_name}}, renew now at {{currency}} {{offer_price}}/month (regular {{currency}} {{regular_price}}) for {{duration_months}} months. Valid until {{valid_until}}.",
+  "discounted_amount": 40,
+  "currency": "INR",
+  "duration_months": 3,
+  "valid_until": "2026-10-31T23:59:59Z",
+  "channels": { "sms": true, "whatsapp": true, "email": true, "portal": true }
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `clinic_ids` | string[] | required, 1–500 UUIDs |
+| `title` | string | required, 1–150 chars — also the email subject |
+| `message` | string | required, 1–1000 chars, supports the placeholders above |
+| `discounted_amount` | number | required, `> 0`, must be **less than** the current plan's `monthly_amount` |
+| `currency` | string? | 3 chars, defaults to `"INR"` |
+| `duration_months` | integer | required, 1–24 |
+| `valid_until` | ISO datetime | required, must be in the future |
+| `channels` | object? | `{ sms, whatsapp, email, portal }`, each boolean, all default `true` |
+
+**Response `200`**
+
+```json
+{
+  "plan_amount": 70.00,
+  "currency": "INR",
+  "discounted_amount": 40,
+  "savings_per_month": 30,
+  "recipients": [
+    {
+      "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+      "clinic_name": "Sunrise Multispeciality",
+      "owner_email": "owner@sunrise.example",
+      "owner_phone": "+919820011223",
+      "rendered_message": "Hi Sunrise Multispeciality, renew now at INR 40.00/month (regular INR 70.00) for 3 months. Valid until 2026-10-31.",
+      "channels": { "sms": "will_send", "whatsapp": "will_send", "email": "will_send", "portal": "will_send" }
+    }
+  ]
+}
+```
+
+Each `channels` value is `"will_send" | "skipped_no_phone" | "skipped_no_email" | "disabled"` (`"disabled"` = that channel was turned off in the request, not a missing contact detail).
+
+**Errors:** `400 VALIDATION_ERROR`, `400 OFFER_NOT_A_DISCOUNT` (`discounted_amount` isn't below the current plan price), `400 CLINIC_NOT_FOUND` (one or more `clinic_ids` don't exist).
+
+### POST /super-admin/offers
+
+Rate limited `20/min`. Same request body as `preview` above — creates the campaign, targets the given clinics, and immediately dispatches it. Run `preview` first; there is no separate draft/confirm step.
+
+**Response `201`**
+
+```json
+{
+  "message": "Offer sent to 1 clinic(s).",
+  "offer_id": "b7e6d5c4-3a2b-1098-7654-3210fedcba98",
+  "recipients": [
+    {
+      "clinic_id": "9d2f4c8a-1b3e-4a5d-8f6c-7a8b9c0d1e2f",
+      "clinic_name": "Sunrise Multispeciality",
+      "rendered_message": "Hi Sunrise Multispeciality, renew now at INR 40.00/month (regular INR 70.00) for 3 months. Valid until 2026-10-31.",
+      "delivery": { "sms": "SENT", "whatsapp": "SENT", "email": "SENT", "portal": "SENT" }
+    }
+  ]
+}
+```
+
+Each `delivery` value is `"SENT" | "SKIPPED" | "FAILED"`. A per-clinic delivery failure never fails the whole call — a failed recipient shows up with `"error": "Delivery failed."` instead of `delivery`, and every other clinic still gets sent to.
+
+**Errors:** `400 VALIDATION_ERROR`, `400 OFFER_NOT_A_DISCOUNT`, `400 CLINIC_NOT_FOUND`.
+
+**Side effects:** `subscription_offers` + one `subscription_offer_recipients` row per clinic (`months_remaining` initialized to `duration_months`); audit log row (`action: "subscription_offer.sent"`); an in-app `subscription_offer` notification per clinic owner (if `channels.portal`).
+
+### GET /super-admin/offers
+
+Paginated (cursor), newest first. Each item is an Offer object: `{ id, title, message, discounted_amount, currency, duration_months, valid_until, channels, status, created_by, created_at, cancelled_at, recipient_count, redeemed_count }`. `status` is `"ACTIVE" | "CANCELLED"`.
+
+### GET /super-admin/offers/:offerId
+
+Offer detail plus every targeted clinic: `{ offer: { /* Offer object */ }, recipients: [ { id, clinic_id, clinic_name, status, months_remaining, notify_sms_status, notify_whatsapp_status, notify_email_status, notified_at, redeemed_at, created_at } ] }`. `recipients[].status` is `"PENDING"` (not yet used in a payment) or `"REDEEMED"` (used at least once — `months_remaining` may still be `> 0` if the clinic paid for fewer months than the offer covers).
+
+**Errors:** `404 OFFER_NOT_FOUND`.
+
+### POST /super-admin/offers/:offerId/cancel
+
+Rate limited `20/min`. No body. Stops the offer from being picked up on any clinic's **next** payment — recipient rows are left untouched (never deleted), so a clinic that already redeemed some discounted months keeps what it already paid for.
+
+**Response `200`** — `{ "message": "Offer cancelled.", "offer": { /* Offer object, status "CANCELLED" */ } }`
+
+**Errors:** `404 OFFER_NOT_FOUND`, `409 OFFER_ALREADY_CANCELLED`.
+
+**Side effects:** audit log row (`action: "subscription_offer.cancelled"`).
 
 ### GET /super-admin/payments
 

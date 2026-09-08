@@ -1031,3 +1031,49 @@ CREATE TABLE IF NOT EXISTS receipts (
   CONSTRAINT fk_receipt_branch FOREIGN KEY (branch_id) REFERENCES branches(id),
   CONSTRAINT fk_receipt_generated_by FOREIGN KEY (generated_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
+
+-- Super Admin subscription discount campaigns: a discounted per-clinic price for a
+-- fixed number of billing cycles, sent to one or many clinics over SMS/WhatsApp/
+-- email/portal. Applied automatically to the clinic's next payment(s) — see
+-- getActiveOfferForClinic() in src/lib/offers.ts. Expiry/eligibility is computed
+-- live from status/valid_until/months_remaining, never mutated by a cron sweep.
+CREATE TABLE IF NOT EXISTS subscription_offers (
+  id CHAR(36) NOT NULL,
+  title VARCHAR(150) NOT NULL,
+  message VARCHAR(1000) NOT NULL,
+  discounted_amount DECIMAL(10,2) NOT NULL,
+  currency CHAR(3) NOT NULL DEFAULT 'INR',
+  duration_months SMALLINT NOT NULL,
+  valid_until DATETIME(3) NOT NULL,
+  channels_json JSON NOT NULL,
+  status ENUM('ACTIVE','CANCELLED') NOT NULL DEFAULT 'ACTIVE',
+  created_by CHAR(36) NOT NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  cancelled_at DATETIME(3) NULL,
+  cancelled_by CHAR(36) NULL,
+  PRIMARY KEY (id),
+  KEY idx_offers_status (status, valid_until),
+  CONSTRAINT fk_offer_created_by FOREIGN KEY (created_by) REFERENCES users(id),
+  CONSTRAINT fk_offer_cancelled_by FOREIGN KEY (cancelled_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS subscription_offer_recipients (
+  id CHAR(36) NOT NULL,
+  offer_id CHAR(36) NOT NULL,
+  clinic_id CHAR(36) NOT NULL,
+  status ENUM('PENDING','REDEEMED') NOT NULL DEFAULT 'PENDING',
+  months_remaining SMALLINT NOT NULL,
+  notify_sms_status ENUM('SENT','SKIPPED','FAILED') NULL,
+  notify_whatsapp_status ENUM('SENT','SKIPPED','FAILED') NULL,
+  notify_email_status ENUM('SENT','SKIPPED','FAILED') NULL,
+  notified_at DATETIME(3) NULL,
+  portal_notification_id CHAR(36) NULL,
+  redeemed_at DATETIME(3) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_offer_clinic (offer_id, clinic_id),
+  KEY idx_offer_recipients_clinic (clinic_id, status),
+  CONSTRAINT fk_offer_recip_offer FOREIGN KEY (offer_id) REFERENCES subscription_offers(id) ON DELETE CASCADE,
+  CONSTRAINT fk_offer_recip_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
+  CONSTRAINT fk_offer_recip_notification FOREIGN KEY (portal_notification_id) REFERENCES notifications(id) ON DELETE SET NULL
+) ENGINE=InnoDB;

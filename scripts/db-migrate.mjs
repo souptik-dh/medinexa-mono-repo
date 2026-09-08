@@ -1333,6 +1333,21 @@ try {
     console.log('Applied migration: receipts table');
   }
 
+  const [offerRecipientCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'subscription_payments' AND COLUMN_NAME = 'offer_recipient_id'`,
+  );
+  if (Number(offerRecipientCols[0].cnt) === 0) {
+    await conn.query(`
+      ALTER TABLE subscription_payments
+        ADD COLUMN offer_recipient_id CHAR(36) NULL AFTER plan_id,
+        ADD COLUMN discounted_months SMALLINT NULL AFTER months,
+        ADD CONSTRAINT fk_payment_offer_recipient FOREIGN KEY (offer_recipient_id)
+          REFERENCES subscription_offer_recipients(id) ON DELETE SET NULL
+    `);
+    console.log('Applied migration: subscription_payments.offer_recipient_id/discounted_months');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();
