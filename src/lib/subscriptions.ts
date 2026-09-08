@@ -2,6 +2,7 @@ import { createHmac, randomBytes } from "node:crypto";
 import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
 import { ApiError, conflict, notFound } from "@/lib/errors";
 import { newId } from "@/lib/ids";
+import { getActiveOfferForClinic, computeDiscountedAmount, redeemOfferOnPayment } from "@/lib/offers";
 
 type Db = Pool | PoolConnection;
 type Row = RowDataPacket;
@@ -340,6 +341,8 @@ export function serializeSubscriptionPayment(p: Row): Record<string, unknown> {
     period_start: iso(p.period_start),
     period_end: iso(p.period_end),
     initiated_by: p.initiated_by ?? null,
+    offer_recipient_id: p.offer_recipient_id ?? null,
+    discounted_months: p.discounted_months != null ? Number(p.discounted_months) : null,
     created_at: iso(p.created_at),
   };
 }
@@ -379,7 +382,12 @@ export async function initiateSubscriptionPayment(
   // Price is ALWAYS computed server-side from the current active plan — never from
   // the request. Changing the plan affects payments initiated afterwards only.
   const plan = await getActivePlan(db);
-  const amount = round2(plan.amount * opts.months);
+  // A Super Admin discount offer (if the clinic has one still usable) is looked up
+  // server-side the same way — never trusted from the request either.
+  const offer = await getActiveOfferForClinic(db, clinicId);
+  const { amount, discountedMonths } = offer
+    ? computeDiscountedAmount(plan.amount, offer, opts.months)
+    : { amount: round2(plan.amount * opts.months), discountedMonths: 0 };
   const invoiceNo = `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${randomBytes(4)
     .toString("hex")
     .toUpperCase()}`;
@@ -389,8 +397,8 @@ export async function initiateSubscriptionPayment(
   await db.query(
     `INSERT INTO subscription_payments
        (id, clinic_id, subscription_id, plan_id, invoice_no, amount, currency, months,
-        method, provider, provider_order_id, status, initiated_by)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'subscription_gateway', ?, 'PENDING', ?)`,
+        method, provider, provider_order_id, status, initiated_by, offer_recipient_id, discounted_months)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'subscription_gateway', ?, 'PENDING', ?, ?, ?)`,
     [
       id,
       clinicId,
@@ -403,6 +411,8 @@ export async function initiateSubscriptionPayment(
       opts.method,
       orderId,
       opts.userId,
+      offer?.recipientId ?? null,
+      discountedMonths > 0 ? discountedMonths : null,
     ],
   );
   const [rows] = await db.query<Row[]>(`SELECT * FROM subscription_payments WHERE id = ?`, [id]);
@@ -499,6 +509,10 @@ export async function applyPaidPayment(
       meta.source,
     ],
   );
+
+  if (payment.offer_recipient_id) {
+    await redeemOfferOnPayment(conn, String(payment.offer_recipient_id), Number(payment.discounted_months ?? 0));
+  }
 
   await notifyClinicOwner(conn, sub.clinic_id, "subscription_activated", {
     clinic_id: sub.clinic_id,

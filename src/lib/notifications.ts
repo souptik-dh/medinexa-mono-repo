@@ -20,7 +20,8 @@ export type NotificationType =
   | "subscription_expiring"
   | "subscription_expired"
   | "subscription_activated"
-  | "subscription_deactivated";
+  | "subscription_deactivated"
+  | "subscription_offer";
 
 export async function createNotification(
   db: Pick<PoolConnection, "query">,
@@ -28,12 +29,14 @@ export async function createNotification(
   type: NotificationType,
   payload: Record<string, unknown> = {},
   branchId: string | null = null,
-): Promise<void> {
+): Promise<string> {
+  const id = newId();
   await db.query(
     `INSERT INTO notifications (id, user_id, branch_id, type, payload_json)
      VALUES (?, ?, ?, ?, ?)`,
-    [newId(), userId, branchId, type, JSON.stringify(payload)],
+    [id, userId, branchId, type, JSON.stringify(payload)],
   );
+  return id;
 }
 
 export async function notifyBranchStaff(
@@ -160,6 +163,16 @@ export function pushContentFor(
         body: typeof payload.reason === "string" && payload.reason.length > 0
           ? `Your clinic has been deactivated by the platform: ${payload.reason}`
           : "Your clinic has been deactivated by the platform. Contact support for details.",
+      };
+    case "subscription_offer":
+      return {
+        title: "Special offer for your clinic",
+        body:
+          typeof payload.offer_price === "number" && typeof payload.currency === "string"
+            ? `You've been offered ${payload.currency} ${payload.offer_price}/month${
+                typeof payload.duration_months === "number" ? ` for ${payload.duration_months} month(s)` : ""
+              }. Renew your subscription to use it.`
+            : "You have a new subscription offer. Check your notifications for details.",
       };
     default:
       return {
