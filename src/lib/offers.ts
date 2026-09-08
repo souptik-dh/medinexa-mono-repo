@@ -119,8 +119,12 @@ export function planChannelDelivery(
 export interface ActiveClinicOffer {
   offerId: string;
   recipientId: string;
+  title: string;
+  messageTemplate: string;
   discountedAmount: number;
   currency: string;
+  durationMonths: number;
+  validUntil: Date;
   monthsRemaining: number;
 }
 
@@ -132,7 +136,8 @@ export interface ActiveClinicOffer {
  */
 export async function getActiveOfferForClinic(db: Db, clinicId: string): Promise<ActiveClinicOffer | null> {
   const [rows] = await db.query<Row[]>(
-    `SELECT o.id AS offer_id, r.id AS recipient_id, o.discounted_amount, o.currency, r.months_remaining
+    `SELECT o.id AS offer_id, r.id AS recipient_id, o.title, o.message,
+            o.discounted_amount, o.currency, o.duration_months, o.valid_until, r.months_remaining
        FROM subscription_offer_recipients r
        JOIN subscription_offers o ON o.id = r.offer_id
       WHERE r.clinic_id = ? AND o.status = 'ACTIVE'
@@ -145,8 +150,12 @@ export async function getActiveOfferForClinic(db: Db, clinicId: string): Promise
   return {
     offerId: String(row.offer_id),
     recipientId: String(row.recipient_id),
+    title: String(row.title),
+    messageTemplate: String(row.message),
     discountedAmount: Number(row.discounted_amount),
     currency: String(row.currency),
+    durationMonths: Number(row.duration_months),
+    validUntil: new Date(row.valid_until),
     monthsRemaining: Number(row.months_remaining),
   };
 }
