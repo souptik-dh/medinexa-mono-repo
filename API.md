@@ -980,6 +980,7 @@ Auth: `clinic_owner`. Returns every clinic owned by the caller, each with its fu
       "clinical_establishment_reg_url": null,
       "created_at": "2026-08-01T09:30:00Z",
       "updated_at": "2026-08-01T09:30:00Z",
+      "branch_count": 1,
       "branches": [
         {
           "id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
@@ -1880,32 +1881,34 @@ The `doctor_id` path is stricter than the email/phone path: it 404s (`DOCTOR_NOT
 
 ### GET /doctors/verify-registration
 
-Auth: `clinic_owner` or `branch_staff`. Rate limited 200/min. Proxies a lookup against the NMC's public registry server-side. The upstream service matches `reg_no` as a substring, not exact, so this endpoint filters the upstream results down to a single exact match itself.
+Auth: `clinic_owner` or `branch_staff`. Rate limited 200/min. Proxies a lookup against the NMC's public registry server-side. The upstream service matches `reg_no` as a substring, not exact, so this endpoint filters the upstream results down to exact matches itself — and returns **all** of them, since the same registration number can legitimately belong to more than one record in the registry (re-issued numbers, data corrections, etc.); the caller lets the clinic owner pick the right one.
 
 **Query:** `?reg_no=12345` (required, max 64 chars)
 
 **Response `200`** (always `200` — a not-found registration number and an upstream failure both come back as a normal response, not an HTTP error)
 
-Found:
+Found (one or more exact matches):
 ```json
 {
   "success": true,
   "registration_no": "12345",
   "found": true,
-  "doctor": {
-    "doctorId": 12589894,
-    "registrationNo": "12345",
-    "name": "Nirmal Kumar Basu",
-    "fatherOrHusbandName": null,
-    "smcName": "West Bengal Medical Council",
-    "registrationDate": "13/02/1939",
-    "yearOfRegistration": 1939,
-    "doctorDegree": "M.B. (CAL U) 1938",
-    "university": "CAL U",
-    "yearOfPassing": "1938",
-    "address": "79/B, Chittaranjan Avenue, Calcutta  ; West Bengal",
-    "removed": false
-  }
+  "doctors": [
+    {
+      "doctorId": 12589894,
+      "registrationNo": "12345",
+      "name": "Nirmal Kumar Basu",
+      "fatherOrHusbandName": null,
+      "smcName": "West Bengal Medical Council",
+      "registrationDate": "13/02/1939",
+      "yearOfRegistration": 1939,
+      "doctorDegree": "M.B. (CAL U) 1938",
+      "university": "CAL U",
+      "yearOfPassing": "1938",
+      "address": "79/B, Chittaranjan Avenue, Calcutta  ; West Bengal",
+      "removed": false
+    }
+  ]
 }
 ```
 
@@ -1915,7 +1918,7 @@ Not found:
   "success": true,
   "registration_no": "not-a-real-reg-no",
   "found": false,
-  "doctor": null
+  "doctors": []
 }
 ```
 
@@ -1925,7 +1928,7 @@ NMC registry unreachable or returned something unparseable:
   "success": false,
   "registration_no": "12345",
   "found": false,
-  "doctor": null,
+  "doctors": [],
   "message": "Unable to verify NMC registration number at this time. Please try again."
 }
 ```

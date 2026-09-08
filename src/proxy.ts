@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 
 const allowedOrigins = [
   "http://localhost:3001",
-  "https://medinexa-clinic.onrender.com",
+  "https://medinexa-clinic-xi2j.onrender.com",
   "https://healthcare.jido.co.in",
   "http://localhost:8081",
   "http://localhost:4200", // jido-healthcare-app: ng serve

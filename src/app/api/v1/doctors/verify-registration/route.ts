@@ -1,7 +1,7 @@
 import { api, json } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { badRequest } from "@/lib/errors";
-import { searchNmcDoctorByRegistrationNo } from "@/lib/nmcRegistry";
+import { searchNmcDoctorsByRegistrationNo } from "@/lib/nmcRegistry";
 
 // Stateless proxy over the National Medical Commission's public Indian Medical
 // Register, used by the doctor-invite flow (branches/:id/doctor-invites) to look up
@@ -14,12 +14,12 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
   if (regNo.length > 64) throw badRequest("VALIDATION_ERROR", "reg_no is too long.", "reg_no");
 
   try {
-    const doctor = await searchNmcDoctorByRegistrationNo(regNo);
+    const doctors = await searchNmcDoctorsByRegistrationNo(regNo);
     return json({
       success: true,
       registration_no: regNo,
-      found: doctor !== null,
-      doctor,
+      found: doctors.length > 0,
+      doctors,
     });
   } catch (err) {
     console.error("[nmc-registry] lookup failed:", err);
@@ -27,7 +27,7 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
       success: false,
       registration_no: regNo,
       found: false,
-      doctor: null,
+      doctors: [],
       message: "Unable to verify NMC registration number at this time. Please try again.",
     });
   }

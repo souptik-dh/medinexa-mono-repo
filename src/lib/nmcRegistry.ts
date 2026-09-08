@@ -91,10 +91,13 @@ function normalize(raw: NmcRawDoctorRecord): NmcDoctorRecord {
 
 // The upstream service matches registrationNo as a substring, not exact, so a short
 // or numeric-only registration number (e.g. "12345") can come back with thousands of
-// unrelated doctors. We do the exact match ourselves and return a single record.
-export async function searchNmcDoctorByRegistrationNo(
+// unrelated doctors. We do the exact match ourselves. The same registration number can
+// legitimately belong to more than one record in the registry (re-issued numbers, data
+// corrections, etc.), so we return every exact match rather than silently picking one —
+// the caller (clinic owner sending an invite) picks the right doctor from the list.
+export async function searchNmcDoctorsByRegistrationNo(
   registrationNo: string,
-): Promise<NmcDoctorRecord | null> {
+): Promise<NmcDoctorRecord[]> {
   const { status, text } = await postJson(
     NMC_SEARCH_URL,
     JSON.stringify({ registrationNo }),
@@ -115,8 +118,7 @@ export async function searchNmcDoctorByRegistrationNo(
   }
 
   const target = registrationNo.trim().toLowerCase();
-  const match = (raw as NmcRawDoctorRecord[]).find(
-    (r) => (r.registrationNo ?? "").trim().toLowerCase() === target,
-  );
-  return match ? normalize(match) : null;
+  return (raw as NmcRawDoctorRecord[])
+    .filter((r) => (r.registrationNo ?? "").trim().toLowerCase() === target)
+    .map(normalize);
 }
