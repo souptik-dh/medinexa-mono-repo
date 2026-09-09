@@ -5,8 +5,16 @@ import { getActiveLeaves, getAvailabilityPeriods, nextAvailableSlot, todayInTz }
 import { getDoctorSpecializations, specializationDisplayName } from "@/lib/specializations";
 import { getDoctorRatingMap } from "@/lib/reviews";
 
-export const GET = api(undefined, async (ctx) => {
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+export const GET = api({ rateLimit: 120 }, async (ctx) => {
   const branchId = ctx.params.id;
+  const sp = ctx.request.nextUrl.searchParams;
+  const search = sp.get("search")?.trim() || null;
+  const rawLimit = Number(sp.get("limit") ?? 50);
+  const limit = Number.isInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, 50) : 50;
 
   const [branches] = await pool.query<Row[]>(
     `SELECT b.timezone, c.deleted_at AS clinic_deleted
@@ -21,14 +29,30 @@ export const GET = api(undefined, async (ctx) => {
   }
   const tz = branch.timezone as string;
 
+  const filters: string[] = [];
+  const params: unknown[] = [branchId];
+  if (search) {
+    const like = `%${escapeLike(search)}%`;
+    filters.push(
+      `AND (d.name LIKE ?
+            OR EXISTS (SELECT 1 FROM doctor_specialization_map dsm
+                         JOIN doctor_specializations ds ON ds.id = dsm.specialization_id
+                        WHERE dsm.doctor_id = d.id AND ds.name LIKE ?))`,
+    );
+    params.push(like, like);
+  }
+  params.push(limit);
+
   const [rows] = await pool.query<Row[]>(
     `SELECT d.id, d.name, d.smc_name, d.doctor_degree, d.phone, d.certificate_url, d.photo_url,
             dba.id AS assignment_id, dba.fee_amount, dba.currency, dba.branch_id, dba.slot_type
        FROM doctor_branch_assignments dba
        JOIN doctors d ON d.id = dba.doctor_id AND d.deleted_at IS NULL
       WHERE dba.branch_id = ? AND dba.is_active = 1
-      ORDER BY d.name ASC`,
-    [branchId],
+      ${filters.join(" ")}
+      ORDER BY d.name ASC
+      LIMIT ?`,
+    params,
   );
 
   const assignmentIds = rows.map((r) => r.assignment_id);

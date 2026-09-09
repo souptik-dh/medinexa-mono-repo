@@ -2013,6 +2013,11 @@ Auth: `clinic_owner` **or** `branch_staff` with `doctors:manage`. Revokes a pend
 
 Public. Returns only **accepted** doctors assigned to the branch.
 
+**Query:** `?search=&limit=` — `search` is an optional substring match against doctor
+`name` or specialization `name` (e.g. `search=ENT` matches doctors named "ENT..." and
+doctors with an ENT-related specialization); combine terms are OR'd, not AND'd. `limit`
+caps the number of items returned, default and max `50`.
+
 **Response `200`**
 
 ```json
