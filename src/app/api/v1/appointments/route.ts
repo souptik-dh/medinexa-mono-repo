@@ -107,7 +107,7 @@ const schema = z.object({
 });
 
 export const POST = api({ rateLimit: 200 }, async (ctx) => {
-  const auth = requireRoles(ctx.auth, ["patient"]);
+  const auth = requireRoles(ctx.auth, ["patient", "branch_staff", "clinic_owner"]);
   const idemKey = ctx.request.headers.get("idempotency-key");
   if (!idemKey) {
     throw badRequest(
@@ -135,6 +135,21 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     );
     const branch = branches[0];
     if (!branch) throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
+
+    // Clinic staff / owner may book on behalf of a walk-in patient, but only at a
+    // branch they are scoped to. The patient themselves can book at any branch.
+    if (auth.role === "clinic_owner" && branch.owner_user_id !== auth.userId) {
+      throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
+    }
+    if (auth.role === "branch_staff" && auth.branchId !== body.branch_id) {
+      throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
+    }
+    if (auth.role !== "patient" && !body.patient_details) {
+      throw badRequest(
+        "VALIDATION_ERROR",
+        "patient_details is required when booking an appointment on behalf of a patient.",
+      );
+    }
 
     // New bookings are rejected while the clinic's subscription is inactive.
     await assertClinicOperational(pool, branch.clinic_id);
@@ -388,9 +403,12 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       void Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody, emailHtmlBody)));
       void notifyPhonesSmsWhatsapp(recipientPhones, smsText);
 
-      if (info.patient_phone) {
+      // Send the booking confirmation to the walk-in patient's number when one was
+      // provided, otherwise fall back to the account holder's recorded phone.
+      const patientPhone = rows[0]?.visitor_phone || info.patient_phone;
+      if (patientPhone) {
         void notifyPhonesSmsWhatsapp(
-          [info.patient_phone],
+          [patientPhone],
           `Jido Healthcare: Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${body.date} at ${scheduledTime} has been booked and is awaiting confirmation.`,
         );
       }

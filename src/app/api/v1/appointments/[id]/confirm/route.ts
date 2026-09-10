@@ -39,9 +39,11 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
 
   const [details] = await pool.query<Row[]>(
     `SELECT u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
+            ap.phone AS visitor_phone,
             d.name AS doctor_name, b.name AS branch_name, b.address AS branch_address, b.phone AS branch_phone, c.name AS clinic_name
        FROM appointments a
        JOIN users u ON u.id = a.patient_id
+       LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
        JOIN doctors d ON d.id = a.doctor_id
        JOIN branches b ON b.id = a.branch_id
        JOIN clinics c ON c.id = a.clinic_id
@@ -49,6 +51,9 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
     [ctx.params.id],
   );
   const info = details[0];
+  // Prefer the walk-in patient's number when a patient_details.phone was provided,
+  // otherwise fall back to the account holder's recorded phone.
+  const patientPhone = info?.visitor_phone || info?.patient_phone || null;
 
   const receipt = await issueReceipt(pool, {
     sourceType: "appointment",
@@ -76,8 +81,8 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   });
   const confirmText = `Jido Healthcare: Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
   const whatsappConfirmText = `${confirmText}${receipt ? ` Receipt No: ${receipt.receiptNumber}.` : ""}`;
-  const smsConfirm = () => sendSms(info.patient_phone, confirmText);
-  const whatsappConfirm = () => sendWhatsapp(info.patient_phone, whatsappConfirmText);
+  const smsConfirm = () => sendSms(patientPhone, confirmText);
+  const whatsappConfirm = () => sendWhatsapp(patientPhone, whatsappConfirmText);
   if (info?.patient_email) {
     const confirmBody = `Hi ${info.patient_name ?? "there"},\n\nYour appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
     const confirmHtml = detailsEmailHtml({
@@ -97,7 +102,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
       confirmHtml,
     );
   }
-  if (info?.patient_phone) {
+  if (patientPhone) {
     await Promise.allSettled([smsConfirm(), whatsappConfirm()]);
     if (receipt) {
       const pdf = buildReceiptPdf({
@@ -117,7 +122,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
         copy: "patient",
       });
       void sendWhatsappFile(
-        info.patient_phone,
+        patientPhone,
         { filename: `receipt-${receipt.receiptNumber}.pdf`, mimetype: "application/pdf", data: pdf },
         "Your booking confirmation receipt",
       );

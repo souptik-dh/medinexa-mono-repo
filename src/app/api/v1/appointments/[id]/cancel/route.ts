@@ -53,9 +53,10 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
 
   const [details] = await pool.query<Row[]>(
-    `SELECT u.phone AS patient_phone, d.name AS doctor_name, b.name AS branch_name
+    `SELECT u.phone AS patient_phone, ap.phone AS visitor_phone, d.name AS doctor_name, b.name AS branch_name
        FROM appointments a
        JOIN users u ON u.id = a.patient_id
+       LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
        JOIN doctors d ON d.id = a.doctor_id
        JOIN branches b ON b.id = a.branch_id
       WHERE a.id = ?`,
@@ -66,8 +67,11 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
 
   const clinicPhones = await branchContactPhones(pool, appointment.branch_id);
   void notifyPhonesSmsWhatsapp(clinicPhones, cancelText);
-  if (info?.patient_phone) {
-    void notifyPhonesSmsWhatsapp([info.patient_phone], cancelText);
+  // Prefer the walk-in patient's number when a patient_details.phone was provided,
+  // otherwise fall back to the account holder's recorded phone.
+  const patientPhone = info?.visitor_phone || info?.patient_phone || null;
+  if (patientPhone) {
+    void notifyPhonesSmsWhatsapp([patientPhone], cancelText);
   }
 
   return json(serializeAppointment(appointment));
