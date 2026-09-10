@@ -708,6 +708,24 @@ export async function notifyPhonesSmsWhatsapp(phones: string[], text: string): P
   await Promise.all(phones.flatMap((phone) => [sendSms(phone, text), sendWhatsapp(phone, text)]));
 }
 
+/**
+ * Builds a "Jido Healthcare: ..." patient message, addressing the visiting patient by name
+ * when a clinic/staff booking was made on someone else's behalf
+ * (appointment_patients.relationship !== "self"), e.g. "Dear Priya, your appointment...".
+ * Self-bookings (and rows predating appointment_patients) get the plain, unaddressed text.
+ * `body` must NOT include the "Jido Healthcare: " prefix — this adds it.
+ */
+export function personalizeForPatient(
+  body: string,
+  visitorName: string | null | undefined,
+  visitorRelationship: string | null | undefined,
+): string {
+  const isForSelf = !visitorRelationship || visitorRelationship === "self";
+  const greeted =
+    isForSelf || !visitorName ? body : `Dear ${visitorName}, ${body.charAt(0).toLowerCase()}${body.slice(1)}`;
+  return `Jido Healthcare: ${greeted}`;
+}
+
 /** Sends a one-time login/password code via SMS. */
 export async function sendOtpSms(
   phone: string,

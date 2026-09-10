@@ -7,7 +7,7 @@ import { badRequest, conflict, notFound, unprocessable, isUniqueViolation } from
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { scopeWhere, serializeAppointment, APPT_STATUSES } from "@/lib/appointments";
-import { notifyBranchStaff, createNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, notifyPhonesSmsWhatsapp } from "@/lib/notifications";
+import { notifyBranchStaff, createNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, notifyPhonesSmsWhatsapp, personalizeForPatient } from "@/lib/notifications";
 import {
   todayInTz,
   weekdayInTz,
@@ -407,10 +407,12 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       // provided, otherwise fall back to the account holder's recorded phone.
       const patientPhone = rows[0]?.visitor_phone || info.patient_phone;
       if (patientPhone) {
-        void notifyPhonesSmsWhatsapp(
-          [patientPhone],
-          `Jido Healthcare: Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${body.date} at ${scheduledTime} has been booked and is awaiting confirmation.`,
+        const bookedText = personalizeForPatient(
+          `Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${body.date} at ${scheduledTime} has been booked and is awaiting confirmation.`,
+          patientDetails.name,
+          patientDetails.relationship,
         );
+        void notifyPhonesSmsWhatsapp([patientPhone], bookedText);
       }
     }
 

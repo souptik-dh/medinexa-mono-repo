@@ -8,6 +8,7 @@ import {
   notifyPhonesSmsWhatsapp,
   branchContactPhones,
   sendWhatsappFile,
+  personalizeForPatient,
 } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
@@ -39,7 +40,8 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
 
   const [details] = await pool.query<Row[]>(
-    `SELECT u.name AS patient_name, u.phone AS patient_phone, ap.phone AS visitor_phone,
+    `SELECT u.name AS patient_name, u.phone AS patient_phone,
+            ap.phone AS visitor_phone, ap.name AS visitor_name, ap.relationship AS visitor_relationship,
             d.name AS doctor_name,
             b.name AS branch_name, b.address AS branch_address, b.phone AS branch_phone, c.name AS clinic_name
        FROM appointments a
@@ -89,10 +91,12 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   );
 
   if (patientPhone) {
-    void notifyPhonesSmsWhatsapp(
-      [patientPhone],
-      `Jido Healthcare: Your consultation with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been completed.`,
+    const completeText = personalizeForPatient(
+      `Your consultation with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been completed.`,
+      info.visitor_name,
+      info.visitor_relationship,
     );
+    void notifyPhonesSmsWhatsapp([patientPhone], completeText);
     if (receipt) {
       const pdf = buildReceiptPdf({
         title: "Consultation Completion Receipt",

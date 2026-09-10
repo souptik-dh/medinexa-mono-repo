@@ -14,6 +14,7 @@ import {
   sendWhatsappFile,
   notifyPhonesSmsWhatsapp,
   branchContactPhones,
+  personalizeForPatient,
 } from "@/lib/notifications";
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
@@ -106,7 +107,8 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
     if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
 
 const [details] = await pool.query<Row[]>(
-    `SELECT u.name AS patient_name, u.phone AS patient_phone, ap.phone AS visitor_phone,
+    `SELECT u.name AS patient_name, u.phone AS patient_phone,
+            ap.phone AS visitor_phone, ap.name AS visitor_name, ap.relationship AS visitor_relationship,
             co.email AS owner_email, co.phone AS owner_phone,
             b.name AS branch_name, b.address AS branch_address, b.phone AS branch_phone, c.name AS clinic_name, d.name AS doctor_name
        FROM appointments a
@@ -158,10 +160,12 @@ const [details] = await pool.query<Row[]>(
       `Jido Healthcare: Payment of ${body.fee_amount} ${appointment.currency} collected via ${body.method} from ${info.patient_name ?? "a patient"} at ${info.branch_name}.`,
     );
     if (patientPhone) {
-      void notifyPhonesSmsWhatsapp(
-        [patientPhone],
-        `Jido Healthcare: Payment of ${body.fee_amount} ${appointment.currency} received for your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time}.${receipt ? ` Receipt No: ${receipt.receiptNumber}.` : ""}`,
+      const paymentText = personalizeForPatient(
+        `Payment of ${body.fee_amount} ${appointment.currency} received for your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time}.${receipt ? ` Receipt No: ${receipt.receiptNumber}.` : ""}`,
+        info.visitor_name,
+        info.visitor_relationship,
       );
+      void notifyPhonesSmsWhatsapp([patientPhone], paymentText);
       if (receipt) {
         const pdf = buildReceiptPdf({
           title: "Payment Receipt",

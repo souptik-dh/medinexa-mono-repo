@@ -11,6 +11,7 @@ import {
   sendWhatsappFile,
   notifyPhonesSmsWhatsapp,
   branchContactPhones,
+  personalizeForPatient,
 } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
@@ -39,7 +40,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
 
   const [details] = await pool.query<Row[]>(
     `SELECT u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
-            ap.phone AS visitor_phone,
+            ap.phone AS visitor_phone, ap.name AS visitor_name, ap.relationship AS visitor_relationship,
             d.name AS doctor_name, b.name AS branch_name, b.address AS branch_address, b.phone AS branch_phone, c.name AS clinic_name
        FROM appointments a
        JOIN users u ON u.id = a.patient_id
@@ -79,7 +80,8 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
       paid: false,
     },
   });
-  const confirmText = `Jido Healthcare: Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
+  const confirmBody = `Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
+  const confirmText = personalizeForPatient(confirmBody, info?.visitor_name, info?.visitor_relationship);
   const whatsappConfirmText = `${confirmText}${receipt ? ` Receipt No: ${receipt.receiptNumber}.` : ""}`;
   const smsConfirm = () => sendSms(patientPhone, confirmText);
   const whatsappConfirm = () => sendWhatsapp(patientPhone, whatsappConfirmText);
