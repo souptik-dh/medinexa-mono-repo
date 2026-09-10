@@ -92,10 +92,13 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
 const patientDetailsSchema = z.object({
   relationship: z.enum(["self", "spouse", "child", "parent", "sibling", "friend", "other"]).default("self"),
   name: z.string().trim().min(1).max(255),
-  // Normalized to +91XXXXXXXXXX so downstream SMS/WhatsApp dispatch (which needs the
-  // country code for both the SMS gateway and WhatsApp's chatId) doesn't reject a
-  // plain 10-digit number typed by staff at booking time.
-  phone: phoneSchema.optional().nullable(),
+  // Required (not just normalized) so a staff/owner walk-in booking can never omit the
+  // patient's number — omitting it used to make the confirmation SMS/WhatsApp silently
+  // fall back to the booking account's own phone (the staff member's, for a walk-in),
+  // instead of never reaching the actual patient. Normalized to +91XXXXXXXXXX so
+  // downstream SMS/WhatsApp dispatch (which needs the country code for both the SMS
+  // gateway and WhatsApp's chatId) doesn't reject a plain 10-digit number typed by staff.
+  phone: phoneSchema,
   age: z.number().int().min(0).max(150).optional().nullable(),
   gender: z.enum(["male", "female", "other", "prefer_not_to_say"]).optional().nullable(),
 });

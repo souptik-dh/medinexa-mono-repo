@@ -196,7 +196,12 @@ export function labTestScopeWhere(auth: AuthContext): { where: string; params: u
     case "patient":
       return { where: "1 = 1", params: [] };
     case "branch_staff":
-      return { where: "b.branch_id = ?", params: [auth.branchId ?? "__none__"] };
+      // `b` is the joined `branches` row (`JOIN branches b ON b.id = blt.branch_id`),
+      // whose primary key column is `id`, not `branch_id` — that column only exists on
+      // `blt` (branch_lab_tests) and `lab_test_appointments`. Referencing `b.branch_id`
+      // is an unknown-column SQL error, which made every branch_staff call to the lab
+      // test detail/availability endpoints 500 instead of scoping to their own branch.
+      return { where: "b.id = ?", params: [auth.branchId ?? "__none__"] };
     case "clinic_owner":
       return {
         where: "b.clinic_id IN (SELECT id FROM clinics WHERE owner_user_id = ?)",

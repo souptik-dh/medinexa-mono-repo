@@ -3037,10 +3037,10 @@ Behavior depends on the doctor's assignment `slot_type` for `branch_id` (see [Sl
 | `branch_id` | string (UUID) | required |
 | `date` | string | required, `YYYY-MM-DD`, not in the past |
 | `time` | string? | required and must be an aligned slot when the doctor's `slot_type` is `fixed`; omit for `sequential` doctors |
-| `patient_details` | object? | optional — omit to book for yourself (defaults to `relationship: "self"` using your own account name/phone) |
+| `patient_details` | object? | optional — omit to book for yourself (defaults to `relationship: "self"` using your own account name/phone). **Required** when `branch_staff`/`clinic_owner` book on behalf of a walk-in patient |
 | `patient_details.relationship` | string? | `self` \| `spouse` \| `child` \| `parent` \| `sibling` \| `friend` \| `other`, defaults to `self` |
 | `patient_details.name` | string | required if `patient_details` is present, 1–255 chars |
-| `patient_details.phone` | string? | max 32 |
+| `patient_details.phone` | string | required if `patient_details` is present, normalized to `+91XXXXXXXXXX` — the confirmation SMS/WhatsApp is sent here, never to the booking account's own phone |
 | `patient_details.age` | number? | 0–150 |
 | `patient_details.gender` | string? | one of `male`, `female`, `other`, `prefer_not_to_say` |
 
