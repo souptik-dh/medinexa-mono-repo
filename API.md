@@ -3341,7 +3341,9 @@ Slots are generated from `lab_test_schedules` for the branch, filtered against b
 
 #### POST /lab-test-appointments
 
-Auth: `patient`. Rate limited 20/min. Header `Idempotency-Key` **required**. Creates a new lab test appointment. Double-booking is prevented at the database level via a unique constraint on `(branch_id, branch_lab_test_id, appointment_date, slot_key)` excluding cancelled slots.
+Auth: `patient`, `branch_staff`, `clinic_owner`. Rate limited 20/min. Header `Idempotency-Key` **required**. Creates a new lab test appointment. Double-booking is prevented at the database level via a unique constraint on `(branch_id, branch_lab_test_id, appointment_date, slot_key)` excluding cancelled slots. Staff/owner may book on behalf of a walk-in patient, but only at a branch they're scoped to; a patient account can book at any branch.
+
+`patient_details` identifies who the test is actually **for** and is **required on every booking** — including a patient booking for themself (there is no "book for myself" default/omission).
 
 On success, an in-app `lab_test_booked` notification is created for every branch staff member and the clinic owner.
 
@@ -3356,7 +3358,14 @@ On success, an in-app `lab_test_booked` notification is created for every branch
   "start_time": "09:00",
   "prescription_id": null,
   "patient_notes": "Fasting since last night",
-  "payment_method": "PAY_AT_CLINIC"
+  "payment_method": "PAY_AT_CLINIC",
+  "patient_details": {
+    "relationship": "self",
+    "name": "Jane Doe",
+    "phone": "+919876543210",
+    "age": 34,
+    "gender": "female"
+  }
 }
 ```
 
@@ -3375,8 +3384,14 @@ On success, an in-app `lab_test_booked` notification is created for every branch
 | `home_lng` | number? | -180…180 |
 | `home_contact_phone` | string? | max 32 |
 | `home_notes` | string? | max 500 |
+| `patient_details` | object | **required** — the patient the test is for |
+| `patient_details.relationship` | string? | `self` \| `spouse` \| `child` \| `parent` \| `sibling` \| `friend` \| `other`, defaults to `self` |
+| `patient_details.name` | string | required, 1–255 chars |
+| `patient_details.phone` | string | required, normalized to `+91XXXXXXXXXX` |
+| `patient_details.age` | number | required, 0–150 |
+| `patient_details.gender` | string | required, one of `male`, `female`, `other`, `prefer_not_to_say` |
 
-**Response `201`** — LabTestAppointment object (`status: "PENDING"`). A `lab_test_payment` record is also created with the appointment's price.
+**Response `201`** — LabTestAppointment object (`status: "PENDING"`), including the nested `patient_details` that was submitted. A `lab_test_payment` record is also created with the appointment's price.
 
 **Errors:** `400 IDEMPOTENCY_KEY_REQUIRED`, `400 VALIDATION_ERROR`, `404 BRANCH_NOT_FOUND`, `404 TEST_NOT_FOUND`, `409 SLOT_ALREADY_BOOKED`, `422 DATE_IN_PAST`, `422 OUTSIDE_SCHEDULE`, `422 PRESCRIPTION_REQUIRED`.
 

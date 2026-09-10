@@ -31,9 +31,9 @@ const patientDetailsSchema = z.object({
   // Normalized to +91XXXXXXXXXX so downstream SMS/WhatsApp dispatch (which needs the
   // country code for both the SMS gateway and WhatsApp's chatId) doesn't reject a
   // plain 10-digit number typed by staff at booking time.
-  phone: phoneSchema.optional().nullable(),
-  age: z.number().int().min(0).max(150).optional().nullable(),
-  gender: z.enum(["male", "female", "other", "prefer_not_to_say"]).optional().nullable(),
+  phone: phoneSchema,
+  age: z.number().int().min(0).max(150),
+  gender: z.enum(["male", "female", "other", "prefer_not_to_say"]),
 });
 
 const createSchema = z.object({
@@ -50,8 +50,8 @@ const createSchema = z.object({
   home_lng: z.number().optional(),
   home_contact_phone: z.string().max(32).optional(),
   home_notes: z.string().max(500).optional(),
-  // Omit entirely to book for the account holder — defaults to their own name/phone below.
-  patient_details: patientDetailsSchema.optional(),
+  // Always required — name, phone, age, and gender of the patient the test is for.
+  patient_details: patientDetailsSchema,
 });
 
 export const POST = api({ rateLimit: 200 }, async (ctx) => {
@@ -92,13 +92,6 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     if (auth.role === "branch_staff" && auth.branchId !== body.branch_id) {
       throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
     }
-    if (auth.role !== "patient" && !body.patient_details) {
-      throw badRequest(
-        "VALIDATION_ERROR",
-        "patient_details is required when booking a lab test on behalf of a patient.",
-      );
-    }
-
     // New bookings are rejected while the clinic's subscription is inactive.
     await assertClinicOperational(pool, branch.clinic_id);
 
@@ -157,17 +150,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       throw conflict("DUPLICATE_BOOKING", "You already have a booking for this slot.");
     }
 
-    // Defaults to the account holder's own name/phone when patient_details is omitted
-    // (the common "booking for myself" case).
-    let patientDetails = body.patient_details;
-    if (!patientDetails) {
-      const [selfRows] = await pool.query<RowDataPacket[]>(
-        `SELECT name, phone FROM users WHERE id = ?`,
-        [auth.userId],
-      );
-      const self = selfRows[0];
-      patientDetails = { relationship: "self", name: self?.name ?? "Self", phone: self?.phone ?? null, age: null, gender: null };
-    }
+    const patientDetails = body.patient_details;
 
     const appointmentId = newId();
     const appointmentNumber = generateAppointmentNumber();
