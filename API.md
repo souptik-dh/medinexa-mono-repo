@@ -1689,8 +1689,10 @@ Auth: `clinic_owner` (owns branch) or `branch_staff` (own branch only).
 
 ### POST /branches/:id/staff
 
-Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. Creates the staff user and
-sends a phone/SMS login instruction (staff sign in via phone + OTP).
+Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. Creates the staff user and sends
+a welcome message by **SMS and WhatsApp** to the new staff member's phone: "Hi {name}, you have
+been added as a staff member of {clinic name}, {branch name}. Welcome to Jido Healthcare! You can
+log in with this phone number using OTP." (staff sign in via phone + OTP).
 
 **Request body**
 
