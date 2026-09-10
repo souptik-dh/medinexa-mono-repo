@@ -8,12 +8,11 @@ import {
   serializeLabTestAppointment,
 } from "@/lib/lab-tests";
 import { hasSlotPassedInTz } from "@/lib/availability";
-import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp, personalizeForPatient } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict } from "@/lib/errors";
 import { issueReceipt } from "@/lib/receipts";
-import type { RowDataPacket } from "mysql2/promise";
 
 export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff", "sys_admin"]);
@@ -53,19 +52,18 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     time: appointment.start_time,
   });
 
-  const [patientRows] = await pool.query<RowDataPacket[]>(
-    `SELECT name, email, phone FROM users WHERE id = ?`,
-    [appointment.patient_id],
-  );
-  const patient = patientRows[0];
-
-  if (patient?.phone) {
-    const completeText = `Jido Healthcare: Your lab test (${appointment.test_name}) for ${appointment.appointment_number} has been completed. Your report is now available.`;
-    await Promise.allSettled([sendSms(patient.phone, completeText), sendWhatsapp(patient.phone, completeText)]);
+  const patientPhone = appointment.visitor_phone || appointment.patient_phone;
+  if (patientPhone) {
+    const completeText = personalizeForPatient(
+      `Your lab test (${appointment.test_name}) for ${appointment.appointment_number} has been completed. Your report is now available.`,
+      appointment.visitor_name,
+      appointment.visitor_relationship,
+    );
+    await Promise.allSettled([sendSms(patientPhone, completeText), sendWhatsapp(patientPhone, completeText)]);
   }
-  if (patient?.email) {
+  if (appointment.patient_email) {
     await sendEmail(
-      patient.email,
+      appointment.patient_email,
       `Lab Test Completed — ${appointment.appointment_number}`,
       `Your lab test has been completed.`,
       detailsEmailHtml({

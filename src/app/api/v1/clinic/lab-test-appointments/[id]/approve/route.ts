@@ -16,13 +16,13 @@ import {
   patientEmailHtml,
   sendSms,
   sendWhatsapp,
+  personalizeForPatient,
 } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest } from "@/lib/errors";
 import { issueReceipt } from "@/lib/receipts";
 import { z } from "zod";
-import type { RowDataPacket } from "mysql2/promise";
 
 const approveSchema = z.object({
   precautions: z.array(z.string().max(500)).optional(),
@@ -92,12 +92,6 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     precautions: finalPrecautions,
   });
 
-  const [patientRows] = await pool.query<RowDataPacket[]>(
-    `SELECT name, email, phone FROM users WHERE id = ?`,
-    [appointment.patient_id],
-  );
-  const patient = patientRows[0];
-
   const emailHtml = detailsEmailHtml({
     heading: "Lab Test Appointment Confirmed",
     intro: `Your lab test appointment has been approved by the clinic.`,
@@ -113,12 +107,17 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     ],
   });
 
-  if (patient?.email) {
-    await sendEmail(patient.email, `Lab Test Confirmed — ${appointment.appointment_number}`, "", emailHtml);
+  if (appointment.patient_email) {
+    await sendEmail(appointment.patient_email, `Lab Test Confirmed — ${appointment.appointment_number}`, "", emailHtml);
   }
-  if (patient?.phone) {
-    const confirmText = `Jido Healthcare: Your lab test appointment ${appointment.appointment_number} (${appointment.test_name}) at ${appointment.branch_name} on ${appointment.appointment_date} at ${appointment.start_time} has been confirmed.`;
-    await Promise.allSettled([sendSms(patient.phone, confirmText), sendWhatsapp(patient.phone, confirmText)]);
+  const patientPhone = appointment.visitor_phone || appointment.patient_phone;
+  if (patientPhone) {
+    const confirmText = personalizeForPatient(
+      `Your lab test appointment ${appointment.appointment_number} (${appointment.test_name}) at ${appointment.branch_name} on ${appointment.appointment_date} at ${appointment.start_time} has been confirmed.`,
+      appointment.visitor_name,
+      appointment.visitor_relationship,
+    );
+    await Promise.allSettled([sendSms(patientPhone, confirmText), sendWhatsapp(patientPhone, confirmText)]);
   }
 
   const updated = await getLabTestAppointmentInScope(pool, id, auth);

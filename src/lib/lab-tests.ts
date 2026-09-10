@@ -114,6 +114,18 @@ export function serializeLabTestAppointment(r: Row) {
     updated_at: r.updated_at,
   };
 
+  // Who the test is actually for — may differ from the booking account (patient_id)
+  // when a clinic/staff booked on behalf of a walk-in patient.
+  if (r.visitor_name !== undefined) {
+    base.patient_details = {
+      relationship: r.visitor_relationship ?? "self",
+      name: r.visitor_name,
+      phone: r.visitor_phone ?? null,
+      age: r.visitor_age !== null && r.visitor_age !== undefined ? Number(r.visitor_age) : null,
+      gender: r.visitor_gender ?? null,
+    };
+  }
+
   if (r.service_mode === "HOME") {
     base.home_address = r.home_address ?? null;
     base.home_lat = r.home_lat !== null && r.home_lat !== undefined ? Number(r.home_lat) : null;
@@ -312,12 +324,15 @@ export async function getLabTestAppointmentInScope(
             b.name AS branch_name, b.phone AS branch_phone, b.timezone AS branch_timezone, b.address AS branch_address,
             c.name AS clinic_name,
             u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
-            u.date_of_birth AS patient_dob, u.gender AS patient_gender
+            u.date_of_birth AS patient_dob, u.gender AS patient_gender,
+            ltap.relationship AS visitor_relationship, ltap.name AS visitor_name,
+            ltap.phone AS visitor_phone, ltap.age AS visitor_age, ltap.gender AS visitor_gender
        FROM lab_test_appointments a
        JOIN lab_tests lt ON lt.id = a.test_id
        JOIN branches b ON b.id = a.branch_id
        JOIN clinics c ON c.id = a.clinic_id
        JOIN users u ON u.id = a.patient_id
+       LEFT JOIN lab_test_appointment_patients ltap ON ltap.appointment_id = a.id
      WHERE a.id = ? AND ${where} FOR UPDATE`,
     [id, ...params],
   );

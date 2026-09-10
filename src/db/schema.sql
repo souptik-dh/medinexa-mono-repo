@@ -816,6 +816,24 @@ CREATE TABLE IF NOT EXISTS lab_test_appointments (
   CONSTRAINT fk_lta_test FOREIGN KEY (test_id) REFERENCES lab_tests(id)
 ) ENGINE=InnoDB;
 
+-- Who the lab test is actually for — a clinic/staff booking on behalf of a walk-in
+-- patient (patient_id on lab_test_appointments is the booking account, mirroring
+-- appointment_patients for doctor appointments). One row per appointment, always
+-- present (relationship defaults to 'self') when a client omits patient_details.
+CREATE TABLE IF NOT EXISTS lab_test_appointment_patients (
+  id CHAR(36) NOT NULL,
+  appointment_id CHAR(36) NOT NULL,
+  relationship ENUM('self','spouse','child','parent','sibling','friend','other') NOT NULL DEFAULT 'self',
+  name VARCHAR(255) NOT NULL,
+  phone VARCHAR(32) NULL,
+  age TINYINT UNSIGNED NULL,
+  gender ENUM('male','female','other','prefer_not_to_say') NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_lab_test_appointment_patient (appointment_id),
+  CONSTRAINT fk_lta_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES lab_test_appointments(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS lab_test_prescriptions (
   id CHAR(36) NOT NULL,
   patient_id CHAR(36) NOT NULL,

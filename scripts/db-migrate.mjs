@@ -1048,6 +1048,29 @@ try {
     console.log('Applied migration: lab_test_payments table');
   }
 
+  const [labTestApptPatientsTables] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'lab_test_appointment_patients'`,
+  );
+  if (Number(labTestApptPatientsTables[0].cnt) === 0) {
+    await conn.query(`
+      CREATE TABLE lab_test_appointment_patients (
+        id CHAR(36) NOT NULL,
+        appointment_id CHAR(36) NOT NULL,
+        relationship ENUM('self','spouse','child','parent','sibling','friend','other') NOT NULL DEFAULT 'self',
+        name VARCHAR(255) NOT NULL,
+        phone VARCHAR(32) NULL,
+        age TINYINT UNSIGNED NULL,
+        gender ENUM('male','female','other','prefer_not_to_say') NULL,
+        created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+        PRIMARY KEY (id),
+        UNIQUE KEY uniq_lab_test_appointment_patient (appointment_id),
+        CONSTRAINT fk_lta_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES lab_test_appointments(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB
+    `);
+    console.log('Applied migration: lab_test_appointment_patients table');
+  }
+
   // ---- Clinic Subscription System ----
 
   // Default plan: ₹49/month, 2-month free trial. Inserted only when no plan exists.
