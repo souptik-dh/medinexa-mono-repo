@@ -2,7 +2,7 @@ import { api, json } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
-import { parseBody } from "@/lib/validators";
+import { parseBody, phoneSchema } from "@/lib/validators";
 import {
   generateAppointmentNumber,
   serializeLabTestAppointment,
@@ -28,7 +28,10 @@ import type { RowDataPacket } from "mysql2/promise";
 const patientDetailsSchema = z.object({
   relationship: z.enum(["self", "spouse", "child", "parent", "sibling", "friend", "other"]).default("self"),
   name: z.string().trim().min(1).max(255),
-  phone: z.string().trim().max(32).optional().nullable(),
+  // Normalized to +91XXXXXXXXXX so downstream SMS/WhatsApp dispatch (which needs the
+  // country code for both the SMS gateway and WhatsApp's chatId) doesn't reject a
+  // plain 10-digit number typed by staff at booking time.
+  phone: phoneSchema.optional().nullable(),
   age: z.number().int().min(0).max(150).optional().nullable(),
   gender: z.enum(["male", "female", "other", "prefer_not_to_say"]).optional().nullable(),
 });

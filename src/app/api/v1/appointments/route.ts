@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { api, json, decodeCursor } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
-import { parseBody, idSchema, timeSchema, parsePagination } from "@/lib/validators";
+import { parseBody, idSchema, timeSchema, parsePagination, phoneSchema } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { badRequest, conflict, notFound, unprocessable, isUniqueViolation } from "@/lib/errors";
 import { newId } from "@/lib/ids";
@@ -92,7 +92,10 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
 const patientDetailsSchema = z.object({
   relationship: z.enum(["self", "spouse", "child", "parent", "sibling", "friend", "other"]).default("self"),
   name: z.string().trim().min(1).max(255),
-  phone: z.string().trim().max(32).optional().nullable(),
+  // Normalized to +91XXXXXXXXXX so downstream SMS/WhatsApp dispatch (which needs the
+  // country code for both the SMS gateway and WhatsApp's chatId) doesn't reject a
+  // plain 10-digit number typed by staff at booking time.
+  phone: phoneSchema.optional().nullable(),
   age: z.number().int().min(0).max(150).optional().nullable(),
   gender: z.enum(["male", "female", "other", "prefer_not_to_say"]).optional().nullable(),
 });
