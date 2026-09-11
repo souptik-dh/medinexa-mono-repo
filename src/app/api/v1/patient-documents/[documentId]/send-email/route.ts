@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import { api, json, requestOrigin } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
@@ -5,7 +7,7 @@ import { pool, withTransaction } from "@/lib/db";
 import { parseBody, emailSchema } from "@/lib/validators";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { sendEmail, detailsEmailHtml } from "@/lib/notifications";
-import { signFileUrl } from "@/lib/upload";
+import { signFileUrl, UPLOAD_DIR } from "@/lib/upload";
 import {
   getClinicVisibleDocument,
   assertDocumentActionPermission,
@@ -42,6 +44,17 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
   });
 
   const link = signFileUrl(requestOrigin(ctx.request), doc.file_key, EMAIL_LINK_TTL_SECONDS);
+
+  // Attaching the actual bytes means the patient can open the document straight from
+  // the email even if the link above later 404s (e.g. local disk storage wiped by a
+  // redeploy) — the link stays as a same-tab viewing option, not the only way in.
+  let attachmentData: Buffer | null = null;
+  try {
+    attachmentData = await readFile(path.join(UPLOAD_DIR, doc.file_key));
+  } catch (err) {
+    console.error(`[patient-documents] could not read file_key=${doc.file_key} for email attachment:`, err);
+  }
+
   const html = detailsEmailHtml({
     heading: doc.title,
     intro: `${doc.uploaded_by_name ?? "Your clinic"} has shared a document with you from ${doc.clinic_name}, ${doc.branch_name}.`,
@@ -49,14 +62,22 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
       { label: "Document", value: doc.title, sub: doc.document_type.replace(/_/g, " ") },
       { label: "Clinic", value: `${doc.clinic_name} · ${doc.branch_name}` },
     ],
-    note: `This link is valid for 24 hours. <a href="${link}">View document</a>`,
+    note: attachmentData
+      ? `The document is attached to this email. You can also <a href="${link}">view it online</a> (link valid for 24 hours).`
+      : `This link is valid for 24 hours. <a href="${link}">View document</a>`,
     patientFacing: true,
   });
 
   // sendEmail never throws — it reports success/failure via its return value, which is
   // exactly what lets this delivery record reflect a real DELIVERED/NOT_DELIVERED
   // outcome instead of always defaulting to "sent".
-  const delivered = await sendEmail(body.email, `${doc.title} — Jido Healthcare`, "", html);
+  const delivered = await sendEmail(
+    body.email,
+    `${doc.title} — Jido Healthcare`,
+    "",
+    html,
+    attachmentData ? [{ filename: doc.file_name, data: attachmentData }] : undefined,
+  );
 
   await withTransaction(async (conn) => {
     if (delivered) {

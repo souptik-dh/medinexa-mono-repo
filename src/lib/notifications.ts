@@ -460,11 +460,17 @@ You can now manage your schedule and appointments at this branch using your exis
  * whether delivery succeeded (e.g. recording a DELIVERED/NOT_DELIVERED outcome) can
  * now `await` it.
  */
+export interface EmailAttachment {
+  filename: string;
+  data: Buffer;
+}
+
 export async function sendEmail(
   to: string,
   subject: string,
   body: string,
   html?: string,
+  attachments?: EmailAttachment[],
 ): Promise<boolean> {
   const apiKey = process.env.BREVO_API_KEY;
   if (!apiKey) {
@@ -489,6 +495,14 @@ export async function sendEmail(
         to: [{ email: to }],
         subject,
         htmlContent,
+        ...(attachments?.length
+          ? {
+              attachment: attachments.map((a) => ({
+                name: a.filename,
+                content: a.data.toString("base64"),
+              })),
+            }
+          : {}),
       }),
     });
     if (!res.ok) {
