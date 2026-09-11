@@ -60,10 +60,22 @@ export async function resolveDocumentBranch(
   return { branchId: branch.id, clinicId: branch.clinic_id };
 }
 
-/** Confirms the target user is an active patient account — never assumed from the client. */
+/**
+ * Confirms the target id is a valid patient — never assumed from the client. Covers both
+ * a self-registered patient account (role = 'patient') and a walk-in "patient" who has no
+ * account of their own: a walk-in is booked with `appointments.patient_id` set to the
+ * staff/owner account that created it on their behalf (see appointments POST), with the
+ * actual visitor's name/phone recorded separately in `appointment_patients` — so any id
+ * that has booked at least one non-cancelled appointment is accepted too, matching exactly
+ * the population the branch "patients" list (GET /branches/:id/patients) already shows.
+ */
 export async function assertPatientExists(db: Db, patientId: string): Promise<void> {
   const [rows] = await db.query<Row[]>(
-    `SELECT id FROM users WHERE id = ? AND role = 'patient' AND status = 'active'`,
+    `SELECT u.id FROM users u
+      WHERE u.id = ? AND u.status = 'active'
+        AND (u.role = 'patient' OR EXISTS (
+          SELECT 1 FROM appointments a WHERE a.patient_id = u.id AND a.status != 'cancelled'
+        ))`,
     [patientId],
   );
   if (!rows[0]) throw notFound("PATIENT_NOT_FOUND", "Patient not found.");
