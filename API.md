@@ -28,15 +28,16 @@ Live implementation reference for the MediBook API. Every endpoint below documen
 15. [Prescriptions](#prescriptions)
 16. [Receipts](#receipts)
 17. [Medical documents](#medical-documents)
-18. [Medications](#medications)
-19. [Notifications](#notifications)
-20. [Files (signed URLs)](#files-signed-urls)
-21. [Subscriptions & billing](#subscriptions--billing)
-22. [Super Admin platform](#super-admin-platform)
-23. [Webhooks](#webhooks)
-24. [Error codes](#error-codes)
-25. [Status transition table](#status-transition-table)
-26. [Lab test status transitions](#lab-test-status-transitions)
+18. [Patient documents (lab reports & prescriptions)](#patient-documents-lab-reports--prescriptions)
+19. [Medications](#medications)
+20. [Notifications](#notifications)
+21. [Files (signed URLs)](#files-signed-urls)
+22. [Subscriptions & billing](#subscriptions--billing)
+23. [Super Admin platform](#super-admin-platform)
+24. [Webhooks](#webhooks)
+25. [Error codes](#error-codes)
+26. [Status transition table](#status-transition-table)
+27. [Lab test status transitions](#lab-test-status-transitions)
 
 ---
 
@@ -4139,6 +4140,151 @@ Auth: `doctor` **only**, and only with a non-cancelled appointment relationship 
 
 ---
 
+## Patient documents (lab reports & prescriptions)
+
+Clinic-issued patient documents — lab reports, prescriptions, or other files — uploaded **by clinic staff/owner on behalf of a patient**, scoped to a clinic/branch. This is a distinct feature from [Medical documents](#medical-documents) above (patient's own self-uploaded scans, no clinic/branch attribution) and from [Prescriptions](#prescriptions) (the in-app digitized prescription tied to one appointment) — this one is clinic-driven, with an independent multi-channel delivery trail.
+
+`document_type` ∈ `LAB_REPORT | PRESCRIPTION | OTHER`. `status` (generation) ∈ `PENDING | GENERATED` — set to `GENERATED` immediately on successful upload (there's no async generation step in this version). `delivery_method` ∈ `APP | EMAIL | PRINT`. `delivery_status` ∈ `PENDING | DELIVERED | NOT_DELIVERED`.
+
+A document can be `Available` in the patient app, `Delivered` by email, and `Printed` **simultaneously** — each channel has its own independent history (`patient_document_deliveries`), never overwriting another channel's state. Every successfully generated document automatically gets an `APP` delivery row (`status: DELIVERED`) at upload time — that's what "available in the patient app" means; there's no separate action to make it visible.
+
+### PatientDocument object
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "patient_id": "3f9d6b5e-...",
+  "clinic_id": "9d2f4c8a-...",
+  "branch_id": "5e8f6c7a-...",
+  "clinic_name": "Sunrise Multispeciality",
+  "branch_name": "Sunrise — Andheri",
+  "patient_name": "Aisha Verma",
+  "uploaded_by_name": "Dr. Smith",
+  "document_type": "LAB_REPORT",
+  "title": "Blood Test Report",
+  "description": null,
+  "file_name": "blood-report.pdf",
+  "file_size": 245760,
+  "mime_type": "application/pdf",
+  "file_url": "https://.../api/v1/files/patient-document-....pdf?expires=...&sig=...",
+  "uploaded_by": "1a2b3c4d-...",
+  "uploaded_at": "2026-09-10T10:30:00.000Z",
+  "status": "GENERATED",
+  "created_at": "2026-09-10T10:30:00.000Z",
+  "updated_at": "2026-09-10T10:30:00.000Z"
+}
+```
+
+`file_url` is a freshly-signed, 15-minute link minted on every read (same signing mechanism as [Files](#files-signed-urls)) — it is never persisted, so a copy of a list/detail response can't be replayed indefinitely. List and detail responses additionally include `delivery_summary: { APP, EMAIL, PRINT }`, each either `null` (never attempted) or the **latest** Delivery object for that channel. The detail endpoint also includes the full `deliveries[]` history, oldest first.
+
+### Delivery object
+
+```json
+{
+  "id": "d1e2f3a4-...",
+  "document_id": "a1b2c3d4-...",
+  "delivery_method": "EMAIL",
+  "status": "DELIVERED",
+  "recipient_email": "aisha@example.com",
+  "delivered_at": "2026-09-10T10:35:00.000Z",
+  "attempted_by": "1a2b3c4d-...",
+  "attempted_by_name": "Dr. Smith",
+  "attempted_at": "2026-09-10T10:35:00.000Z",
+  "error_message": null,
+  "created_at": "2026-09-10T10:35:00.000Z",
+  "updated_at": "2026-09-10T10:35:00.000Z"
+}
+```
+
+### Permissions
+
+`clinic_owner` may always upload/view/download/email/print/delete, and always sees every branch of their own clinic(s). A `branch_staff` account is scoped to **their own assigned branch only** (not every branch of the clinic) and must additionally hold the relevant permission: `patient_documents:upload`, `patient_documents:view`, `patient_documents:delete`, `patient_documents:email`, `patient_documents:print` — none of these are granted by default (see [Branch staff](#branch-staff)); an owner must explicitly enable them per staff member. A `patient` may only view/download their **own** documents (ownership enforced server-side — a `patientId`/`documentId` belonging to someone else 404s, it is never trusted from the URL) and can never upload, delete, modify, or change delivery status.
+
+### POST /patient-documents/upload
+
+Auth: `clinic_owner` or `branch_staff` with `patient_documents:upload`. Rate limited `10/min` (sensitive document upload, same tier as other document/signature uploads — see [Conventions → Rate limits](#rate-limits)). `multipart/form-data`.
+
+`clinic_id`/`branch_id`/`uploaded_by` are **never trusted from the client** — a `branch_staff` caller is always pinned to their own assigned branch (any `branch_id` field is ignored); a `clinic_owner` may specify `branch_id` to pick which of their branches issued the document, but it's verified server-side (a branch they don't own 404s) rather than trusted as-is. `uploaded_by` is always the authenticated caller.
+
+**Request fields**
+
+```text
+patient_id       required — must be an active patient account
+document_type    required — LAB_REPORT | PRESCRIPTION | OTHER
+title            required, 1–255 chars
+description      optional, max 2000 chars
+branch_id        clinic_owner only — which of their branches issued this; ignored for branch_staff
+file             required — PDF, JPG, JPEG, or PNG, ≤ 20MB
+```
+
+On success, `status` is set to `GENERATED`, an `APP` delivery row is recorded as `DELIVERED`, an in-app `patient_document_uploaded` notification (+ push) is sent to the patient, and an `audit_logs` row (`action: "document_uploaded"`) is written.
+
+**Response `201`** — PatientDocument object.
+
+**Errors:** `400 VALIDATION_ERROR`, `400 FILE_REQUIRED` / `FILE_EMPTY`, `404 PATIENT_NOT_FOUND`, `404 BRANCH_NOT_FOUND`, `403 PERMISSION_DENIED`, `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`.
+
+### GET /patient-documents/patient/:patientId
+
+Auth: `patient` (self only — see IDOR note below), `clinic_owner`, `branch_staff` with `patient_documents:view`.
+
+**This exact URL shape is the classic IDOR target** — a `patientId` in the path that a different caller could swap in. It's closed on both sides: a `patient` caller whose own id doesn't match `:patientId` gets `404 PATIENT_NOT_FOUND` (never a 403, so the response can't be used to confirm whether a given patient id exists); a `branch_staff` caller only ever sees documents where `branch_id` equals their own assigned branch, regardless of which patient or clinic is requested.
+
+**Query:** `?document_type=&status=&date=&limit=` — `document_type` and `status` are the enums above; `date` is `YYYY-MM-DD` (matches `uploaded_at`'s date). All optional. Returned newest first.
+
+**Response `200`**
+
+```json
+{ "items": [ /* PatientDocument objects, each with delivery_summary */ ] }
+```
+
+### GET /patient-documents/:documentId
+
+Auth: `patient` (own document only), `clinic_owner`, `branch_staff` with `patient_documents:view`.
+
+**Response `200`** — PatientDocument object with `delivery_summary` and the full `deliveries[]` history.
+
+**Errors:** `404 PATIENT_DOCUMENT_NOT_FOUND`.
+
+### GET /patient-documents/:documentId/download
+
+Auth: same as detail. Streams the file directly from this endpoint (`Content-Disposition: attachment`) after the same ownership/scope check as the detail endpoint — it does **not** redirect to or expose a signed `/files/:key` URL, so a download action never hands out a reusable link. Logs an `audit_logs` row (`action: "document_downloaded"`).
+
+**Response `200`** — the raw file bytes, `Content-Type` set from the stored MIME type.
+
+**Errors:** `404 PATIENT_DOCUMENT_NOT_FOUND`.
+
+### DELETE /patient-documents/:documentId
+
+Auth: `clinic_owner` or `branch_staff` with `patient_documents:delete`. **Not** available to `patient`. Soft delete (`deleted_at`) — the row and its delivery history are preserved for audit purposes but excluded from every read endpoint above.
+
+**Response `204 No Content`**
+
+**Errors:** `404 PATIENT_DOCUMENT_NOT_FOUND`, `403 PERMISSION_DENIED`.
+
+### POST /patient-documents/:documentId/send-email
+
+Auth: `clinic_owner` or `branch_staff` with `patient_documents:email`. Rate limited `20/min`.
+
+**Request body:** `{ "email": "patient@example.com" }` — validated as a real email address; not required to match the patient's registered email (staff can send to any address the patient confirms, e.g. a family member's).
+
+Flow: verifies clinic/branch access and that the document belongs to a patient associated with that clinic/branch → creates a delivery-history row (`EMAIL`, `PENDING`) → sends the document via the existing Brevo-backed [email service](#conventions) (a 24-hour signed link, long enough to survive the patient actually opening the email — longer than the 15-minute link used for in-app previews) → updates that same row to `DELIVERED` (+ `delivered_at`) on success or `NOT_DELIVERED` (+ a generic `error_message`, never the raw internal Brevo/network error) on failure. The HTTP response is always `200` either way — a failed send is a normal, structured outcome (`status: "NOT_DELIVERED"`), not a `5xx`; the client decides which toast to show from the returned `status`.
+
+**Response `200`** — Delivery object (`delivery_method: "EMAIL"`).
+
+**Errors:** `400 VALIDATION_ERROR` (invalid email), `404 PATIENT_DOCUMENT_NOT_FOUND`, `403 PERMISSION_DENIED`.
+
+### POST /patient-documents/:documentId/print
+
+Auth: `clinic_owner` or `branch_staff` with `patient_documents:print`. Rate limited `100/min`.
+
+Called by the clinic app right after it opens the print-ready view / triggers the browser's print dialog client-side — there's no portable way for a server to know a physical print job actually finished, so this records "print was initiated by this staff member, now" as `DELIVERED` immediately. No request body.
+
+**Response `201`** — Delivery object (`delivery_method: "PRINT"`).
+
+**Errors:** `404 PATIENT_DOCUMENT_NOT_FOUND`, `403 PERMISSION_DENIED`.
+
+---
+
 ## Medications
 
 Patient-managed medication list with a daily or monthly dosing schedule, used to drive the in-app medication tracker (today's schedule, adherence, refill reminders) and on-device local-notification reminders. Distinct from `current_medications` on the [medical profile](#patients) (a free-text note field) and from [Prescriptions](#prescriptions) (clinician-issued, tied to an appointment) — this is the patient's own self-reported list of what they take and when.
@@ -5071,7 +5217,7 @@ Payment-gateway webhook receiver — the automatic counterpart to the client-dri
 | `FEE_OWNER_CONTROLLED` | 403 | Doctor tried to change the fee |
 | `INVALID_SIGNED_URL` | 403 | Bad/expired file URL signature |
 | `NOT_SUPER_ADMIN` | 403 | `sys_admin` role present but no active `super_admins` grant |
-| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `RECEIPT_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `MEDICATION_NOT_FOUND` / `DOSE_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` / `EXCEPTION_NOT_FOUND` / `CLOSURE_NOT_FOUND` / `TEST_NOT_FOUND` / `SCHEDULE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
+| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `RECEIPT_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `PATIENT_NOT_FOUND` / `PATIENT_DOCUMENT_NOT_FOUND` / `MEDICATION_NOT_FOUND` / `DOSE_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` / `EXCEPTION_NOT_FOUND` / `CLOSURE_NOT_FOUND` / `TEST_NOT_FOUND` / `SCHEDULE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
 | `USER_NOT_FOUND` / `SUPER_ADMIN_NOT_FOUND` / `PAYMENT_NOT_FOUND` / `SUBSCRIPTION_NOT_FOUND` | 404 | Super Admin / subscription resource missing |
 | `INVITE_EXPIRED` / `OTP_EXPIRED` / `RESET_TOKEN_EXPIRED` | 410 | Expired one-time code |
 | `FILE_TOO_LARGE` | 413 | Upload exceeds size limit |

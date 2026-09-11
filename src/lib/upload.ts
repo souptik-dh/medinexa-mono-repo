@@ -10,7 +10,7 @@ const SIGNING_SECRET =
 
 export const SIGNED_URL_TTL_SECONDS = 15 * 60;
 
-export type UploadKind = "doctor-certificate" | "prescription-scan" | "medical-doc";
+export type UploadKind = "doctor-certificate" | "prescription-scan" | "medical-doc" | "patient-document";
 
 const MIME_EXT: Record<string, string> = {
   "image/jpeg": ".jpg",

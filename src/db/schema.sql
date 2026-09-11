@@ -1095,3 +1095,62 @@ CREATE TABLE IF NOT EXISTS subscription_offer_recipients (
   CONSTRAINT fk_offer_recip_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
   CONSTRAINT fk_offer_recip_notification FOREIGN KEY (portal_notification_id) REFERENCES notifications(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
+
+-- Clinic-issued patient documents (lab reports, prescriptions, other) — uploaded BY
+-- clinic staff/owner ON BEHALF OF a patient, scoped to a clinic/branch. Distinct from
+-- the patient-self-upload `medical_documents` table (no clinic/branch attribution,
+-- self-service only): this one is clinic-driven, with an independent multi-channel
+-- delivery trail (see patient_document_deliveries below).
+--
+-- `file_key` is the raw on-disk storage key (matches saveUpload()'s returned fileName in
+-- src/lib/upload.ts), NOT a pre-signed URL — a signed, time-limited URL is minted fresh
+-- on every authorized read (list/get/download), never persisted, so a stored link can
+-- never outlive its 15-minute signature or leak as a durable public URL.
+CREATE TABLE IF NOT EXISTS patient_documents (
+  id CHAR(36) NOT NULL,
+  patient_id CHAR(36) NOT NULL,
+  clinic_id CHAR(36) NOT NULL,
+  branch_id CHAR(36) NOT NULL,
+  document_type ENUM('LAB_REPORT','PRESCRIPTION','OTHER') NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  description VARCHAR(2000) NULL,
+  file_name VARCHAR(255) NOT NULL,
+  file_key VARCHAR(255) NOT NULL,
+  file_size INT NOT NULL,
+  mime_type VARCHAR(100) NOT NULL,
+  uploaded_by CHAR(36) NOT NULL,
+  uploaded_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  status ENUM('PENDING','GENERATED') NOT NULL DEFAULT 'GENERATED',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  deleted_at DATETIME(3) NULL,
+  PRIMARY KEY (id),
+  KEY idx_pd_patient (patient_id, deleted_at, uploaded_at),
+  KEY idx_pd_clinic (clinic_id),
+  KEY idx_pd_branch (branch_id),
+  CONSTRAINT fk_pd_patient FOREIGN KEY (patient_id) REFERENCES users(id),
+  CONSTRAINT fk_pd_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
+  CONSTRAINT fk_pd_branch FOREIGN KEY (branch_id) REFERENCES branches(id),
+  CONSTRAINT fk_pd_uploaded_by FOREIGN KEY (uploaded_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
+-- Independent per-channel delivery/audit trail for a patient_documents row — a single
+-- document can simultaneously be Available in the patient app, Emailed, and Printed,
+-- each tracked as its own row here (never overwriting another channel's state).
+CREATE TABLE IF NOT EXISTS patient_document_deliveries (
+  id CHAR(36) NOT NULL,
+  document_id CHAR(36) NOT NULL,
+  delivery_method ENUM('APP','EMAIL','PRINT') NOT NULL,
+  status ENUM('PENDING','DELIVERED','NOT_DELIVERED') NOT NULL DEFAULT 'PENDING',
+  recipient_email VARCHAR(255) NULL,
+  delivered_at DATETIME(3) NULL,
+  attempted_by CHAR(36) NULL,
+  attempted_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  error_message VARCHAR(500) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY idx_pdd_document (document_id, delivery_method, created_at),
+  CONSTRAINT fk_pdd_document FOREIGN KEY (document_id) REFERENCES patient_documents(id) ON DELETE CASCADE,
+  CONSTRAINT fk_pdd_attempted_by FOREIGN KEY (attempted_by) REFERENCES users(id)
+) ENGINE=InnoDB;
