@@ -21,10 +21,13 @@ function serializePatient(r: Row) {
     is_new_patient: visitCount <= 1,
     first_visit_date: r.first_visit_date,
     last_visit_date: r.last_visit_date,
+    // A patient created by staff (e.g. a walk-in booking) never sets their own
+    // password, so password_hash IS NULL doubles as "never self-registered".
+    is_registered: Boolean(r.is_registered),
   };
 }
 
-export const GET = api(undefined, async (ctx) => {
+export const GET = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const branchId = ctx.params.id;
   await requireBranchAccess(pool, auth, branchId, "patients:view");
@@ -54,13 +57,14 @@ export const GET = api(undefined, async (ctx) => {
 
   const [rows] = await pool.query<Row[]>(
     `SELECT u.id, u.name, u.email, u.phone, u.address, u.photo_url,
+            (u.password_hash IS NOT NULL) AS is_registered,
             COUNT(a.id) AS visit_count,
             MIN(a.scheduled_date) AS first_visit_date,
             MAX(a.scheduled_date) AS last_visit_date
        FROM appointments a
        JOIN users u ON u.id = a.patient_id
       WHERE ${whereParts.join(" AND ")}
-      GROUP BY u.id, u.name, u.email, u.phone, u.address, u.photo_url
+      GROUP BY u.id, u.name, u.email, u.phone, u.address, u.photo_url, u.password_hash
       ${having}
       ORDER BY last_visit_date DESC
       LIMIT ? OFFSET ?`,
