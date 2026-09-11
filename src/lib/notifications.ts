@@ -21,7 +21,8 @@ export type NotificationType =
   | "subscription_expired"
   | "subscription_activated"
   | "subscription_deactivated"
-  | "subscription_offer";
+  | "subscription_offer"
+  | "patient_document_uploaded";
 
 export async function createNotification(
   db: Pick<PoolConnection, "query">,
@@ -91,6 +92,13 @@ export function pushContentFor(
       return {
         title: "Prescription ready",
         body: "Your prescription is ready to view.",
+      };
+    case "patient_document_uploaded":
+      return {
+        title: "New document available",
+        body: typeof payload.title === "string"
+          ? `${payload.title} is now available in Reports & Prescriptions.`
+          : "A new document is now available in Reports & Prescriptions.",
       };
     case "appointment_cancelled":
       return {
@@ -445,16 +453,23 @@ You can now manage your schedule and appointments at this branch using your exis
  * a console log in local dev when BREVO_API_KEY is not configured. Never logs
  * the API key.
  */
+/**
+ * Returns whether the send actually succeeded (or was stubbed, in local dev with no
+ * BREVO_API_KEY — treated as success since nothing failed). Existing callers that
+ * predate this return value simply ignore it, unaffected; callers that need to know
+ * whether delivery succeeded (e.g. recording a DELIVERED/NOT_DELIVERED outcome) can
+ * now `await` it.
+ */
 export async function sendEmail(
   to: string,
   subject: string,
   body: string,
   html?: string,
-): Promise<void> {
+): Promise<boolean> {
   const apiKey = process.env.BREVO_API_KEY;
   if (!apiKey) {
     console.log(`[email:stub] to=${to} subject=${subject}\n${body}`);
-    return;
+    return true;
   }
 
   const senderEmail = process.env.BREVO_SENDER_EMAIL ?? "noreply@jidohealthcare.app";
@@ -479,9 +494,12 @@ export async function sendEmail(
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       console.error(`[email] Brevo rejected send to ${to} (${res.status}): ${detail}`);
+      return false;
     }
+    return true;
   } catch (err) {
     console.error(`[email] send to ${to} failed:`, err);
+    return false;
   }
 }
 
