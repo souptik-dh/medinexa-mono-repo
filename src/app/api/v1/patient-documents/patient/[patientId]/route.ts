@@ -1,4 +1,4 @@
-import { api, json } from "@/lib/http";
+import { api, json, requestOrigin } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool } from "@/lib/db";
 import { badRequest, notFound } from "@/lib/errors";
@@ -96,12 +96,13 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
     byDocument.set(d.document_id, list);
   }
 
+  const origin = requestOrigin(ctx.request);
   return json({
     items: rows.map((r) => {
       const deliveries = byDocument.get(r.id) ?? [];
       const latest = latestByChannel(deliveries);
       return {
-        ...serializeDocument(r),
+        ...serializeDocument(r, origin),
         delivery_summary: {
           APP: latest.APP ? serializeDelivery(latest.APP) : null,
           EMAIL: latest.EMAIL ? serializeDelivery(latest.EMAIL) : null,

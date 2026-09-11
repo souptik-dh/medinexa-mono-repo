@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { api, json } from "@/lib/http";
+import { api, json, requestOrigin } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { parseBody, emailSchema } from "@/lib/validators";
@@ -41,7 +41,7 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
     attemptedBy: auth.userId,
   });
 
-  const link = signFileUrl(doc.file_key, EMAIL_LINK_TTL_SECONDS);
+  const link = signFileUrl(requestOrigin(ctx.request), doc.file_key, EMAIL_LINK_TTL_SECONDS);
   const html = detailsEmailHtml({
     heading: doc.title,
     intro: `${doc.uploaded_by_name ?? "Your clinic"} has shared a document with you from ${doc.clinic_name}, ${doc.branch_name}.`,

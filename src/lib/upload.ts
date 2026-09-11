@@ -49,13 +49,12 @@ export async function saveUpload(
   return { fileName, size: file.size, mime };
 }
 
-export function signFileUrl(fileName: string, ttlSeconds = SIGNED_URL_TTL_SECONDS): string {
+export function signFileUrl(origin: string, fileName: string, ttlSeconds = SIGNED_URL_TTL_SECONDS): string {
   const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
   const sig = createHmac("sha256", SIGNING_SECRET)
     .update(`${fileName}:${expires}`)
     .digest("hex");
-  const base = process.env.APP_URL ?? "";
-  return `${base}/api/v1/files/${encodeURIComponent(fileName)}?expires=${expires}&sig=${sig}`;
+  return `${origin}/api/v1/files/${encodeURIComponent(fileName)}?expires=${expires}&sig=${sig}`;
 }
 
 export function verifyFileUrl(

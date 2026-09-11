@@ -1,4 +1,4 @@
-import { api, json, noContent } from "@/lib/http";
+import { api, json, noContent, requestOrigin } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool } from "@/lib/db";
 import {
@@ -36,7 +36,7 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
   const latest = latestByChannel(deliveryRows);
 
   return json({
-    ...serializeDocument(doc),
+    ...serializeDocument(doc, requestOrigin(ctx.request)),
     delivery_summary: {
       APP: latest.APP ? serializeDelivery(latest.APP) : null,
       EMAIL: latest.EMAIL ? serializeDelivery(latest.EMAIL) : null,

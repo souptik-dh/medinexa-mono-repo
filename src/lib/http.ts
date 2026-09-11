@@ -41,6 +41,20 @@ export function clientIp(request: NextRequest): string {
   return request.headers.get("x-real-ip") ?? "local";
 }
 
+/**
+ * The origin this request actually arrived on, trusting the reverse proxy's
+ * forwarded host/proto over `request.nextUrl` — needed because a static
+ * APP_URL env var is easy to point at the wrong service (it's meant for
+ * frontend page links, not this API's own signed URLs) and drifts silently
+ * across environments.
+ */
+export function requestOrigin(request: NextRequest): string {
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  if (!host) return request.nextUrl.origin;
+  const proto = request.headers.get("x-forwarded-proto") ?? request.nextUrl.protocol.replace(":", "");
+  return `${proto}://${host}`;
+}
+
 const hits = new Map<string, number[]>();
 let lastCleanup = Date.now();
 

@@ -131,7 +131,7 @@ export async function assertDocumentActionPermission(
   await assertBranchStaffPermission(db, auth, doc.branch_id, permission);
 }
 
-export function serializeDocument(r: Row): Record<string, unknown> {
+export function serializeDocument(r: Row, origin: string): Record<string, unknown> {
   return {
     id: r.id,
     patient_id: r.patient_id,
@@ -147,7 +147,7 @@ export function serializeDocument(r: Row): Record<string, unknown> {
     file_name: r.file_name,
     file_size: Number(r.file_size),
     mime_type: r.mime_type,
-    file_url: signFileUrl(r.file_key),
+    file_url: signFileUrl(origin, r.file_key),
     uploaded_by: r.uploaded_by,
     uploaded_at: r.uploaded_at,
     status: r.status,

@@ -1,4 +1,4 @@
-import { api, json } from "@/lib/http";
+import { api, json, requestOrigin } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
@@ -118,5 +118,5 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   });
 
   const [rows] = await pool.query<RowDataPacket[]>(`${DOCUMENT_SELECT_JOIN} WHERE pd.id = ?`, [id]);
-  return json(serializeDocument(rows[0]), 201);
+  return json(serializeDocument(rows[0], requestOrigin(ctx.request)), 201);
 });
