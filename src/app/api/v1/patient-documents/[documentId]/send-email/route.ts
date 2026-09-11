@@ -63,7 +63,7 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
       { label: "Clinic", value: `${doc.clinic_name} · ${doc.branch_name}` },
     ],
     note: attachmentData
-      ? `The document is attached to this email. You can also <a href="${link}">view it online</a> (link valid for 24 hours).`
+      ? `The document is attached to this email.`
       : `This link is valid for 24 hours. <a href="${link}">View document</a>`,
     patientFacing: true,
   });
