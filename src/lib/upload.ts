@@ -49,27 +49,31 @@ export async function saveUpload(
   return { fileName, size: file.size, mime };
 }
 
-export function signFileUrl(origin: string, fileName: string, ttlSeconds = SIGNED_URL_TTL_SECONDS): string {
+/** Core HMAC primitive behind every short-lived signed link this app issues. */
+export function signValue(value: string, ttlSeconds = SIGNED_URL_TTL_SECONDS): { expires: number; sig: string } {
   const expires = Math.floor(Date.now() / 1000) + ttlSeconds;
-  const sig = createHmac("sha256", SIGNING_SECRET)
-    .update(`${fileName}:${expires}`)
-    .digest("hex");
-  return `${origin}/api/v1/files/${encodeURIComponent(fileName)}?expires=${expires}&sig=${sig}`;
+  const sig = createHmac("sha256", SIGNING_SECRET).update(`${value}:${expires}`).digest("hex");
+  return { expires, sig };
 }
 
-export function verifyFileUrl(
-  fileName: string,
-  expires: string,
-  sig: string,
-): boolean {
+export function verifySignedValue(value: string, expires: string, sig: string): boolean {
   const exp = Number(expires);
   if (!Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) return false;
   const expected = createHmac("sha256", SIGNING_SECRET)
-    .update(`${fileName}:${exp}`)
+    .update(`${value}:${exp}`)
     .digest("hex");
   const expectedBuf = Buffer.from(expected, "hex");
   const sigBuf = Buffer.from(sig, "hex");
   return expectedBuf.length === sigBuf.length && timingSafeEqual(expectedBuf, sigBuf);
+}
+
+export function signFileUrl(origin: string, fileName: string, ttlSeconds = SIGNED_URL_TTL_SECONDS): string {
+  const { expires, sig } = signValue(fileName, ttlSeconds);
+  return `${origin}/api/v1/files/${encodeURIComponent(fileName)}?expires=${expires}&sig=${sig}`;
+}
+
+export function verifyFileUrl(fileName: string, expires: string, sig: string): boolean {
+  return verifySignedValue(fileName, expires, sig);
 }
 
 export function mimeFromFileName(fileName: string): string {

@@ -3,7 +3,7 @@ import { forbidden, notFound } from "@/lib/errors";
 import type { AuthContext } from "@/lib/auth";
 import { getOwnedBranch, getOwnedClinic } from "@/lib/scope";
 import { assertBranchStaffPermission, type BranchStaffPermission } from "@/lib/permissions";
-import { signFileUrl } from "@/lib/upload";
+import { signValue, verifySignedValue, SIGNED_URL_TTL_SECONDS } from "@/lib/upload";
 import { newId } from "@/lib/ids";
 
 type Db = Pool | PoolConnection;
@@ -131,6 +131,25 @@ export async function assertDocumentActionPermission(
   await assertBranchStaffPermission(db, auth, doc.branch_id, permission);
 }
 
+/**
+ * Signs a short-lived preview link keyed by document id rather than `file_key` directly —
+ * `file_key` may now be a Cloudinary URL (slashes/colons), which doesn't round-trip
+ * cleanly through a single dynamic route segment the way a bare local filename does.
+ * The preview endpoint re-derives `file_key` from the DB, so only the id needs signing.
+ */
+export function signPatientDocumentPreviewUrl(
+  origin: string,
+  documentId: string,
+  ttlSeconds = SIGNED_URL_TTL_SECONDS,
+): string {
+  const { expires, sig } = signValue(documentId, ttlSeconds);
+  return `${origin}/api/v1/patient-documents/${documentId}/preview?expires=${expires}&sig=${sig}`;
+}
+
+export function verifyPatientDocumentPreviewUrl(documentId: string, expires: string, sig: string): boolean {
+  return verifySignedValue(documentId, expires, sig);
+}
+
 export function serializeDocument(r: Row, origin: string): Record<string, unknown> {
   return {
     id: r.id,
@@ -147,7 +166,7 @@ export function serializeDocument(r: Row, origin: string): Record<string, unknow
     file_name: r.file_name,
     file_size: Number(r.file_size),
     mime_type: r.mime_type,
-    file_url: signFileUrl(origin, r.file_key),
+    file_url: signPatientDocumentPreviewUrl(origin, r.id),
     uploaded_by: r.uploaded_by,
     uploaded_at: r.uploaded_at,
     status: r.status,

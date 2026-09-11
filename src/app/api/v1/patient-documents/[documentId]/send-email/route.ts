@@ -50,7 +50,13 @@ export const POST = api({ rateLimit: 20 }, async (ctx) => {
   // redeploy) — the link stays as a same-tab viewing option, not the only way in.
   let attachmentData: Buffer | null = null;
   try {
-    attachmentData = await readFile(path.join(UPLOAD_DIR, doc.file_key));
+    if (/^https?:\/\//.test(doc.file_key)) {
+      const res = await fetch(doc.file_key);
+      if (!res.ok) throw new Error(`upstream fetch failed: ${res.status}`);
+      attachmentData = Buffer.from(await res.arrayBuffer());
+    } else {
+      attachmentData = await readFile(path.join(UPLOAD_DIR, doc.file_key));
+    }
   } catch (err) {
     console.error(`[patient-documents] could not read file_key=${doc.file_key} for email attachment:`, err);
   }

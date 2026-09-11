@@ -4289,7 +4289,7 @@ A document can be `Available` in the patient app, `Delivered` by email, and `Pri
   "file_name": "blood-report.pdf",
   "file_size": 245760,
   "mime_type": "application/pdf",
-  "file_url": "https://.../api/v1/files/patient-document-....pdf?expires=...&sig=...",
+  "file_url": "https://.../api/v1/patient-documents/a1b2c3d4-.../preview?expires=...&sig=...",
   "uploaded_by": "1a2b3c4d-...",
   "uploaded_at": "2026-09-10T10:30:00.000Z",
   "status": "GENERATED",
@@ -4298,7 +4298,7 @@ A document can be `Available` in the patient app, `Delivered` by email, and `Pri
 }
 ```
 
-`file_url` is a freshly-signed, 15-minute link minted on every read (same signing mechanism as [Files](#files-signed-urls)) — it is never persisted, so a copy of a list/detail response can't be replayed indefinitely. List and detail responses additionally include `delivery_summary: { APP, EMAIL, PRINT }`, each either `null` (never attempted) or the **latest** Delivery object for that channel. The detail endpoint also includes the full `deliveries[]` history, oldest first.
+`file_url` is a freshly-signed, 15-minute link minted on every read (own dedicated endpoint, `GET /patient-documents/:documentId/preview` — same HMAC signing primitive as [Files](#files-signed-urls), but keyed by document id rather than storage key since the underlying file now lives in Cloudinary, not local disk) — it is never persisted, so a copy of a list/detail response can't be replayed indefinitely. List and detail responses additionally include `delivery_summary: { APP, EMAIL, PRINT }`, each either `null` (never attempted) or the **latest** Delivery object for that channel. The detail endpoint also includes the full `deliveries[]` history, oldest first.
 
 ### Delivery object
 
@@ -4340,6 +4340,8 @@ branch_id        clinic_owner only — which of their branches issued this; igno
 file             required — PDF, JPG, JPEG, or PNG, ≤ 20MB
 ```
 
+The file is uploaded to Cloudinary (not local disk — this API's host wipes its local filesystem on every redeploy/restart), so documents survive deploys. Clients never see the Cloudinary URL directly: it's read back only through the server-proxied `download` and `preview` endpoints below.
+
 On success, `status` is set to `GENERATED`, an `APP` delivery row is recorded as `DELIVERED`, an in-app `patient_document_uploaded` notification (+ push) is sent to the patient, and an `audit_logs` row (`action: "document_uploaded"`) is written.
 
 **Response `201`** — PatientDocument object.
@@ -4370,11 +4372,19 @@ Auth: `patient` (own document only), `clinic_owner`, `branch_staff` with `patien
 
 ### GET /patient-documents/:documentId/download
 
-Auth: same as detail. Streams the file directly from this endpoint (`Content-Disposition: attachment`) after the same ownership/scope check as the detail endpoint — it does **not** redirect to or expose a signed `/files/:key` URL, so a download action never hands out a reusable link. Logs an `audit_logs` row (`action: "document_downloaded"`).
+Auth: same as detail. Streams the file directly from this endpoint (`Content-Disposition: attachment`) after the same ownership/scope check as the detail endpoint — it fetches the bytes from Cloudinary server-side and proxies them back rather than redirecting to or exposing the Cloudinary URL, so a download action never hands out a reusable link. Logs an `audit_logs` row (`action: "document_downloaded"`).
 
 **Response `200`** — the raw file bytes, `Content-Type` set from the stored MIME type.
 
 **Errors:** `404 PATIENT_DOCUMENT_NOT_FOUND`.
+
+### GET /patient-documents/:documentId/preview
+
+Auth: none — authorized instead by the `expires`/`sig` query params signed into `file_url` (15-minute TTL, see [PatientDocument object](#patientdocument-object) above). Same proxy behavior as `download` (fetches from Cloudinary server-side), but `Content-Disposition: inline` for in-app viewing instead of forcing a download.
+
+**Response `200`** — the raw file bytes, `Content-Type` set from the stored MIME type.
+
+**Errors:** `403 INVALID_SIGNED_URL` (missing/expired/tampered signature, or the document no longer exists).
 
 ### DELETE /patient-documents/:documentId
 

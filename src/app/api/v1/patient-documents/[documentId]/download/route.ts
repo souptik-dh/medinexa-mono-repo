@@ -28,7 +28,13 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
 
   let buf: Buffer;
   try {
-    buf = await readFile(path.join(UPLOAD_DIR, doc.file_key));
+    if (/^https?:\/\//.test(doc.file_key)) {
+      const res = await fetch(doc.file_key);
+      if (!res.ok) throw new Error(`upstream fetch failed: ${res.status}`);
+      buf = Buffer.from(await res.arrayBuffer());
+    } else {
+      buf = await readFile(path.join(UPLOAD_DIR, doc.file_key));
+    }
   } catch {
     throw notFound("PATIENT_DOCUMENT_NOT_FOUND", "Document file not found.");
   }

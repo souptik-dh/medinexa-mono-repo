@@ -3,7 +3,7 @@ import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
 import { badRequest } from "@/lib/errors";
-import { saveUpload } from "@/lib/upload";
+import { uploadDocumentToCloudinary } from "@/lib/cloudinary";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { createPatientNotification } from "@/lib/notifications";
@@ -69,8 +69,12 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   }
   await assertClinicOperational(pool, clinicId);
 
-  const saved = await saveUpload(form.get("file"), "patient-document", MAX_DOCUMENT_BYTES, DOCUMENT_MIMES);
-  const originalName = form.get("file") instanceof File ? (form.get("file") as File).name : saved.fileName;
+  const file = form.get("file");
+  // Uploaded to Cloudinary rather than local disk — this API is served from Render,
+  // where the local filesystem is wiped on every redeploy/restart (see the note in
+  // send-email/route.ts), so patient documents need storage that outlives the dyno.
+  const saved = await uploadDocumentToCloudinary(file, "patient-document", MAX_DOCUMENT_BYTES, DOCUMENT_MIMES);
+  const originalName = file instanceof File ? file.name : "document";
 
   const id = newId();
   await withTransaction(async (conn) => {
@@ -88,7 +92,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         title,
         description,
         originalName,
-        saved.fileName,
+        saved.url,
         saved.size,
         saved.mime,
         auth.userId,
