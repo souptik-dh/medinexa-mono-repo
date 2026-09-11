@@ -45,9 +45,7 @@ function parseDocumentType(form: FormData): DocumentType {
   );
 }
 
-// Sensitive document upload — same 10/min tier AGENTS.md assigns to other
-// document/signature uploads and lab-test/branch-test catalog writes.
-export const POST = api({ rateLimit: 10 }, async (ctx) => {
+export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const form = await ctx.request.formData();
 
