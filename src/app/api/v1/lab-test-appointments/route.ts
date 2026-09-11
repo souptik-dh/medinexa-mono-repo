@@ -2,7 +2,7 @@ import { api, json } from "@/lib/http";
 import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { newId } from "@/lib/ids";
-import { parseBody } from "@/lib/validators";
+import { parseBody, phoneSchema } from "@/lib/validators";
 import {
   generateAppointmentNumber,
   serializeLabTestAppointment,
@@ -16,14 +16,30 @@ import {
   branchContactPhones,
   sendEmail,
   detailsEmailHtml,
-  sendSms,
-  sendWhatsapp,
+  notifyPhonesSmsWhatsapp,
+  personalizeForPatient,
 } from "@/lib/notifications";
 import { runIdempotent } from "@/lib/idempotency";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict, notFound } from "@/lib/errors";
+import { resolveServicePatient } from "@/lib/patient-identity";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
+
+const patientDetailsSchema = z.object({
+  // Reception only: select an existing patient found via GET /api/v1/patients/lookup
+  // instead of registering a new one. Ignored for the "patient" role — a patient
+  // account can never point a booking at an arbitrary patient_id it doesn't control.
+  patient_id: z.string().uuid().optional(),
+  relationship: z.enum(["self", "spouse", "child", "parent", "sibling", "friend", "other"]).default("self"),
+  name: z.string().trim().min(1).max(255),
+  // Normalized to +91XXXXXXXXXX so downstream SMS/WhatsApp dispatch (which needs the
+  // country code for both the SMS gateway and WhatsApp's chatId) doesn't reject a
+  // plain 10-digit number typed by staff at booking time.
+  phone: phoneSchema,
+  age: z.number().int().min(0).max(150),
+  gender: z.enum(["male", "female", "other", "prefer_not_to_say"]),
+});
 
 const createSchema = z.object({
   branch_id: z.string().uuid(),
@@ -39,10 +55,12 @@ const createSchema = z.object({
   home_lng: z.number().optional(),
   home_contact_phone: z.string().max(32).optional(),
   home_notes: z.string().max(500).optional(),
+  // Always required — name, phone, age, and gender of the patient the test is for.
+  patient_details: patientDetailsSchema,
 });
 
 export const POST = api({ rateLimit: 200 }, async (ctx) => {
-  const auth = requireRoles(ctx.auth, ["patient"]);
+  const auth = requireRoles(ctx.auth, ["patient", "branch_staff", "clinic_owner"]);
   const idemKey = ctx.request.headers.get("idempotency-key");
   if (!idemKey) {
     throw badRequest(
@@ -71,6 +89,14 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     }
     const branch = branchRows[0];
 
+    // Clinic staff / owner may book on behalf of a walk-in patient, but only at a
+    // branch they are scoped to. The patient themselves can book at any branch.
+    if (auth.role === "clinic_owner" && branch.owner_user_id !== auth.userId) {
+      throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
+    }
+    if (auth.role === "branch_staff" && auth.branchId !== body.branch_id) {
+      throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
+    }
     // New bookings are rejected while the clinic's subscription is inactive.
     await assertClinicOperational(pool, branch.clinic_id);
 
@@ -129,6 +155,8 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       throw conflict("DUPLICATE_BOOKING", "You already have a booking for this slot.");
     }
 
+    const patientDetails = body.patient_details;
+
     const appointmentId = newId();
     const appointmentNumber = generateAppointmentNumber();
     const durationMinutes = Number(blt.duration_minutes);
@@ -176,6 +204,25 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         ],
       );
 
+      const servicePatient = await resolveServicePatient(conn, auth, patientDetails);
+      await conn.query(
+        `INSERT INTO lab_test_appointment_patients
+           (id, appointment_id, patient_id, booking_source, booked_by, relationship, name, phone, age, gender)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          newId(),
+          appointmentId,
+          servicePatient.patientId,
+          servicePatient.bookingSource,
+          servicePatient.bookedBy,
+          patientDetails.relationship,
+          patientDetails.name,
+          patientDetails.phone ?? null,
+          patientDetails.age ?? null,
+          patientDetails.gender ?? null,
+        ],
+      );
+
       if (body.prescription_id) {
         await conn.query(
           `INSERT INTO lab_test_prescriptions (id, patient_id, appointment_id, file_name, file_url, mime_type, file_size, uploaded_at)
@@ -198,6 +245,8 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         date: body.appointment_date,
         time: body.start_time,
         branch_name: branch.name,
+        visitor_name: patientDetails.name,
+        visitor_relationship: patientDetails.relationship,
       };
       await notifyBranchStaff(conn, body.branch_id, "lab_test_booked", notifyPayload);
       await createNotification(conn, branch.owner_user_id, "lab_test_booked", notifyPayload, body.branch_id);
@@ -214,25 +263,26 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     const [saved] = await pool.query<RowDataPacket[]>(
       `SELECT a.*, lt.name AS test_name, lt.code AS test_code, lt.category AS test_category,
               b.name AS branch_name, c.name AS clinic_name,
-              u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone
+              u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
+              ltap.relationship AS visitor_relationship, ltap.name AS visitor_name,
+              ltap.phone AS visitor_phone, ltap.age AS visitor_age, ltap.gender AS visitor_gender,
+              ltap.patient_id AS visitor_patient_id, ltap.booking_source AS visitor_booking_source,
+              ltap.booked_by AS visitor_booked_by
          FROM lab_test_appointments a
          JOIN lab_tests lt ON lt.id = a.test_id
          JOIN branches b ON b.id = a.branch_id
          JOIN clinics c ON c.id = a.clinic_id
          JOIN users u ON u.id = a.patient_id
+         LEFT JOIN lab_test_appointment_patients ltap ON ltap.appointment_id = a.id
        WHERE a.id = ?`,
       [appointmentId],
     );
 
     const appointment = saved[0];
+    const isForSelf = patientDetails.relationship === "self";
 
     const staffEmails = await branchContactEmails(pool, body.branch_id);
     const staffPhones = await branchContactPhones(pool, body.branch_id);
-    const [patientRows] = await pool.query<RowDataPacket[]>(
-      `SELECT name, email FROM users WHERE id = ?`,
-      [auth.userId],
-    );
-    const patient = patientRows[0];
 
     const emailSubject = `New Lab Test Booking — ${appointmentNumber}`;
     const emailBody = detailsEmailHtml({
@@ -240,7 +290,14 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       intro: `A patient has submitted a lab test booking for your review.`,
       rows: [
         { label: "Appointment Number", value: appointmentNumber },
-        { label: "Patient", value: patient?.name ?? "Unknown", sub: patient?.email ?? "" },
+        {
+          label: "Visiting Patient",
+          value: patientDetails.name,
+          sub: isForSelf ? (appointment.patient_email ?? "") : `${patientDetails.relationship} of ${appointment.patient_name ?? "the account holder"}`,
+        },
+        ...(isForSelf
+          ? []
+          : [{ label: "Booked By", value: appointment.patient_name ?? "-", sub: `${appointment.patient_email ?? "-"} · Phone: ${appointment.patient_phone ?? "-"}` }]),
         { label: "Test", value: blt.test_name },
         { label: "Branch", value: branch.name },
         { label: "Date & Time", value: `${body.appointment_date} at ${body.start_time}`, sub: body.service_mode === "HOME" ? "Home Collection" : "Clinic Visit" },
@@ -253,16 +310,17 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       await sendEmail(email, emailSubject, "", emailBody);
     }
 
-    const smsText = `Jido Healthcare: New lab test booking ${appointmentNumber} (${blt.test_name}) at ${branch.name} on ${body.appointment_date} at ${body.start_time} — please review and approve/reject.`;
-    for (const phone of staffPhones) {
-      await sendSms(phone, smsText);
-    }
+    const smsText = `Jido Healthcare: New lab test booking ${appointmentNumber} (${blt.test_name}) for ${patientDetails.name} at ${branch.name} on ${body.appointment_date} at ${body.start_time} — please review and approve/reject.`;
+    void notifyPhonesSmsWhatsapp(staffPhones, smsText);
 
-    if (appointment.patient_phone) {
-      void sendWhatsapp(
-        appointment.patient_phone,
-        `Jido Healthcare: Your lab test booking ${appointmentNumber} (${blt.test_name}) at ${branch.name} on ${body.appointment_date} at ${body.start_time} has been submitted and is awaiting approval.`,
+    const patientPhone = appointment.visitor_phone || appointment.patient_phone;
+    if (patientPhone) {
+      const bookedText = personalizeForPatient(
+        `Your lab test booking ${appointmentNumber} (${blt.test_name}) at ${branch.name} on ${body.appointment_date} at ${body.start_time} has been submitted and is awaiting approval.`,
+        patientDetails.name,
+        patientDetails.relationship,
       );
+      void notifyPhonesSmsWhatsapp([patientPhone], bookedText);
     }
 
     return { status: 201, body: serializeLabTestAppointment(appointment) };

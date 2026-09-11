@@ -6,7 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 
 import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
-import { createPatientNotification, notifyBranchStaff, notifyPhonesSmsWhatsapp, branchContactPhones } from "@/lib/notifications";
+import { createPatientNotification, notifyBranchStaff, notifyPhonesSmsWhatsapp, branchContactPhones, personalizeForPatient } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 
 const schema = z.object({
@@ -53,21 +53,27 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   if (!appointment) throw notFound("APPOINTMENT_NOT_FOUND", "Appointment not found.");
 
   const [details] = await pool.query<Row[]>(
-    `SELECT u.phone AS patient_phone, d.name AS doctor_name, b.name AS branch_name
+    `SELECT u.phone AS patient_phone, ap.phone AS visitor_phone, ap.name AS visitor_name,
+            ap.relationship AS visitor_relationship, d.name AS doctor_name, b.name AS branch_name
        FROM appointments a
        JOIN users u ON u.id = a.patient_id
+       LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
        JOIN doctors d ON d.id = a.doctor_id
        JOIN branches b ON b.id = a.branch_id
       WHERE a.id = ?`,
     [ctx.params.id],
   );
   const info = details[0];
-  const cancelText = `Jido Healthcare: The appointment with Dr. ${info?.doctor_name} at ${info?.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been cancelled.${body.reason ? ` Reason: ${body.reason}` : ""}`;
+  const cancelBody = `The appointment with Dr. ${info?.doctor_name} at ${info?.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been cancelled.${body.reason ? ` Reason: ${body.reason}` : ""}`;
 
   const clinicPhones = await branchContactPhones(pool, appointment.branch_id);
-  void notifyPhonesSmsWhatsapp(clinicPhones, cancelText);
-  if (info?.patient_phone) {
-    void notifyPhonesSmsWhatsapp([info.patient_phone], cancelText);
+  void notifyPhonesSmsWhatsapp(clinicPhones, `Jido Healthcare: ${cancelBody}`);
+  // Prefer the walk-in patient's number when a patient_details.phone was provided,
+  // otherwise fall back to the account holder's recorded phone.
+  const patientPhone = info?.visitor_phone || info?.patient_phone || null;
+  if (patientPhone) {
+    const patientCancelText = personalizeForPatient(cancelBody, info?.visitor_name, info?.visitor_relationship);
+    void notifyPhonesSmsWhatsapp([patientPhone], patientCancelText);
   }
 
   return json(serializeAppointment(appointment));

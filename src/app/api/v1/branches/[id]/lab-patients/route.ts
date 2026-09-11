@@ -27,6 +27,9 @@ function serializePatient(r: Row) {
   };
 }
 
+// The Lab equivalent of GET /branches/[id]/patients — actual patients who have Lab
+// Test bookings at this branch, deduped by real patient identity (not by whoever
+// created the booking).
 export const GET = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["clinic_owner", "branch_staff"]);
   const branchId = ctx.params.id;
@@ -43,12 +46,12 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
     throw badRequest("VALIDATION_ERROR", "type must be either `new` or `old`.");
   }
 
-  // A legacy row with no resolvable appointment_patients.patient_id falls back to
-  // the booking account (COALESCE below) — but that fallback must never resolve to
-  // a staff/owner account. A branch_staff/clinic_owner can never itself be "the
-  // patient," so a legacy walk-in with no linked patient record is excluded here
-  // rather than being misattributed to whoever booked it.
-  const whereParts = ["a.branch_id = ?", "a.status != 'cancelled'", "u.role = 'patient'"];
+  // A legacy row with no resolvable lab_test_appointment_patients.patient_id falls
+  // back to the booking account (COALESCE below) — but that fallback must never
+  // resolve to a staff/owner account. A branch_staff/clinic_owner can never itself
+  // be "the patient," so a legacy walk-in with no linked patient record is excluded
+  // here rather than being misattributed to whoever booked it.
+  const whereParts = ["a.branch_id = ?", "a.status NOT IN ('CANCELLED', 'REJECTED')", "u.role = 'patient'"];
   const params: unknown[] = [branchId];
 
   const search = sp.get("search")?.trim();
@@ -64,13 +67,13 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
     `SELECT u.id, u.name, u.email, u.phone, u.address, u.photo_url,
             (u.password_hash IS NOT NULL) AS is_registered,
             COUNT(a.id) AS visit_count,
-            MIN(a.scheduled_date) AS first_visit_date,
-            MAX(a.scheduled_date) AS last_visit_date
-       FROM appointments a
-       LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
-       -- The actual patient the appointment is for, falling back to the booking
-       -- account for legacy rows that predate appointment_patients.patient_id.
-       JOIN users u ON u.id = COALESCE(ap.patient_id, a.patient_id)
+            MIN(a.appointment_date) AS first_visit_date,
+            MAX(a.appointment_date) AS last_visit_date
+       FROM lab_test_appointments a
+       LEFT JOIN lab_test_appointment_patients ltap ON ltap.appointment_id = a.id
+       -- The actual patient the test is for, falling back to the booking account for
+       -- legacy rows that predate lab_test_appointment_patients.patient_id.
+       JOIN users u ON u.id = COALESCE(ltap.patient_id, a.patient_id)
       WHERE ${whereParts.join(" AND ")}
       GROUP BY u.id, u.name, u.email, u.phone, u.address, u.photo_url, u.password_hash
       ${having}

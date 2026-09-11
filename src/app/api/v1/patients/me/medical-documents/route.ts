@@ -1,4 +1,4 @@
-import { api, json } from "@/lib/http";
+import { api, json, requestOrigin } from "@/lib/http";
 import { pool, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { badRequest } from "@/lib/errors";
@@ -29,7 +29,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const category = parseCategory(form.get("category"));
 
   const id = newId();
-  const fileUrl = signFileUrl(saved.fileName);
+  const fileUrl = signFileUrl(requestOrigin(ctx.request), saved.fileName);
   const fileName = form.get("file") instanceof File ? (form.get("file") as File).name : saved.fileName;
 
   await pool.query(

@@ -43,11 +43,29 @@ export function serializeAppointment(r: Row) {
     ...(r.visitor_name !== undefined
       ? {
           patient_details: {
+            patient_id: r.visitor_patient_id ?? null,
             relationship: r.visitor_relationship ?? "self",
             name: r.visitor_name,
             phone: r.visitor_phone ?? null,
             age: r.visitor_age !== null && r.visitor_age !== undefined ? Number(r.visitor_age) : null,
             gender: r.visitor_gender ?? null,
+          },
+          relationship: r.visitor_relationship ?? "self",
+          booking_source: r.visitor_booking_source ?? null,
+          // The actual patient the visit is for. `id` resolves to a real users row
+          // once known — null for legacy bookings that predate this field.
+          patient: {
+            id: r.visitor_patient_id ?? null,
+            name: r.visitor_name,
+            mobile: r.visitor_phone ?? null,
+          },
+          // The account that created the booking — the patient themselves, or clinic
+          // staff booking on behalf of a walk-in/family member.
+          booked_by: {
+            id: r.visitor_booked_by ?? r.patient_id,
+            ...(r.patient_name !== undefined
+              ? { name: r.patient_name ?? null, email: r.patient_email ?? null, phone: r.patient_phone ?? null }
+              : {}),
           },
         }
       : {}),
@@ -59,18 +77,6 @@ export function serializeAppointment(r: Row) {
     doctor_photo_url: r.doctor_photo_url ?? null,
     branch_name: r.branch_name ?? null,
     branch_phone: r.branch_phone ?? null,
-    ...(r.patient_name !== undefined
-      ? {
-          patient: {
-            id: r.patient_id,
-            name: r.patient_name ?? null,
-            email: r.patient_email ?? null,
-            phone: r.patient_phone ?? null,
-            address: r.patient_address ?? null,
-            photo_url: r.patient_photo_url ?? null,
-          },
-        }
-      : {}),
   };
 }
 

@@ -8,7 +8,7 @@ import {
   auditLabAction,
   serializeLabTestAppointment,
 } from "@/lib/lab-tests";
-import { createPatientNotification, sendWhatsapp } from "@/lib/notifications";
+import { createPatientNotification, notifyBranchStaff, notifyPhonesSmsWhatsapp, branchContactPhones, personalizeForPatient } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { forbidden } from "@/lib/errors";
 import { z } from "zod";
@@ -43,19 +43,32 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     await auditLabAction(conn, auth.userId, "appointment_cancelled", id, { reason: body.reason });
   });
 
-  await createPatientNotification(pool, appointment.patient_id, "lab_test_cancelled", {
-    appointment_id: id,
-    appointment_number: appointment.appointment_number,
-    test_name: appointment.test_name,
-    date: appointment.appointment_date,
-    time: appointment.start_time,
-  });
+  if (auth.role === "patient") {
+    await notifyBranchStaff(pool, appointment.branch_id, "lab_test_cancelled", {
+      appointment_id: id,
+      appointment_number: appointment.appointment_number,
+      test_name: appointment.test_name,
+      patient_id: appointment.patient_id,
+      reason: body.reason ?? null,
+    });
+  } else {
+    await createPatientNotification(pool, appointment.patient_id, "lab_test_cancelled", {
+      appointment_id: id,
+      appointment_number: appointment.appointment_number,
+      test_name: appointment.test_name,
+      date: appointment.appointment_date,
+      time: appointment.start_time,
+      reason: body.reason ?? null,
+    });
+  }
 
-  if (appointment.patient_phone) {
-    void sendWhatsapp(
-      appointment.patient_phone,
-      `Jido Healthcare: Your lab test booking ${appointment.appointment_number} (${appointment.test_name}) has been cancelled.${body.reason ? ` Reason: ${body.reason}` : ""}`,
-    );
+  const cancelBody = `The lab test booking ${appointment.appointment_number} (${appointment.test_name}) has been cancelled.${body.reason ? ` Reason: ${body.reason}` : ""}`;
+  const clinicPhones = await branchContactPhones(pool, appointment.branch_id);
+  void notifyPhonesSmsWhatsapp(clinicPhones, `Jido Healthcare: ${cancelBody}`);
+  const patientPhone = appointment.visitor_phone || appointment.patient_phone;
+  if (patientPhone) {
+    const patientCancelText = personalizeForPatient(cancelBody, appointment.visitor_name, appointment.visitor_relationship);
+    void notifyPhonesSmsWhatsapp([patientPhone], patientCancelText);
   }
 
   const updated = await getLabTestAppointmentInScope(pool, id, auth);

@@ -3,7 +3,7 @@ import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
 import { getLabTestAppointmentInScope, auditLabAction, serializeLabTestPayment } from "@/lib/lab-tests";
-import { createPatientNotification, sendWhatsapp } from "@/lib/notifications";
+import { createPatientNotification, notifyPhonesSmsWhatsapp, personalizeForPatient } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict, notFound } from "@/lib/errors";
@@ -112,11 +112,14 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     },
   });
 
-  if (appointment.patient_phone) {
-    void sendWhatsapp(
-      appointment.patient_phone,
-      `Jido Healthcare: Payment of ${appointment.price} ${appointment.currency} received for your lab test ${appointment.appointment_number} (${appointment.test_name}).${receipt ? ` Receipt No: ${receipt.receiptNumber}.` : ""}`,
+  const patientPhone = appointment.visitor_phone || appointment.patient_phone;
+  if (patientPhone) {
+    const paymentText = personalizeForPatient(
+      `Payment of ${appointment.price} ${appointment.currency} received for your lab test ${appointment.appointment_number} (${appointment.test_name}).${receipt ? ` Receipt No: ${receipt.receiptNumber}.` : ""}`,
+      appointment.visitor_name,
+      appointment.visitor_relationship,
     );
+    void notifyPhonesSmsWhatsapp([patientPhone], paymentText);
   }
 
   return json(serializeLabTestPayment(rows[0]));

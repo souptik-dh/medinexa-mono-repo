@@ -8,12 +8,11 @@ import {
   auditLabAction,
   serializeLabTestAppointment,
 } from "@/lib/lab-tests";
-import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp, personalizeForPatient } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest } from "@/lib/errors";
 import { z } from "zod";
-import type { RowDataPacket } from "mysql2/promise";
 
 const rejectSchema = z.object({
   reason: z.string().min(1).max(500),
@@ -52,19 +51,18 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     reason: body.reason,
   });
 
-  const [patientRows] = await pool.query<RowDataPacket[]>(
-    `SELECT name, email, phone FROM users WHERE id = ?`,
-    [appointment.patient_id],
-  );
-  const patient = patientRows[0];
-
-  if (patient?.phone) {
-    const rejectText = `Jido Healthcare: Your lab test booking ${appointment.appointment_number} (${appointment.test_name}) has been rejected. Reason: ${body.reason}`;
-    await Promise.allSettled([sendSms(patient.phone, rejectText), sendWhatsapp(patient.phone, rejectText)]);
+  const patientPhone = appointment.visitor_phone || appointment.patient_phone;
+  if (patientPhone) {
+    const rejectText = personalizeForPatient(
+      `Your lab test booking ${appointment.appointment_number} (${appointment.test_name}) has been rejected. Reason: ${body.reason}`,
+      appointment.visitor_name,
+      appointment.visitor_relationship,
+    );
+    await Promise.allSettled([sendSms(patientPhone, rejectText), sendWhatsapp(patientPhone, rejectText)]);
   }
-  if (patient?.email) {
+  if (appointment.patient_email) {
     await sendEmail(
-      patient.email,
+      appointment.patient_email,
       `Lab Test Booking Rejected — ${appointment.appointment_number}`,
       `Your lab test booking has been rejected.\nReason: ${body.reason}`,
       detailsEmailHtml({

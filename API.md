@@ -28,15 +28,16 @@ Live implementation reference for the MediBook API. Every endpoint below documen
 15. [Prescriptions](#prescriptions)
 16. [Receipts](#receipts)
 17. [Medical documents](#medical-documents)
-18. [Medications](#medications)
-19. [Notifications](#notifications)
-20. [Files (signed URLs)](#files-signed-urls)
-21. [Subscriptions & billing](#subscriptions--billing)
-22. [Super Admin platform](#super-admin-platform)
-23. [Webhooks](#webhooks)
-24. [Error codes](#error-codes)
-25. [Status transition table](#status-transition-table)
-26. [Lab test status transitions](#lab-test-status-transitions)
+18. [Patient documents (lab reports & prescriptions)](#patient-documents-lab-reports--prescriptions)
+19. [Medications](#medications)
+20. [Notifications](#notifications)
+21. [Files (signed URLs)](#files-signed-urls)
+22. [Subscriptions & billing](#subscriptions--billing)
+23. [Super Admin platform](#super-admin-platform)
+24. [Webhooks](#webhooks)
+25. [Error codes](#error-codes)
+26. [Status transition table](#status-transition-table)
+27. [Lab test status transitions](#lab-test-status-transitions)
 
 ---
 
@@ -1689,8 +1690,10 @@ Auth: `clinic_owner` (owns branch) or `branch_staff` (own branch only).
 
 ### POST /branches/:id/staff
 
-Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. Creates the staff user and
-sends a phone/SMS login instruction (staff sign in via phone + OTP).
+Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. Creates the staff user and sends
+a welcome message by **SMS and WhatsApp** to the new staff member's phone: "Hi {name}, you have
+been added as a staff member of {clinic name}, {branch name}. Welcome to Jido Healthcare! You can
+log in with this phone number using OTP." (staff sign in via phone + OTP).
 
 **Request body**
 
@@ -2012,6 +2015,11 @@ Auth: `clinic_owner` **or** `branch_staff` with `doctors:manage`. Revokes a pend
 ### GET /branches/:id/doctors
 
 Public. Returns only **accepted** doctors assigned to the branch.
+
+**Query:** `?search=&limit=` — `search` is an optional substring match against doctor
+`name` or specialization `name` (e.g. `search=ENT` matches doctors named "ENT..." and
+doctors with an ENT-related specialization); combine terms are OR'd, not AND'd. `limit`
+caps the number of items returned, default and max `50`.
 
 **Response `200`**
 
@@ -2654,6 +2662,39 @@ Unlike the public `GET /doctors/:id/reviews`, `patient_name` here is the patient
 
 Patients are `users` rows with `role = 'patient'` — there is no separate `patients` table. This section lists patients who have booked at least one (non-cancelled) appointment at a given branch.
 
+### GET /patients/lookup
+
+Auth: `branch_staff` (with `patients:view` on their own branch) or `clinic_owner`. Lets reception
+search for an existing patient by phone or name **before** booking, so a walk-in who's already a
+patient (registered via the app, or added by reception at another branch) can be selected by
+`patient_id` — passed as `patient_details.patient_id` on `POST /appointments` /
+`POST /lab-test-appointments` — instead of creating a duplicate record. Not branch-scoped, since
+patients aren't owned by a clinic/branch.
+
+**Query:** `?phone=<exact>` or `?q=<partial name/phone/email>` — provide at least one.
+
+**Response `200`**
+
+```json
+{
+  "items": [
+    {
+      "id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+      "name": "Aisha Verma",
+      "email": "aisha@example.com",
+      "phone": "+919876543210",
+      "is_registered": true
+    }
+  ]
+}
+```
+
+`is_registered` is `false` for a patient record created by reception (e.g. a prior walk-in) who has
+never signed up in the app themselves — see `patient_details.patient_id` under
+[Appointments](#appointments) for how this resolves at booking time.
+
+**Errors:** `400 VALIDATION_ERROR` (neither `phone` nor `q` given).
+
 ### GET /patients/me
 
 Auth: `patient`. Returns the caller's own profile, including their preferred clinic/branch.
@@ -2950,6 +2991,32 @@ Auth: `clinic_owner` (owns branch) **or** `branch_staff` with `patients:view`. *
 
 **Errors:** `404 BRANCH_NOT_FOUND`, `403 PERMISSION_DENIED`.
 
+### GET /branches/:id/lab-patients
+
+Auth: `clinic_owner` (owns branch) **or** `branch_staff` with `patients:view`. Same shape, query
+params (`search`, `type`, `limit`, `offset`), and pagination as `GET /branches/:id/patients` above,
+but scoped to **Lab Test** bookings instead of Doctor appointments — `visit_count`/`first_visit_date`/
+`last_visit_date` are computed from `lab_test_appointments` (excluding `CANCELLED`/`REJECTED`), not
+`appointments`.
+
+**Response `200`**: same shape as `GET /branches/:id/patients`.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `403 PERMISSION_DENIED`.
+
+### GET /branches/:id/all-patients
+
+Auth: `clinic_owner` (owns branch) **or** `branch_staff` with `patients:view`. Same shape, query
+params, and pagination as `GET /branches/:id/patients` — this is the true "all patients" list:
+every actual patient with **either** a Doctor appointment **or** a Lab Test booking at this branch,
+deduped by identity across both sources. `visit_count` is the combined total across both;
+`first_visit_date`/`last_visit_date` span both `appointments.scheduled_date` and
+`lab_test_appointments.appointment_date`. Use `GET /branches/:id/patients` or
+`GET /branches/:id/lab-patients` instead when you specifically want one source only.
+
+**Response `200`**: same shape as `GET /branches/:id/patients`.
+
+**Errors:** `404 BRANCH_NOT_FOUND`, `403 PERMISSION_DENIED`.
+
 ---
 
 ## Appointments
@@ -2973,11 +3040,25 @@ Auth: `clinic_owner` (owns branch) **or** `branch_staff` with `patients:view`. *
   "created_at": "2026-08-09T10:05:00Z",
   "updated_at": "2026-08-09T10:05:00Z",
   "patient_details": {
+    "patient_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
     "relationship": "self",
     "name": "Aisha Verma",
     "phone": "+919876543210",
     "age": null,
     "gender": null
+  },
+  "relationship": "self",
+  "booking_source": "PATIENT_APP",
+  "patient": {
+    "id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+    "name": "Aisha Verma",
+    "mobile": "+919876543210"
+  },
+  "booked_by": {
+    "id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+    "name": "Aisha Verma",
+    "email": "aisha@example.com",
+    "phone": "+919876543210"
   }
 }
 ```
@@ -2985,21 +3066,37 @@ Auth: `clinic_owner` (owns branch) **or** `branch_staff` with `patients:view`. *
 `status` ∈ `pending | confirmed | paid | completed | cancelled | no_show`
 
 `patient_details` identifies who the visit is actually **for** — a patient account can book on
-behalf of a family member or friend, so this can differ from the booking account
-(`patient_id`, the logged-in user who made the booking). It's always present on every
-appointment (list and detail alike): `relationship` ∈ `self | spouse | child | parent | sibling | friend | other`,
-defaulting to `self` with the account holder's own `name`/`phone` when `patient_details` is
-omitted from `POST /appointments`. `age` and `gender` are optional free-form details the
-booking patient can supply for the visitor and are `null` unless given.
+behalf of a family member or friend, and reception can book on behalf of a walk-in, so this can
+differ from the booking account (`patient_id`, the logged-in user who made the booking — see
+`booked_by` below). It's always present on every appointment (list and detail alike):
+`relationship` ∈ `self | spouse | child | parent | sibling | friend | other`, defaulting to `self`
+with the account holder's own `name`/`phone` when `patient_details` is omitted from
+`POST /appointments`. `age` and `gender` are optional free-form details the booking patient can
+supply for the visitor and are `null` unless given. `patient_details.patient_id` resolves to the
+actual patient's `users` row once known — `null` for legacy bookings that predate this field, or a
+family member the server hasn't yet been able to link to an account.
+
+Alongside `patient_details`, every appointment also carries (response-only, never sent when
+creating a booking):
+
+- `relationship` — mirrors `patient_details.relationship` at the top level.
+- `booking_source` — `PATIENT_APP` (the patient booked via the app) or `RECEPTION` (branch staff or
+  the clinic owner booked on the patient's behalf).
+- `patient` — `{ id, name, mobile }`, the **actual patient** the visit is for (same person as
+  `patient_details`). `id` is `null` for a legacy/unresolved row.
+- `booked_by` — `{ id, name?, email?, phone? }`, the account that created the booking. For a
+  `PATIENT_APP` booking this is the patient themselves; for a `RECEPTION` booking it's the staff
+  member or clinic owner who booked it.
 
 List and detail responses enrich this base object:
 
 - `GET /appointments` items additionally include `doctor_name`, `doctor_photo_url`, `branch_name`, and `branch_phone`.
-- `GET /appointments/:id` additionally includes `doctor_name`, `doctor_photo_url`, `branch_name`, `branch_phone`, and a nested `patient` object: `{ id, name, email, phone, address, photo_url }` — this is always the **booking account holder**, not necessarily the visiting patient in `patient_details`.
+- `GET /appointments/:id` additionally includes `doctor_name`, `doctor_photo_url`, `branch_name`, and `branch_phone`.
 
 ### POST /appointments
 
-Auth: `patient`. Header `Idempotency-Key` **required**.
+Auth: `patient`, `branch_staff` (own branch), or `clinic_owner` (own clinic's branches — reception
+booking a walk-in). Header `Idempotency-Key` **required**.
 
 On success, an in-app notification (`new_booking`) is created for every branch staff member **and** the clinic owner, and each of them is emailed the account holder's name/email/phone, the visiting patient's name/relationship (from `patient_details`) if booked for someone else, and the doctor's name.
 
@@ -3032,18 +3129,26 @@ Behavior depends on the doctor's assignment `slot_type` for `branch_id` (see [Sl
 | `branch_id` | string (UUID) | required |
 | `date` | string | required, `YYYY-MM-DD`, not in the past |
 | `time` | string? | required and must be an aligned slot when the doctor's `slot_type` is `fixed`; omit for `sequential` doctors |
-| `patient_details` | object? | optional — omit to book for yourself (defaults to `relationship: "self"` using your own account name/phone) |
+| `patient_details` | object? | optional — omit to book for yourself (defaults to `relationship: "self"` using your own account name/phone). **Required** when `branch_staff`/`clinic_owner` book on behalf of a walk-in patient |
+| `patient_details.patient_id` | string (UUID)? | **`branch_staff`/`clinic_owner` only** — selects an existing patient found via `GET /patients/lookup`, instead of creating a new one. Ignored for the `patient` role (see below) |
 | `patient_details.relationship` | string? | `self` \| `spouse` \| `child` \| `parent` \| `sibling` \| `friend` \| `other`, defaults to `self` |
 | `patient_details.name` | string | required if `patient_details` is present, 1–255 chars |
-| `patient_details.phone` | string? | max 32 |
+| `patient_details.phone` | string | required if `patient_details` is present, normalized to `+91XXXXXXXXXX` — the confirmation SMS/WhatsApp is sent here, never to the booking account's own phone |
 | `patient_details.age` | number? | 0–150 |
 | `patient_details.gender` | string? | one of `male`, `female`, `other`, `prefer_not_to_say` |
+
+How `patient_details.patient_id` (the actual patient, exposed on the response as `patient.id`) is
+resolved server-side:
+
+- **`patient` role, `relationship: "self"`** (or `patient_details` omitted) — always the caller's own account. Any `patient_id` sent in the body is ignored.
+- **`patient` role, any other relationship** — the server looks up an existing patient by `patient_details.phone`; if none exists, it registers a new one (same "walk-in" account shape as reception creates — no password, `is_registered: false`). The client-supplied `patient_id` is ignored here too — a patient account can never point a booking at an arbitrary existing `patient_id` it doesn't control.
+- **`branch_staff`/`clinic_owner`** — if `patient_details.patient_id` is given, it's used directly (`404 PATIENT_NOT_FOUND` if it doesn't reference an existing patient). Otherwise, same phone lookup-or-create as above.
 
 **Response `201`** — Appointment object (`status: "pending"`, `scheduled_time` is the server-assigned time for `sequential` bookings).
 
 The server never trusts the client's disabled-calendar rendering — every check below re-runs against `branch_operating_days`/`branch_closures`/`doctor_slot_templates`/`doctor_slot_exceptions` regardless of what the calendar/availability endpoints previously returned, so a direct API call can't book a leave day, a branch-closed day, or a day outside the doctor's schedule. The branch-level gate is checked first (it's the outermost constraint) and produces `409 CLINIC_CLOSED`; a doctor leave produces `409 DOCTOR_ON_LEAVE`. Neither is folded into the generic `422 OUTSIDE_DOCTOR_AVAILABILITY`, so the client can show the specific reason instead of a generic unavailable message.
 
-**Errors:** `400 IDEMPOTENCY_KEY_REQUIRED`, `400 VALIDATION_ERROR` (`time` missing for a `fixed` doctor), `409 SLOT_ALREADY_BOOKED` (`fixed` only), `409 DOCTOR_FULLY_BOOKED` (`sequential` only — no slots left that date), `409 CLINIC_CLOSED` (branch not open, or an active branch closure, on the selected date), `409 DOCTOR_ON_LEAVE` (date falls within an active leave), `422 OUTSIDE_DOCTOR_AVAILABILITY`, `422 DATE_IN_PAST`, `404 BRANCH_NOT_FOUND`, `404 DOCTOR_NOT_FOUND`.
+**Errors:** `400 IDEMPOTENCY_KEY_REQUIRED`, `400 VALIDATION_ERROR` (`time` missing for a `fixed` doctor), `404 PATIENT_NOT_FOUND` (`patient_details.patient_id` doesn't reference an existing patient), `409 PHONE_ALREADY_REGISTERED` (`patient_details.phone` already belongs to a non-patient account), `409 SLOT_ALREADY_BOOKED` (`fixed` only), `409 DOCTOR_FULLY_BOOKED` (`sequential` only — no slots left that date), `409 CLINIC_CLOSED` (branch not open, or an active branch closure, on the selected date), `409 DOCTOR_ON_LEAVE` (date falls within an active leave), `422 OUTSIDE_DOCTOR_AVAILABILITY`, `422 DATE_IN_PAST`, `404 BRANCH_NOT_FOUND`, `404 DOCTOR_NOT_FOUND`.
 
 ### GET /appointments
 
@@ -3257,11 +3362,32 @@ Clinics can additionally pre-register named categories with a display **badge co
   "completed_at": null,
   "cancelled_at": null,
   "created_at": "2026-08-18T10:00:00Z",
-  "updated_at": "2026-08-18T10:00:00Z"
+  "updated_at": "2026-08-18T10:00:00Z",
+  "patient_details": {
+    "patient_id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+    "relationship": "self",
+    "name": "Jane Doe",
+    "phone": "+919876543210",
+    "age": 34,
+    "gender": "female"
+  },
+  "relationship": "self",
+  "booking_source": "PATIENT_APP",
+  "booked_by": {
+    "id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+    "name": "Jane Doe",
+    "email": "jane@example.com",
+    "phone": "+919876543210"
+  }
 }
 ```
 
-When `service_mode` is `HOME`, the response additionally includes `home_address`, `home_lat`, `home_lng`, `home_contact_phone`, and `home_notes`. When joined data is present (list/detail endpoints), the response may include nested `test`, `branch`, `patient`, and `clinic` objects. Clinic detail responses additionally include `prescriptions[]` and `payments[]` arrays.
+When `service_mode` is `HOME`, the response additionally includes `home_address`, `home_lat`, `home_lng`, `home_contact_phone`, and `home_notes`. When joined data is present (list/detail endpoints), the response may include nested `test`, `branch`, and `clinic` objects. Clinic detail responses additionally include `prescriptions[]` and `payments[]` arrays.
+
+`patient_details`, `relationship`, `booking_source`, and `booked_by` carry the exact same meaning
+here as on the [Appointment object](#appointments) — see there for the full explanation. The
+nested `patient` object (present on list/detail responses) is likewise `{ id, name, mobile }`, the
+**actual patient** the test is for (same person as `patient_details`), not the booking account.
 
 ### Patient-facing: browse tests & availability
 
@@ -3336,7 +3462,9 @@ Slots are generated from `lab_test_schedules` for the branch, filtered against b
 
 #### POST /lab-test-appointments
 
-Auth: `patient`. Rate limited 20/min. Header `Idempotency-Key` **required**. Creates a new lab test appointment. Double-booking is prevented at the database level via a unique constraint on `(branch_id, branch_lab_test_id, appointment_date, slot_key)` excluding cancelled slots.
+Auth: `patient`, `branch_staff`, `clinic_owner`. Rate limited 20/min. Header `Idempotency-Key` **required**. Creates a new lab test appointment. Double-booking is prevented at the database level via a unique constraint on `(branch_id, branch_lab_test_id, appointment_date, slot_key)` excluding cancelled slots. Staff/owner may book on behalf of a walk-in patient, but only at a branch they're scoped to; a patient account can book at any branch.
+
+`patient_details` identifies who the test is actually **for** and is **required on every booking** — including a patient booking for themself (there is no "book for myself" default/omission).
 
 On success, an in-app `lab_test_booked` notification is created for every branch staff member and the clinic owner.
 
@@ -3351,7 +3479,14 @@ On success, an in-app `lab_test_booked` notification is created for every branch
   "start_time": "09:00",
   "prescription_id": null,
   "patient_notes": "Fasting since last night",
-  "payment_method": "PAY_AT_CLINIC"
+  "payment_method": "PAY_AT_CLINIC",
+  "patient_details": {
+    "relationship": "self",
+    "name": "Jane Doe",
+    "phone": "+919876543210",
+    "age": 34,
+    "gender": "female"
+  }
 }
 ```
 
@@ -3370,10 +3505,21 @@ On success, an in-app `lab_test_booked` notification is created for every branch
 | `home_lng` | number? | -180…180 |
 | `home_contact_phone` | string? | max 32 |
 | `home_notes` | string? | max 500 |
+| `patient_details` | object | **required** — the patient the test is for |
+| `patient_details.patient_id` | string (UUID)? | **`branch_staff`/`clinic_owner` only** — selects an existing patient found via `GET /patients/lookup`, instead of creating a new one. Ignored for the `patient` role |
+| `patient_details.relationship` | string? | `self` \| `spouse` \| `child` \| `parent` \| `sibling` \| `friend` \| `other`, defaults to `self` |
+| `patient_details.name` | string | required, 1–255 chars |
+| `patient_details.phone` | string | required, normalized to `+91XXXXXXXXXX` |
+| `patient_details.age` | number | required, 0–150 |
+| `patient_details.gender` | string | required, one of `male`, `female`, `other`, `prefer_not_to_say` |
 
-**Response `201`** — LabTestAppointment object (`status: "PENDING"`). A `lab_test_payment` record is also created with the appointment's price.
+`patient_details.patient_id` (exposed on the response as `patient.id`) resolves exactly the same
+way as on `POST /appointments` — see [the note there](#post-appointments) for the full
+self/family-member/reception resolution rules.
 
-**Errors:** `400 IDEMPOTENCY_KEY_REQUIRED`, `400 VALIDATION_ERROR`, `404 BRANCH_NOT_FOUND`, `404 TEST_NOT_FOUND`, `409 SLOT_ALREADY_BOOKED`, `422 DATE_IN_PAST`, `422 OUTSIDE_SCHEDULE`, `422 PRESCRIPTION_REQUIRED`.
+**Response `201`** — LabTestAppointment object (`status: "PENDING"`), including the nested `patient_details` that was submitted. A `lab_test_payment` record is also created with the appointment's price.
+
+**Errors:** `400 IDEMPOTENCY_KEY_REQUIRED`, `400 VALIDATION_ERROR`, `404 BRANCH_NOT_FOUND`, `404 TEST_NOT_FOUND`, `404 PATIENT_NOT_FOUND` (`patient_details.patient_id` doesn't reference an existing patient), `409 PHONE_ALREADY_REGISTERED` (`patient_details.phone` already belongs to a non-patient account), `409 SLOT_ALREADY_BOOKED`, `422 DATE_IN_PAST`, `422 OUTSIDE_SCHEDULE`, `422 PRESCRIPTION_REQUIRED`.
 
 #### GET /patient/lab-test-appointments
 
@@ -4114,6 +4260,161 @@ Auth: `doctor` **only**, and only with a non-cancelled appointment relationship 
 ```
 
 **Errors:** `403 NO_APPOINTMENT_RELATIONSHIP`.
+
+---
+
+## Patient documents (lab reports & prescriptions)
+
+Clinic-issued patient documents — lab reports, prescriptions, or other files — uploaded **by clinic staff/owner on behalf of a patient**, scoped to a clinic/branch. This is a distinct feature from [Medical documents](#medical-documents) above (patient's own self-uploaded scans, no clinic/branch attribution) and from [Prescriptions](#prescriptions) (the in-app digitized prescription tied to one appointment) — this one is clinic-driven, with an independent multi-channel delivery trail.
+
+`document_type` ∈ `LAB_REPORT | PRESCRIPTION | OTHER`. `status` (generation) ∈ `PENDING | GENERATED` — set to `GENERATED` immediately on successful upload (there's no async generation step in this version). `delivery_method` ∈ `APP | EMAIL | PRINT`. `delivery_status` ∈ `PENDING | DELIVERED | NOT_DELIVERED`.
+
+A document can be `Available` in the patient app, `Delivered` by email, and `Printed` **simultaneously** — each channel has its own independent history (`patient_document_deliveries`), never overwriting another channel's state. Every successfully generated document automatically gets an `APP` delivery row (`status: DELIVERED`) at upload time — that's what "available in the patient app" means; there's no separate action to make it visible.
+
+### PatientDocument object
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "patient_id": "3f9d6b5e-...",
+  "clinic_id": "9d2f4c8a-...",
+  "branch_id": "5e8f6c7a-...",
+  "clinic_name": "Sunrise Multispeciality",
+  "branch_name": "Sunrise — Andheri",
+  "patient_name": "Aisha Verma",
+  "uploaded_by_name": "Dr. Smith",
+  "document_type": "LAB_REPORT",
+  "title": "Blood Test Report",
+  "description": null,
+  "file_name": "blood-report.pdf",
+  "file_size": 245760,
+  "mime_type": "application/pdf",
+  "file_url": "https://.../api/v1/patient-documents/a1b2c3d4-.../preview?expires=...&sig=...",
+  "uploaded_by": "1a2b3c4d-...",
+  "uploaded_at": "2026-09-10T10:30:00.000Z",
+  "status": "GENERATED",
+  "created_at": "2026-09-10T10:30:00.000Z",
+  "updated_at": "2026-09-10T10:30:00.000Z"
+}
+```
+
+`file_url` is a freshly-signed, 15-minute link minted on every read (own dedicated endpoint, `GET /patient-documents/:documentId/preview` — same HMAC signing primitive as [Files](#files-signed-urls), but keyed by document id rather than storage key since the underlying file now lives in Cloudinary, not local disk) — it is never persisted, so a copy of a list/detail response can't be replayed indefinitely. List and detail responses additionally include `delivery_summary: { APP, EMAIL, PRINT }`, each either `null` (never attempted) or the **latest** Delivery object for that channel. The detail endpoint also includes the full `deliveries[]` history, oldest first.
+
+### Delivery object
+
+```json
+{
+  "id": "d1e2f3a4-...",
+  "document_id": "a1b2c3d4-...",
+  "delivery_method": "EMAIL",
+  "status": "DELIVERED",
+  "recipient_email": "aisha@example.com",
+  "delivered_at": "2026-09-10T10:35:00.000Z",
+  "attempted_by": "1a2b3c4d-...",
+  "attempted_by_name": "Dr. Smith",
+  "attempted_at": "2026-09-10T10:35:00.000Z",
+  "error_message": null,
+  "created_at": "2026-09-10T10:35:00.000Z",
+  "updated_at": "2026-09-10T10:35:00.000Z"
+}
+```
+
+### Permissions
+
+`clinic_owner` may always upload/view/download/email/print/delete, and always sees every branch of their own clinic(s). A `branch_staff` account is scoped to **their own assigned branch only** (not every branch of the clinic) and must additionally hold the relevant permission: `patient_documents:upload`, `patient_documents:view`, `patient_documents:delete`, `patient_documents:email`, `patient_documents:print` — none of these are granted by default (see [Branch staff](#branch-staff)); an owner must explicitly enable them per staff member. A `patient` may only view/download their **own** documents (ownership enforced server-side — a `patientId`/`documentId` belonging to someone else 404s, it is never trusted from the URL) and can never upload, delete, modify, or change delivery status.
+
+### POST /patient-documents/upload
+
+Auth: `clinic_owner` or `branch_staff` with `patient_documents:upload`. Rate limited `10/min` (sensitive document upload, same tier as other document/signature uploads — see [Conventions → Rate limits](#rate-limits)). `multipart/form-data`.
+
+`clinic_id`/`branch_id`/`uploaded_by` are **never trusted from the client** — a `branch_staff` caller is always pinned to their own assigned branch (any `branch_id` field is ignored); a `clinic_owner` may specify `branch_id` to pick which of their branches issued the document, but it's verified server-side (a branch they don't own 404s) rather than trusted as-is. `uploaded_by` is always the authenticated caller.
+
+**Request fields**
+
+```text
+patient_id       required — must be an active patient account
+document_type    required — LAB_REPORT | PRESCRIPTION | OTHER
+title            required, 1–255 chars
+description      optional, max 2000 chars
+branch_id        clinic_owner only — which of their branches issued this; ignored for branch_staff
+file             required — PDF, JPG, JPEG, or PNG, ≤ 20MB
+```
+
+The file is uploaded to Cloudinary (not local disk — this API's host wipes its local filesystem on every redeploy/restart), so documents survive deploys. Clients never see the Cloudinary URL directly: it's read back only through the server-proxied `download` and `preview` endpoints below.
+
+On success, `status` is set to `GENERATED`, an `APP` delivery row is recorded as `DELIVERED`, an in-app `patient_document_uploaded` notification (+ push) is sent to the patient, and an `audit_logs` row (`action: "document_uploaded"`) is written.
+
+**Response `201`** — PatientDocument object.
+
+**Errors:** `400 VALIDATION_ERROR`, `400 FILE_REQUIRED` / `FILE_EMPTY`, `404 PATIENT_NOT_FOUND`, `404 BRANCH_NOT_FOUND`, `403 PERMISSION_DENIED`, `413 FILE_TOO_LARGE`, `415 UNSUPPORTED_MEDIA_TYPE`.
+
+### GET /patient-documents/patient/:patientId
+
+Auth: `patient` (self only — see IDOR note below), `clinic_owner`, `branch_staff` with `patient_documents:view`.
+
+**This exact URL shape is the classic IDOR target** — a `patientId` in the path that a different caller could swap in. It's closed on both sides: a `patient` caller whose own id doesn't match `:patientId` gets `404 PATIENT_NOT_FOUND` (never a 403, so the response can't be used to confirm whether a given patient id exists); a `branch_staff` caller only ever sees documents where `branch_id` equals their own assigned branch, regardless of which patient or clinic is requested.
+
+**Query:** `?document_type=&status=&date=&limit=` — `document_type` and `status` are the enums above; `date` is `YYYY-MM-DD` (matches `uploaded_at`'s date). All optional. Returned newest first.
+
+**Response `200`**
+
+```json
+{ "items": [ /* PatientDocument objects, each with delivery_summary */ ] }
+```
+
+### GET /patient-documents/:documentId
+
+Auth: `patient` (own document only), `clinic_owner`, `branch_staff` with `patient_documents:view`.
+
+**Response `200`** — PatientDocument object with `delivery_summary` and the full `deliveries[]` history.
+
+**Errors:** `404 PATIENT_DOCUMENT_NOT_FOUND`.
+
+### GET /patient-documents/:documentId/download
+
+Auth: same as detail. Streams the file directly from this endpoint (`Content-Disposition: attachment`) after the same ownership/scope check as the detail endpoint — it fetches the bytes from Cloudinary server-side and proxies them back rather than redirecting to or exposing the Cloudinary URL, so a download action never hands out a reusable link. Logs an `audit_logs` row (`action: "document_downloaded"`).
+
+**Response `200`** — the raw file bytes, `Content-Type` set from the stored MIME type.
+
+**Errors:** `404 PATIENT_DOCUMENT_NOT_FOUND`.
+
+### GET /patient-documents/:documentId/preview
+
+Auth: none — authorized instead by the `expires`/`sig` query params signed into `file_url` (15-minute TTL, see [PatientDocument object](#patientdocument-object) above). Same proxy behavior as `download` (fetches from Cloudinary server-side), but `Content-Disposition: inline` for in-app viewing instead of forcing a download.
+
+**Response `200`** — the raw file bytes, `Content-Type` set from the stored MIME type.
+
+**Errors:** `403 INVALID_SIGNED_URL` (missing/expired/tampered signature, or the document no longer exists).
+
+### DELETE /patient-documents/:documentId
+
+Auth: `clinic_owner` or `branch_staff` with `patient_documents:delete`. **Not** available to `patient`. Soft delete (`deleted_at`) — the row and its delivery history are preserved for audit purposes but excluded from every read endpoint above.
+
+**Response `204 No Content`**
+
+**Errors:** `404 PATIENT_DOCUMENT_NOT_FOUND`, `403 PERMISSION_DENIED`.
+
+### POST /patient-documents/:documentId/send-email
+
+Auth: `clinic_owner` or `branch_staff` with `patient_documents:email`. Rate limited `20/min`.
+
+**Request body:** `{ "email": "patient@example.com" }` — validated as a real email address; not required to match the patient's registered email (staff can send to any address the patient confirms, e.g. a family member's).
+
+Flow: verifies clinic/branch access and that the document belongs to a patient associated with that clinic/branch → creates a delivery-history row (`EMAIL`, `PENDING`) → sends the document via the existing Brevo-backed [email service](#conventions) (a 24-hour signed link, long enough to survive the patient actually opening the email — longer than the 15-minute link used for in-app previews) → updates that same row to `DELIVERED` (+ `delivered_at`) on success or `NOT_DELIVERED` (+ a generic `error_message`, never the raw internal Brevo/network error) on failure. The HTTP response is always `200` either way — a failed send is a normal, structured outcome (`status: "NOT_DELIVERED"`), not a `5xx`; the client decides which toast to show from the returned `status`.
+
+**Response `200`** — Delivery object (`delivery_method: "EMAIL"`).
+
+**Errors:** `400 VALIDATION_ERROR` (invalid email), `404 PATIENT_DOCUMENT_NOT_FOUND`, `403 PERMISSION_DENIED`.
+
+### POST /patient-documents/:documentId/print
+
+Auth: `clinic_owner` or `branch_staff` with `patient_documents:print`. Rate limited `100/min`.
+
+Called by the clinic app right after it opens the print-ready view / triggers the browser's print dialog client-side — there's no portable way for a server to know a physical print job actually finished, so this records "print was initiated by this staff member, now" as `DELIVERED` immediately. No request body.
+
+**Response `201`** — Delivery object (`delivery_method: "PRINT"`).
+
+**Errors:** `404 PATIENT_DOCUMENT_NOT_FOUND`, `403 PERMISSION_DENIED`.
 
 ---
 
@@ -5049,7 +5350,7 @@ Payment-gateway webhook receiver — the automatic counterpart to the client-dri
 | `FEE_OWNER_CONTROLLED` | 403 | Doctor tried to change the fee |
 | `INVALID_SIGNED_URL` | 403 | Bad/expired file URL signature |
 | `NOT_SUPER_ADMIN` | 403 | `sys_admin` role present but no active `super_admins` grant |
-| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `RECEIPT_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `MEDICATION_NOT_FOUND` / `DOSE_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` / `EXCEPTION_NOT_FOUND` / `CLOSURE_NOT_FOUND` / `TEST_NOT_FOUND` / `SCHEDULE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
+| `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `RECEIPT_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `PATIENT_NOT_FOUND` / `PATIENT_DOCUMENT_NOT_FOUND` / `MEDICATION_NOT_FOUND` / `DOSE_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` / `EXCEPTION_NOT_FOUND` / `CLOSURE_NOT_FOUND` / `TEST_NOT_FOUND` / `SCHEDULE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
 | `USER_NOT_FOUND` / `SUPER_ADMIN_NOT_FOUND` / `PAYMENT_NOT_FOUND` / `SUBSCRIPTION_NOT_FOUND` | 404 | Super Admin / subscription resource missing |
 | `INVITE_EXPIRED` / `OTP_EXPIRED` / `RESET_TOKEN_EXPIRED` | 410 | Expired one-time code |
 | `FILE_TOO_LARGE` | 413 | Upload exceeds size limit |

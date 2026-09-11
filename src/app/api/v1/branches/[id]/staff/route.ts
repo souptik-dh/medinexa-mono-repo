@@ -6,7 +6,7 @@ import { requireRoles } from "@/lib/auth";
 import { getOwnedBranch } from "@/lib/scope";
 import { conflict, isUniqueViolation } from "@/lib/errors";
 import { newId } from "@/lib/ids";
-import { sendSms } from "@/lib/notifications";
+import { sendSms, sendWhatsapp } from "@/lib/notifications";
 import {
   BRANCH_STAFF_PERMISSIONS,
   DEFAULT_BRANCH_STAFF_PERMISSIONS,
@@ -96,8 +96,18 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     throw err;
   }
 
-  const staffSms = "You can now log in to Jido Healthcare as branch staff. Use phone-based OTP login with this number.";
-  await sendSms(body.phone, `Jido Healthcare: ${staffSms}`);
+  const [branchRows] = await pool.query<Row[]>(
+    `SELECT b.name AS branch_name, c.name AS clinic_name
+       FROM branches b JOIN clinics c ON c.id = b.clinic_id
+      WHERE b.id = ?`,
+    [branchId],
+  );
+  const branchInfo = branchRows[0];
+  const welcomeText =
+    `Jido Healthcare: Hi ${body.name}, you have been added as a staff member of ` +
+    `${branchInfo?.clinic_name ?? "your clinic"}, ${branchInfo?.branch_name ?? "your branch"}. ` +
+    `Welcome to Jido Healthcare! You can log in with this phone number using OTP.`;
+  await Promise.allSettled([sendSms(body.phone, welcomeText), sendWhatsapp(body.phone, welcomeText)]);
 
   return json(
     {

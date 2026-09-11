@@ -114,6 +114,29 @@ export function serializeLabTestAppointment(r: Row) {
     updated_at: r.updated_at,
   };
 
+  // Who the test is actually for — may differ from the booking account (patient_id)
+  // when a clinic/staff booked on behalf of a walk-in patient.
+  if (r.visitor_name !== undefined) {
+    base.patient_details = {
+      patient_id: r.visitor_patient_id ?? null,
+      relationship: r.visitor_relationship ?? "self",
+      name: r.visitor_name,
+      phone: r.visitor_phone ?? null,
+      age: r.visitor_age !== null && r.visitor_age !== undefined ? Number(r.visitor_age) : null,
+      gender: r.visitor_gender ?? null,
+    };
+    base.relationship = r.visitor_relationship ?? "self";
+    base.booking_source = r.visitor_booking_source ?? null;
+    // The actual patient the test is for. `id` resolves to a real users row once
+    // known — null for legacy bookings that predate this field.
+    base.patient = {
+      id: r.visitor_patient_id ?? null,
+      name: r.visitor_name,
+      mobile: r.visitor_phone ?? null,
+    };
+    base.booked_by = { id: r.visitor_booked_by ?? r.patient_id };
+  }
+
   if (r.service_mode === "HOME") {
     base.home_address = r.home_address ?? null;
     base.home_lat = r.home_lat !== null && r.home_lat !== undefined ? Number(r.home_lat) : null;
@@ -141,13 +164,13 @@ export function serializeLabTestAppointment(r: Row) {
   }
 
   if (r.patient_name !== undefined) {
-    base.patient = {
-      id: r.patient_id,
+    // The account that created the booking — the patient themselves, or clinic
+    // staff booking on behalf of a walk-in/family member.
+    base.booked_by = {
+      id: r.visitor_booked_by ?? r.patient_id,
       name: r.patient_name ?? null,
       email: r.patient_email ?? null,
       phone: r.patient_phone ?? null,
-      date_of_birth: r.patient_dob ?? null,
-      gender: r.patient_gender ?? null,
     };
   }
 
@@ -184,7 +207,12 @@ export function labTestScopeWhere(auth: AuthContext): { where: string; params: u
     case "patient":
       return { where: "1 = 1", params: [] };
     case "branch_staff":
-      return { where: "b.branch_id = ?", params: [auth.branchId ?? "__none__"] };
+      // `b` is the joined `branches` row (`JOIN branches b ON b.id = blt.branch_id`),
+      // whose primary key column is `id`, not `branch_id` — that column only exists on
+      // `blt` (branch_lab_tests) and `lab_test_appointments`. Referencing `b.branch_id`
+      // is an unknown-column SQL error, which made every branch_staff call to the lab
+      // test detail/availability endpoints 500 instead of scoping to their own branch.
+      return { where: "b.id = ?", params: [auth.branchId ?? "__none__"] };
     case "clinic_owner":
       return {
         where: "b.clinic_id IN (SELECT id FROM clinics WHERE owner_user_id = ?)",
@@ -312,12 +340,17 @@ export async function getLabTestAppointmentInScope(
             b.name AS branch_name, b.phone AS branch_phone, b.timezone AS branch_timezone, b.address AS branch_address,
             c.name AS clinic_name,
             u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
-            u.date_of_birth AS patient_dob, u.gender AS patient_gender
+            u.date_of_birth AS patient_dob, u.gender AS patient_gender,
+            ltap.relationship AS visitor_relationship, ltap.name AS visitor_name,
+            ltap.phone AS visitor_phone, ltap.age AS visitor_age, ltap.gender AS visitor_gender,
+            ltap.patient_id AS visitor_patient_id, ltap.booking_source AS visitor_booking_source,
+            ltap.booked_by AS visitor_booked_by
        FROM lab_test_appointments a
        JOIN lab_tests lt ON lt.id = a.test_id
        JOIN branches b ON b.id = a.branch_id
        JOIN clinics c ON c.id = a.clinic_id
        JOIN users u ON u.id = a.patient_id
+       LEFT JOIN lab_test_appointment_patients ltap ON ltap.appointment_id = a.id
      WHERE a.id = ? AND ${where} FOR UPDATE`,
     [id, ...params],
   );

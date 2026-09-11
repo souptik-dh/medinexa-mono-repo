@@ -401,9 +401,15 @@ CREATE TABLE IF NOT EXISTS appointments (
 -- family member/friend, so this can differ from the booking account (appointments.patient_id).
 -- One row per appointment, always present (relationship defaults to 'self', copying the
 -- account holder's own name/phone, when the client omits patient_details entirely).
+-- `patient_id` is the resolvable actual patient (nullable for legacy rows that predate
+-- this column); `booked_by` mirrors the parent appointment's booking-account id at this
+-- grain for direct querying, same convention as appointment_status_log.changed_by.
 CREATE TABLE IF NOT EXISTS appointment_patients (
   id CHAR(36) NOT NULL,
   appointment_id CHAR(36) NOT NULL,
+  patient_id CHAR(36) NULL,
+  booking_source ENUM('PATIENT_APP','RECEPTION') NOT NULL DEFAULT 'PATIENT_APP',
+  booked_by CHAR(36) NULL,
   relationship ENUM('self','spouse','child','parent','sibling','friend','other') NOT NULL DEFAULT 'self',
   name VARCHAR(255) NOT NULL,
   phone VARCHAR(32) NULL,
@@ -412,7 +418,10 @@ CREATE TABLE IF NOT EXISTS appointment_patients (
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uniq_appointment_patient (appointment_id),
-  CONSTRAINT fk_appt_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
+  KEY idx_appt_patients_patient (patient_id),
+  CONSTRAINT fk_appt_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+  CONSTRAINT fk_appt_patient_details_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_appt_patient_details_booked_by FOREIGN KEY (booked_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 -- changed_by NULL = system/cron (e.g. the overdue-appointment auto-cancel sweep).
@@ -816,6 +825,30 @@ CREATE TABLE IF NOT EXISTS lab_test_appointments (
   CONSTRAINT fk_lta_test FOREIGN KEY (test_id) REFERENCES lab_tests(id)
 ) ENGINE=InnoDB;
 
+-- Who the lab test is actually for — a clinic/staff booking on behalf of a walk-in
+-- patient (patient_id on lab_test_appointments is the booking account, mirroring
+-- appointment_patients for doctor appointments). One row per appointment, always
+-- present (relationship defaults to 'self') when a client omits patient_details.
+CREATE TABLE IF NOT EXISTS lab_test_appointment_patients (
+  id CHAR(36) NOT NULL,
+  appointment_id CHAR(36) NOT NULL,
+  patient_id CHAR(36) NULL,
+  booking_source ENUM('PATIENT_APP','RECEPTION') NOT NULL DEFAULT 'PATIENT_APP',
+  booked_by CHAR(36) NULL,
+  relationship ENUM('self','spouse','child','parent','sibling','friend','other') NOT NULL DEFAULT 'self',
+  name VARCHAR(255) NOT NULL,
+  phone VARCHAR(32) NULL,
+  age TINYINT UNSIGNED NULL,
+  gender ENUM('male','female','other','prefer_not_to_say') NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  UNIQUE KEY uniq_lab_test_appointment_patient (appointment_id),
+  KEY idx_lta_patients_patient (patient_id),
+  CONSTRAINT fk_lta_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES lab_test_appointments(id) ON DELETE CASCADE,
+  CONSTRAINT fk_lta_patient_details_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_lta_patient_details_booked_by FOREIGN KEY (booked_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
 CREATE TABLE IF NOT EXISTS lab_test_prescriptions (
   id CHAR(36) NOT NULL,
   patient_id CHAR(36) NOT NULL,
@@ -1076,4 +1109,63 @@ CREATE TABLE IF NOT EXISTS subscription_offer_recipients (
   CONSTRAINT fk_offer_recip_offer FOREIGN KEY (offer_id) REFERENCES subscription_offers(id) ON DELETE CASCADE,
   CONSTRAINT fk_offer_recip_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
   CONSTRAINT fk_offer_recip_notification FOREIGN KEY (portal_notification_id) REFERENCES notifications(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- Clinic-issued patient documents (lab reports, prescriptions, other) — uploaded BY
+-- clinic staff/owner ON BEHALF OF a patient, scoped to a clinic/branch. Distinct from
+-- the patient-self-upload `medical_documents` table (no clinic/branch attribution,
+-- self-service only): this one is clinic-driven, with an independent multi-channel
+-- delivery trail (see patient_document_deliveries below).
+--
+-- `file_key` is the raw on-disk storage key (matches saveUpload()'s returned fileName in
+-- src/lib/upload.ts), NOT a pre-signed URL — a signed, time-limited URL is minted fresh
+-- on every authorized read (list/get/download), never persisted, so a stored link can
+-- never outlive its 15-minute signature or leak as a durable public URL.
+CREATE TABLE IF NOT EXISTS patient_documents (
+  id CHAR(36) NOT NULL,
+  patient_id CHAR(36) NOT NULL,
+  clinic_id CHAR(36) NOT NULL,
+  branch_id CHAR(36) NOT NULL,
+  document_type ENUM('LAB_REPORT','PRESCRIPTION','OTHER') NOT NULL,
+  title VARCHAR(255) NOT NULL,
+  description VARCHAR(2000) NULL,
+  file_name VARCHAR(255) NOT NULL,
+  file_key VARCHAR(255) NOT NULL,
+  file_size INT NOT NULL,
+  mime_type VARCHAR(100) NOT NULL,
+  uploaded_by CHAR(36) NOT NULL,
+  uploaded_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  status ENUM('PENDING','GENERATED') NOT NULL DEFAULT 'GENERATED',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  deleted_at DATETIME(3) NULL,
+  PRIMARY KEY (id),
+  KEY idx_pd_patient (patient_id, deleted_at, uploaded_at),
+  KEY idx_pd_clinic (clinic_id),
+  KEY idx_pd_branch (branch_id),
+  CONSTRAINT fk_pd_patient FOREIGN KEY (patient_id) REFERENCES users(id),
+  CONSTRAINT fk_pd_clinic FOREIGN KEY (clinic_id) REFERENCES clinics(id),
+  CONSTRAINT fk_pd_branch FOREIGN KEY (branch_id) REFERENCES branches(id),
+  CONSTRAINT fk_pd_uploaded_by FOREIGN KEY (uploaded_by) REFERENCES users(id)
+) ENGINE=InnoDB;
+
+-- Independent per-channel delivery/audit trail for a patient_documents row — a single
+-- document can simultaneously be Available in the patient app, Emailed, and Printed,
+-- each tracked as its own row here (never overwriting another channel's state).
+CREATE TABLE IF NOT EXISTS patient_document_deliveries (
+  id CHAR(36) NOT NULL,
+  document_id CHAR(36) NOT NULL,
+  delivery_method ENUM('APP','EMAIL','PRINT') NOT NULL,
+  status ENUM('PENDING','DELIVERED','NOT_DELIVERED') NOT NULL DEFAULT 'PENDING',
+  recipient_email VARCHAR(255) NULL,
+  delivered_at DATETIME(3) NULL,
+  attempted_by CHAR(36) NULL,
+  attempted_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  error_message VARCHAR(500) NULL,
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (id),
+  KEY idx_pdd_document (document_id, delivery_method, created_at),
+  CONSTRAINT fk_pdd_document FOREIGN KEY (document_id) REFERENCES patient_documents(id) ON DELETE CASCADE,
+  CONSTRAINT fk_pdd_attempted_by FOREIGN KEY (attempted_by) REFERENCES users(id)
 ) ENGINE=InnoDB;

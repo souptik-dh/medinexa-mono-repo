@@ -1,13 +1,14 @@
 import { z } from "zod";
 import { api, json, decodeCursor } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
-import { parseBody, idSchema, timeSchema, parsePagination } from "@/lib/validators";
+import { parseBody, idSchema, timeSchema, parsePagination, phoneSchema } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { badRequest, conflict, notFound, unprocessable, isUniqueViolation } from "@/lib/errors";
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { scopeWhere, serializeAppointment, APPT_STATUSES } from "@/lib/appointments";
-import { notifyBranchStaff, createNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, notifyPhonesSmsWhatsapp } from "@/lib/notifications";
+import { resolveServicePatient } from "@/lib/patient-identity";
+import { notifyBranchStaff, createNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, notifyPhonesSmsWhatsapp, personalizeForPatient } from "@/lib/notifications";
 import {
   todayInTz,
   weekdayInTz,
@@ -73,7 +74,9 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
                (SELECT b.name FROM branches b WHERE b.id = a.branch_id) AS branch_name,
                (SELECT b.phone FROM branches b WHERE b.id = a.branch_id) AS branch_phone,
                ap.relationship AS visitor_relationship, ap.name AS visitor_name,
-               ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender
+               ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender,
+               ap.patient_id AS visitor_patient_id, ap.booking_source AS visitor_booking_source,
+               ap.booked_by AS visitor_booked_by
           FROM appointments a
           LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
          WHERE ${whereParts.join(" AND ")}
@@ -90,9 +93,19 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
 });
 
 const patientDetailsSchema = z.object({
+  // Reception only: select an existing patient found via GET /api/v1/patients/lookup
+  // instead of registering a new one. Ignored for the "patient" role — a patient
+  // account can never point a booking at an arbitrary patient_id it doesn't control.
+  patient_id: idSchema.optional(),
   relationship: z.enum(["self", "spouse", "child", "parent", "sibling", "friend", "other"]).default("self"),
   name: z.string().trim().min(1).max(255),
-  phone: z.string().trim().max(32).optional().nullable(),
+  // Required (not just normalized) so a staff/owner walk-in booking can never omit the
+  // patient's number — omitting it used to make the confirmation SMS/WhatsApp silently
+  // fall back to the booking account's own phone (the staff member's, for a walk-in),
+  // instead of never reaching the actual patient. Normalized to +91XXXXXXXXXX so
+  // downstream SMS/WhatsApp dispatch (which needs the country code for both the SMS
+  // gateway and WhatsApp's chatId) doesn't reject a plain 10-digit number typed by staff.
+  phone: phoneSchema,
   age: z.number().int().min(0).max(150).optional().nullable(),
   gender: z.enum(["male", "female", "other", "prefer_not_to_say"]).optional().nullable(),
 });
@@ -107,7 +120,7 @@ const schema = z.object({
 });
 
 export const POST = api({ rateLimit: 200 }, async (ctx) => {
-  const auth = requireRoles(ctx.auth, ["patient"]);
+  const auth = requireRoles(ctx.auth, ["patient", "branch_staff", "clinic_owner"]);
   const idemKey = ctx.request.headers.get("idempotency-key");
   if (!idemKey) {
     throw badRequest(
@@ -135,6 +148,21 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     );
     const branch = branches[0];
     if (!branch) throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
+
+    // Clinic staff / owner may book on behalf of a walk-in patient, but only at a
+    // branch they are scoped to. The patient themselves can book at any branch.
+    if (auth.role === "clinic_owner" && branch.owner_user_id !== auth.userId) {
+      throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
+    }
+    if (auth.role === "branch_staff" && auth.branchId !== body.branch_id) {
+      throw notFound("BRANCH_NOT_FOUND", "Branch not found.");
+    }
+    if (auth.role !== "patient" && !body.patient_details) {
+      throw badRequest(
+        "VALIDATION_ERROR",
+        "patient_details is required when booking an appointment on behalf of a patient.",
+      );
+    }
 
     // New bookings are rejected while the clinic's subscription is inactive.
     await assertClinicOperational(pool, branch.clinic_id);
@@ -270,12 +298,17 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
               assignment.currency,
             ],
           );
+          const servicePatient = await resolveServicePatient(conn, auth, patientDetails);
           await conn.query(
-            `INSERT INTO appointment_patients (id, appointment_id, relationship, name, phone, age, gender)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO appointment_patients
+               (id, appointment_id, patient_id, booking_source, booked_by, relationship, name, phone, age, gender)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               newId(),
               id,
+              servicePatient.patientId,
+              servicePatient.bookingSource,
+              servicePatient.bookedBy,
               patientDetails.relationship,
               patientDetails.name,
               patientDetails.phone ?? null,
@@ -324,7 +357,9 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     const [[rows], [details], recipients, recipientPhones] = await Promise.all([
       pool.query<Row[]>(
         `SELECT a.*, ap.relationship AS visitor_relationship, ap.name AS visitor_name,
-                ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender
+                ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender,
+                ap.patient_id AS visitor_patient_id, ap.booking_source AS visitor_booking_source,
+                ap.booked_by AS visitor_booked_by
            FROM appointments a
            LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
           WHERE a.id = ?`,
@@ -388,11 +423,16 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       void Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody, emailHtmlBody)));
       void notifyPhonesSmsWhatsapp(recipientPhones, smsText);
 
-      if (info.patient_phone) {
-        void notifyPhonesSmsWhatsapp(
-          [info.patient_phone],
-          `Jido Healthcare: Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${body.date} at ${scheduledTime} has been booked and is awaiting confirmation.`,
+      // Send the booking confirmation to the walk-in patient's number when one was
+      // provided, otherwise fall back to the account holder's recorded phone.
+      const patientPhone = rows[0]?.visitor_phone || info.patient_phone;
+      if (patientPhone) {
+        const bookedText = personalizeForPatient(
+          `Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${body.date} at ${scheduledTime} has been booked and is awaiting confirmation.`,
+          patientDetails.name,
+          patientDetails.relationship,
         );
+        void notifyPhonesSmsWhatsapp([patientPhone], bookedText);
       }
     }
 
