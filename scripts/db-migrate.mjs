@@ -1371,6 +1371,69 @@ try {
     console.log('Applied migration: subscription_payments.offer_recipient_id/discounted_months');
   }
 
+  const [apptPatientPatientIdCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'appointment_patients' AND COLUMN_NAME = 'patient_id'`,
+  );
+  if (Number(apptPatientPatientIdCols[0].cnt) === 0) {
+    await conn.query(`
+      ALTER TABLE appointment_patients
+        ADD COLUMN patient_id CHAR(36) NULL AFTER appointment_id,
+        ADD COLUMN booking_source ENUM('PATIENT_APP','RECEPTION') NOT NULL DEFAULT 'PATIENT_APP' AFTER patient_id,
+        ADD COLUMN booked_by CHAR(36) NULL AFTER booking_source,
+        ADD KEY idx_appt_patients_patient (patient_id)
+    `);
+    // Backfill from the parent appointment's booking account: booking_source is
+    // inferred from that account's role, and patient_id is only set for
+    // relationship='self' rows booked by an actual patient account — a
+    // branch_staff/clinic_owner account can never itself be the patient, even when
+    // the booking client left relationship at its 'self' default for a walk-in.
+    // Everything else can't be safely attributed to a real patient after the fact,
+    // so it's left NULL (handled as "unknown" downstream).
+    await conn.query(`
+      UPDATE appointment_patients ap
+      JOIN appointments a ON a.id = ap.appointment_id
+      JOIN users u ON u.id = a.patient_id
+      SET ap.booked_by = a.patient_id,
+          ap.booking_source = IF(u.role IN ('branch_staff','clinic_owner'), 'RECEPTION', 'PATIENT_APP'),
+          ap.patient_id = IF(u.role = 'patient' AND ap.relationship = 'self', a.patient_id, NULL)
+    `);
+    await conn.query(`
+      ALTER TABLE appointment_patients
+        ADD CONSTRAINT fk_appt_patient_details_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE SET NULL,
+        ADD CONSTRAINT fk_appt_patient_details_booked_by FOREIGN KEY (booked_by) REFERENCES users(id) ON DELETE SET NULL
+    `);
+    console.log('Applied migration: appointment_patients.patient_id/booking_source/booked_by');
+  }
+
+  const [ltaPatientPatientIdCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'lab_test_appointment_patients' AND COLUMN_NAME = 'patient_id'`,
+  );
+  if (Number(ltaPatientPatientIdCols[0].cnt) === 0) {
+    await conn.query(`
+      ALTER TABLE lab_test_appointment_patients
+        ADD COLUMN patient_id CHAR(36) NULL AFTER appointment_id,
+        ADD COLUMN booking_source ENUM('PATIENT_APP','RECEPTION') NOT NULL DEFAULT 'PATIENT_APP' AFTER patient_id,
+        ADD COLUMN booked_by CHAR(36) NULL AFTER booking_source,
+        ADD KEY idx_lta_patients_patient (patient_id)
+    `);
+    await conn.query(`
+      UPDATE lab_test_appointment_patients ltap
+      JOIN lab_test_appointments a ON a.id = ltap.appointment_id
+      JOIN users u ON u.id = a.patient_id
+      SET ltap.booked_by = a.patient_id,
+          ltap.booking_source = IF(u.role IN ('branch_staff','clinic_owner'), 'RECEPTION', 'PATIENT_APP'),
+          ltap.patient_id = IF(u.role = 'patient' AND ltap.relationship = 'self', a.patient_id, NULL)
+    `);
+    await conn.query(`
+      ALTER TABLE lab_test_appointment_patients
+        ADD CONSTRAINT fk_lta_patient_details_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE SET NULL,
+        ADD CONSTRAINT fk_lta_patient_details_booked_by FOREIGN KEY (booked_by) REFERENCES users(id) ON DELETE SET NULL
+    `);
+    console.log('Applied migration: lab_test_appointment_patients.patient_id/booking_source/booked_by');
+  }
+
   console.log('Schema applied successfully.');
 } finally {
   await conn.end();

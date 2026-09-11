@@ -45,7 +45,9 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
     `SELECT a.*, lt.name AS test_name, lt.code AS test_code, lt.category AS test_category,
             b.name AS branch_name, c.name AS clinic_name,
             ltap.relationship AS visitor_relationship, ltap.name AS visitor_name,
-            ltap.phone AS visitor_phone, ltap.age AS visitor_age, ltap.gender AS visitor_gender
+            ltap.phone AS visitor_phone, ltap.age AS visitor_age, ltap.gender AS visitor_gender,
+            ltap.patient_id AS visitor_patient_id, ltap.booking_source AS visitor_booking_source,
+            ltap.booked_by AS visitor_booked_by
        FROM lab_test_appointments a
        JOIN lab_tests lt ON lt.id = a.test_id
        JOIN branches b ON b.id = a.branch_id

@@ -22,10 +22,15 @@ import {
 import { runIdempotent } from "@/lib/idempotency";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict, notFound } from "@/lib/errors";
+import { resolveServicePatient } from "@/lib/patient-identity";
 import { z } from "zod";
 import type { RowDataPacket } from "mysql2/promise";
 
 const patientDetailsSchema = z.object({
+  // Reception only: select an existing patient found via GET /api/v1/patients/lookup
+  // instead of registering a new one. Ignored for the "patient" role — a patient
+  // account can never point a booking at an arbitrary patient_id it doesn't control.
+  patient_id: z.string().uuid().optional(),
   relationship: z.enum(["self", "spouse", "child", "parent", "sibling", "friend", "other"]).default("self"),
   name: z.string().trim().min(1).max(255),
   // Normalized to +91XXXXXXXXXX so downstream SMS/WhatsApp dispatch (which needs the
@@ -199,12 +204,17 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         ],
       );
 
+      const servicePatient = await resolveServicePatient(conn, auth, patientDetails);
       await conn.query(
-        `INSERT INTO lab_test_appointment_patients (id, appointment_id, relationship, name, phone, age, gender)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO lab_test_appointment_patients
+           (id, appointment_id, patient_id, booking_source, booked_by, relationship, name, phone, age, gender)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           newId(),
           appointmentId,
+          servicePatient.patientId,
+          servicePatient.bookingSource,
+          servicePatient.bookedBy,
           patientDetails.relationship,
           patientDetails.name,
           patientDetails.phone ?? null,
@@ -255,7 +265,9 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
               b.name AS branch_name, c.name AS clinic_name,
               u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
               ltap.relationship AS visitor_relationship, ltap.name AS visitor_name,
-              ltap.phone AS visitor_phone, ltap.age AS visitor_age, ltap.gender AS visitor_gender
+              ltap.phone AS visitor_phone, ltap.age AS visitor_age, ltap.gender AS visitor_gender,
+              ltap.patient_id AS visitor_patient_id, ltap.booking_source AS visitor_booking_source,
+              ltap.booked_by AS visitor_booked_by
          FROM lab_test_appointments a
          JOIN lab_tests lt ON lt.id = a.test_id
          JOIN branches b ON b.id = a.branch_id

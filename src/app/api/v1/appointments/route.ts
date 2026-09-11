@@ -7,6 +7,7 @@ import { badRequest, conflict, notFound, unprocessable, isUniqueViolation } from
 import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { scopeWhere, serializeAppointment, APPT_STATUSES } from "@/lib/appointments";
+import { resolveServicePatient } from "@/lib/patient-identity";
 import { notifyBranchStaff, createNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, notifyPhonesSmsWhatsapp, personalizeForPatient } from "@/lib/notifications";
 import {
   todayInTz,
@@ -73,7 +74,9 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
                (SELECT b.name FROM branches b WHERE b.id = a.branch_id) AS branch_name,
                (SELECT b.phone FROM branches b WHERE b.id = a.branch_id) AS branch_phone,
                ap.relationship AS visitor_relationship, ap.name AS visitor_name,
-               ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender
+               ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender,
+               ap.patient_id AS visitor_patient_id, ap.booking_source AS visitor_booking_source,
+               ap.booked_by AS visitor_booked_by
           FROM appointments a
           LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
          WHERE ${whereParts.join(" AND ")}
@@ -90,6 +93,10 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
 });
 
 const patientDetailsSchema = z.object({
+  // Reception only: select an existing patient found via GET /api/v1/patients/lookup
+  // instead of registering a new one. Ignored for the "patient" role — a patient
+  // account can never point a booking at an arbitrary patient_id it doesn't control.
+  patient_id: idSchema.optional(),
   relationship: z.enum(["self", "spouse", "child", "parent", "sibling", "friend", "other"]).default("self"),
   name: z.string().trim().min(1).max(255),
   // Required (not just normalized) so a staff/owner walk-in booking can never omit the
@@ -291,12 +298,17 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
               assignment.currency,
             ],
           );
+          const servicePatient = await resolveServicePatient(conn, auth, patientDetails);
           await conn.query(
-            `INSERT INTO appointment_patients (id, appointment_id, relationship, name, phone, age, gender)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO appointment_patients
+               (id, appointment_id, patient_id, booking_source, booked_by, relationship, name, phone, age, gender)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               newId(),
               id,
+              servicePatient.patientId,
+              servicePatient.bookingSource,
+              servicePatient.bookedBy,
               patientDetails.relationship,
               patientDetails.name,
               patientDetails.phone ?? null,
@@ -345,7 +357,9 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     const [[rows], [details], recipients, recipientPhones] = await Promise.all([
       pool.query<Row[]>(
         `SELECT a.*, ap.relationship AS visitor_relationship, ap.name AS visitor_name,
-                ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender
+                ap.phone AS visitor_phone, ap.age AS visitor_age, ap.gender AS visitor_gender,
+                ap.patient_id AS visitor_patient_id, ap.booking_source AS visitor_booking_source,
+                ap.booked_by AS visitor_booked_by
            FROM appointments a
            LEFT JOIN appointment_patients ap ON ap.appointment_id = a.id
           WHERE a.id = ?`,

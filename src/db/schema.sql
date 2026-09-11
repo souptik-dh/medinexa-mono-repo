@@ -401,9 +401,15 @@ CREATE TABLE IF NOT EXISTS appointments (
 -- family member/friend, so this can differ from the booking account (appointments.patient_id).
 -- One row per appointment, always present (relationship defaults to 'self', copying the
 -- account holder's own name/phone, when the client omits patient_details entirely).
+-- `patient_id` is the resolvable actual patient (nullable for legacy rows that predate
+-- this column); `booked_by` mirrors the parent appointment's booking-account id at this
+-- grain for direct querying, same convention as appointment_status_log.changed_by.
 CREATE TABLE IF NOT EXISTS appointment_patients (
   id CHAR(36) NOT NULL,
   appointment_id CHAR(36) NOT NULL,
+  patient_id CHAR(36) NULL,
+  booking_source ENUM('PATIENT_APP','RECEPTION') NOT NULL DEFAULT 'PATIENT_APP',
+  booked_by CHAR(36) NULL,
   relationship ENUM('self','spouse','child','parent','sibling','friend','other') NOT NULL DEFAULT 'self',
   name VARCHAR(255) NOT NULL,
   phone VARCHAR(32) NULL,
@@ -412,7 +418,10 @@ CREATE TABLE IF NOT EXISTS appointment_patients (
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uniq_appointment_patient (appointment_id),
-  CONSTRAINT fk_appt_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE
+  KEY idx_appt_patients_patient (patient_id),
+  CONSTRAINT fk_appt_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES appointments(id) ON DELETE CASCADE,
+  CONSTRAINT fk_appt_patient_details_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_appt_patient_details_booked_by FOREIGN KEY (booked_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 -- changed_by NULL = system/cron (e.g. the overdue-appointment auto-cancel sweep).
@@ -823,6 +832,9 @@ CREATE TABLE IF NOT EXISTS lab_test_appointments (
 CREATE TABLE IF NOT EXISTS lab_test_appointment_patients (
   id CHAR(36) NOT NULL,
   appointment_id CHAR(36) NOT NULL,
+  patient_id CHAR(36) NULL,
+  booking_source ENUM('PATIENT_APP','RECEPTION') NOT NULL DEFAULT 'PATIENT_APP',
+  booked_by CHAR(36) NULL,
   relationship ENUM('self','spouse','child','parent','sibling','friend','other') NOT NULL DEFAULT 'self',
   name VARCHAR(255) NOT NULL,
   phone VARCHAR(32) NULL,
@@ -831,7 +843,10 @@ CREATE TABLE IF NOT EXISTS lab_test_appointment_patients (
   created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uniq_lab_test_appointment_patient (appointment_id),
-  CONSTRAINT fk_lta_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES lab_test_appointments(id) ON DELETE CASCADE
+  KEY idx_lta_patients_patient (patient_id),
+  CONSTRAINT fk_lta_patient_details_appointment FOREIGN KEY (appointment_id) REFERENCES lab_test_appointments(id) ON DELETE CASCADE,
+  CONSTRAINT fk_lta_patient_details_patient FOREIGN KEY (patient_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_lta_patient_details_booked_by FOREIGN KEY (booked_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB;
 
 CREATE TABLE IF NOT EXISTS lab_test_prescriptions (

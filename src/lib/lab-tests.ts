@@ -118,12 +118,23 @@ export function serializeLabTestAppointment(r: Row) {
   // when a clinic/staff booked on behalf of a walk-in patient.
   if (r.visitor_name !== undefined) {
     base.patient_details = {
+      patient_id: r.visitor_patient_id ?? null,
       relationship: r.visitor_relationship ?? "self",
       name: r.visitor_name,
       phone: r.visitor_phone ?? null,
       age: r.visitor_age !== null && r.visitor_age !== undefined ? Number(r.visitor_age) : null,
       gender: r.visitor_gender ?? null,
     };
+    base.relationship = r.visitor_relationship ?? "self";
+    base.booking_source = r.visitor_booking_source ?? null;
+    // The actual patient the test is for. `id` resolves to a real users row once
+    // known — null for legacy bookings that predate this field.
+    base.patient = {
+      id: r.visitor_patient_id ?? null,
+      name: r.visitor_name,
+      mobile: r.visitor_phone ?? null,
+    };
+    base.booked_by = { id: r.visitor_booked_by ?? r.patient_id };
   }
 
   if (r.service_mode === "HOME") {
@@ -153,13 +164,13 @@ export function serializeLabTestAppointment(r: Row) {
   }
 
   if (r.patient_name !== undefined) {
-    base.patient = {
-      id: r.patient_id,
+    // The account that created the booking — the patient themselves, or clinic
+    // staff booking on behalf of a walk-in/family member.
+    base.booked_by = {
+      id: r.visitor_booked_by ?? r.patient_id,
       name: r.patient_name ?? null,
       email: r.patient_email ?? null,
       phone: r.patient_phone ?? null,
-      date_of_birth: r.patient_dob ?? null,
-      gender: r.patient_gender ?? null,
     };
   }
 
@@ -331,7 +342,9 @@ export async function getLabTestAppointmentInScope(
             u.name AS patient_name, u.email AS patient_email, u.phone AS patient_phone,
             u.date_of_birth AS patient_dob, u.gender AS patient_gender,
             ltap.relationship AS visitor_relationship, ltap.name AS visitor_name,
-            ltap.phone AS visitor_phone, ltap.age AS visitor_age, ltap.gender AS visitor_gender
+            ltap.phone AS visitor_phone, ltap.age AS visitor_age, ltap.gender AS visitor_gender,
+            ltap.patient_id AS visitor_patient_id, ltap.booking_source AS visitor_booking_source,
+            ltap.booked_by AS visitor_booked_by
        FROM lab_test_appointments a
        JOIN lab_tests lt ON lt.id = a.test_id
        JOIN branches b ON b.id = a.branch_id
