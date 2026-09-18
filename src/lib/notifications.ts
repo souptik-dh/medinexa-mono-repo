@@ -411,7 +411,9 @@ export async function branchContactEmails(
      SELECT co.email FROM branches b JOIN clinics c ON c.id = b.clinic_id JOIN users co ON co.id = c.owner_user_id WHERE b.id = ?`,
     [branchId, branchId],
   );
-  return rows.map((r) => r.email as string);
+  // Staff/owner accounts without an email on file come back as a null row from the
+  // UNION — drop them here rather than handing callers a `null` to pass to sendEmail.
+  return rows.map((r) => r.email as string | null).filter((email): email is string => Boolean(email));
 }
 
 export async function branchContactPhones(
