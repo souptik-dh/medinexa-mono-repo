@@ -9,7 +9,7 @@ import {
 } from "@/lib/auth";
 import { conflict, forbidden, unauthorized, badRequest, isUniqueViolation, ApiError } from "@/lib/errors";
 import { newId, type Role } from "@/lib/ids";
-import { sendEmail, emailHtml, sendOtpDual } from "@/lib/notifications";
+import { sendEmail, emailHtml, sendOtpDual, type OtpChannel, type OtpChannelStatus } from "@/lib/notifications";
 import { ensureClinicSubscription } from "@/lib/subscriptions";
 
 const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -76,15 +76,50 @@ export type OtpResult =
   | { ok: false; message: string };
 
 /**
- * Generates and sends a one-time password to a user's phone (SMS) and email
- * (dual channel). Unsigned — the OTP is stored hashed and keyed by phone.
- * Returns a generic message so this cannot be used to enumerate users.
+ * Response body of every "send OTP" endpoint. `success` is true when at least
+ * one channel delivered the code; `ok` mirrors it for older clients.
+ */
+export interface SendOtpResult {
+  ok: boolean;
+  success: boolean;
+  message: string;
+  delivery: Record<OtpChannel, OtpChannelStatus>;
+}
+
+/** HTTP status for a SendOtpResult: 200 when delivered, 503 when every channel failed. */
+export function sendOtpStatus(result: SendOtpResult): number {
+  return result.success ? 200 : 503;
+}
+
+/**
+ * Sends an already-stored OTP over every channel and shapes the endpoint
+ * response. Shared by sendPhoneOtp and routes that store their own code.
+ */
+export async function deliverOtp(opts: {
+  phone: string;
+  email?: string | null;
+  otp: string;
+  expiryMinutes: number;
+}): Promise<SendOtpResult> {
+  const { delivered, delivery } = await sendOtpDual(opts);
+  return {
+    ok: delivered,
+    success: delivered,
+    message: delivered ? "OTP sent successfully" : "Unable to send OTP through any available channel",
+    delivery,
+  };
+}
+
+/**
+ * Generates one OTP and sends that same code over WhatsApp, SMS, and email (if
+ * on file). Unsigned — the OTP is stored hashed and keyed by phone. Succeeds as
+ * soon as any one channel delivers; fails only when every channel fails.
  */
 export async function sendPhoneOtp(opts: {
   phone: string;
   email?: string | null;
   purpose: OtpPurpose;
-}): Promise<OtpResult> {
+}): Promise<SendOtpResult> {
   const otp = generateOtp();
   const expiresAt = new Date(Date.now() + OTP_TTL_MS)
     .toISOString()
@@ -95,16 +130,12 @@ export async function sendPhoneOtp(opts: {
      VALUES (?, ?, ?, ?, ?, ?)`,
     [newId(), opts.phone, opts.email ?? null, opts.purpose, hashToken(`${opts.phone}:${otp}`), expiresAt],
   );
-  await sendOtpDual({
+  return deliverOtp({
     phone: opts.phone,
     email: opts.email,
     otp,
     expiryMinutes: OTP_TTL_MS / 60_000,
   });
-  return {
-    ok: true,
-    message: "If an account exists for this phone number, an OTP has been sent.",
-  };
 }
 
 /**

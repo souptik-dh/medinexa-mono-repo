@@ -55,7 +55,11 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
   const where = conditions.join(" AND ");
 
   const [rows] = await pool.query<RowDataPacket[]>(
-    `SELECT lt.* FROM lab_tests lt
+    `SELECT lt.*,
+            (SELECT MIN(blt.price) FROM branch_lab_tests blt WHERE blt.test_id = lt.id AND blt.status = 'active') AS min_price,
+            (SELECT MAX(blt.price) FROM branch_lab_tests blt WHERE blt.test_id = lt.id AND blt.status = 'active') AS max_price,
+            (SELECT blt.currency FROM branch_lab_tests blt WHERE blt.test_id = lt.id AND blt.status = 'active' LIMIT 1) AS price_currency
+     FROM lab_tests lt
      WHERE ${where}
      ORDER BY lt.created_at DESC
      LIMIT ?`,

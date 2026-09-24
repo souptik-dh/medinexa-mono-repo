@@ -8,7 +8,7 @@ import {
   serializeLabTestAppointment,
 } from "@/lib/lab-tests";
 import { hasSlotPassedInTz } from "@/lib/availability";
-import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms, sendWhatsapp, personalizeForPatient } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, detailsEmailHtml, sendWhatsapp, personalizeForPatient } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict } from "@/lib/errors";
@@ -59,7 +59,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       appointment.visitor_name,
       appointment.visitor_relationship,
     );
-    await Promise.allSettled([sendSms(patientPhone, completeText), sendWhatsapp(patientPhone, completeText)]);
+    await sendWhatsapp(patientPhone, completeText);
   }
   if (appointment.patient_email) {
     await sendEmail(

@@ -30,7 +30,7 @@ export const SERVICE_MODES = ["CLINIC", "HOME"] as const;
 export type ServiceMode = (typeof SERVICE_MODES)[number];
 
 export function serializeLabTest(r: Row) {
-  return {
+  const base: Record<string, unknown> = {
     id: r.id,
     clinic_id: r.clinic_id,
     name: r.name,
@@ -47,6 +47,18 @@ export function serializeLabTest(r: Row) {
     created_at: r.created_at,
     updated_at: r.updated_at,
   };
+
+  // Only present when the query joined branch pricing (e.g. the clinic list
+  // endpoint) — a catalog lab test itself has no price, that's set per branch
+  // in `branch_lab_tests`, so a clinic with multiple branches can price the
+  // same test differently.
+  if (r.min_price !== undefined) {
+    base.min_price = r.min_price !== null ? Number(r.min_price) : null;
+    base.max_price = r.max_price !== null ? Number(r.max_price) : null;
+    base.currency = r.price_currency ?? null;
+  }
+
+  return base;
 }
 
 export function serializeLabTestCategory(r: Row) {

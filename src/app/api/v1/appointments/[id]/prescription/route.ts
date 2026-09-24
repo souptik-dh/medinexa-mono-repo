@@ -5,7 +5,7 @@ import { parseBody } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { notFound } from "@/lib/errors";
 import { requireAssignedDoctor, serializePrescription } from "@/lib/prescriptions";
-import { getAppointmentInScope } from "@/lib/appointments";
+import { getAppointmentInScope, getAppointmentNames } from "@/lib/appointments";
 import { createPatientNotification } from "@/lib/notifications";
 import { newId } from "@/lib/ids";
 
@@ -38,9 +38,12 @@ export const PUT = api({ rateLimit: 200 }, async (ctx) => {
         finalizedAt,
       ],
     );
+    const names = await getAppointmentNames(conn, appointment.id);
     await createPatientNotification(conn, appointment.patient_id, "prescription_ready", {
       appointment_id: appointment.id,
       doctor_id: appointment.doctor_id,
+      doctor_name: names.doctor_name,
+      prescription_text: body.text,
     });
   });
 

@@ -8,7 +8,7 @@ import {
   auditLabAction,
   serializeLabTestAppointment,
 } from "@/lib/lab-tests";
-import { createPatientNotification, notifyBranchStaff, notifyPhonesSmsWhatsapp, branchContactPhones, personalizeForPatient } from "@/lib/notifications";
+import { createPatientNotification, notifyClinicSide, notifyPhonesWhatsapp, branchContactPhones, personalizeForPatient } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { forbidden } from "@/lib/errors";
 import { z } from "zod";
@@ -44,12 +44,14 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   });
 
   if (auth.role === "patient") {
-    await notifyBranchStaff(pool, appointment.branch_id, "lab_test_cancelled", {
+    await notifyClinicSide(pool, appointment.branch_id, appointment.clinic_id, "lab_test_cancelled", {
       appointment_id: id,
       appointment_number: appointment.appointment_number,
       test_name: appointment.test_name,
       patient_id: appointment.patient_id,
       reason: body.reason ?? null,
+      visitor_name: appointment.visitor_name ?? appointment.patient_name,
+      branch_name: appointment.branch_name,
     });
   } else {
     await createPatientNotification(pool, appointment.patient_id, "lab_test_cancelled", {
@@ -64,11 +66,11 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
 
   const cancelBody = `The lab test booking ${appointment.appointment_number} (${appointment.test_name}) has been cancelled.${body.reason ? ` Reason: ${body.reason}` : ""}`;
   const clinicPhones = await branchContactPhones(pool, appointment.branch_id);
-  void notifyPhonesSmsWhatsapp(clinicPhones, `Jido Healthcare: ${cancelBody}`);
+  void notifyPhonesWhatsapp(clinicPhones, `Jido Healthcare: ${cancelBody}`);
   const patientPhone = appointment.visitor_phone || appointment.patient_phone;
   if (patientPhone) {
     const patientCancelText = personalizeForPatient(cancelBody, appointment.visitor_name, appointment.visitor_relationship);
-    void notifyPhonesSmsWhatsapp([patientPhone], patientCancelText);
+    void notifyPhonesWhatsapp([patientPhone], patientCancelText);
   }
 
   const updated = await getLabTestAppointmentInScope(pool, id, auth);

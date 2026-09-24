@@ -8,16 +8,18 @@ import { newId } from "@/lib/ids";
 import { runIdempotent } from "@/lib/idempotency";
 import { scopeWhere, serializeAppointment, APPT_STATUSES } from "@/lib/appointments";
 import { resolveServicePatient } from "@/lib/patient-identity";
-import { notifyBranchStaff, createNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, notifyPhonesSmsWhatsapp, personalizeForPatient } from "@/lib/notifications";
+import { notifyBranchStaff, createClinicUserNotification, branchContactEmails, branchContactPhones, sendEmail, detailsEmailHtml, notifyPhonesWhatsapp, personalizeForPatient } from "@/lib/notifications";
 import {
   todayInTz,
   weekdayInTz,
   currentTimeKeyInTz,
-  generateSlotTimes,
   findNextSequentialSlot,
   getBranchSchedule,
   isWeekdayOpen,
   findCoveringLeave,
+  scheduleFinalEndTime,
+  isPastBookingCutoff,
+  buildSlotCapacityMap,
 } from "@/lib/availability";
 import { fetchPage } from "@/lib/pagination";
 import { assertClinicOperational } from "@/lib/subscriptions";
@@ -140,7 +142,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
 
   const result = await runIdempotent("appointments:create", idemKey, rawBody, async () => {
     const [branches] = await pool.query<Row[]>(
-      `SELECT b.id, b.timezone, b.clinic_id, c.owner_user_id
+      `SELECT b.id, b.name, b.timezone, b.clinic_id, c.owner_user_id
          FROM branches b
          JOIN clinics c ON c.id = b.clinic_id
         WHERE b.id = ? AND b.deleted_at IS NULL AND c.deleted_at IS NULL`,
@@ -189,15 +191,15 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         [body.doctor_id, body.branch_id, body.date, body.date],
       ),
       pool.query<Row[]>(
-        `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes, dba.slot_type
+        `SELECT dst.start_time, dst.end_time, dst.slot_duration_minutes, dst.max_patients, dba.slot_type
            FROM doctor_slot_templates dst
            JOIN doctor_branch_assignments dba ON dba.id = dst.doctor_branch_assignment_id
-          WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1
+          WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1 AND dst.is_active = 1
             AND dst.weekday = ? AND dst.start_date <= ? AND (dst.end_date IS NULL OR dst.end_date >= ?)`,
         [body.doctor_id, body.branch_id, branchWeekday, body.date, body.date],
       ),
       pool.query<Row[]>(
-        `SELECT dba.id, dba.fee_amount, dba.currency
+        `SELECT dba.id, dba.fee_amount, dba.currency, d.name AS doctor_name
            FROM doctor_branch_assignments dba
            JOIN doctors d ON d.id = dba.doctor_id AND d.deleted_at IS NULL
           WHERE dba.doctor_id = ? AND dba.branch_id = ? AND dba.is_active = 1`,
@@ -231,8 +233,21 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       );
     }
 
+    // Patients cannot book once the doctor's final slot for the day is within 30
+    // minutes (fixed or sequential schedule alike); reception/clinic-owner walk-in
+    // bookings are exempt, mirroring the patient-only checks above.
+    if (auth.role === "patient" && isPastBookingCutoff(body.date, scheduleFinalEndTime(templates), tz)) {
+      throw conflict(
+        "BOOKING_CUTOFF_PASSED",
+        "New bookings for this date are closed within 30 minutes of the doctor's last available slot.",
+      );
+    }
+
     const isSequential = template.slot_type === "sequential";
-    const dur = Number(template.slot_duration_minutes);
+    // A doctor can have several ranges on the same weekday (e.g. morning + evening)
+    // with different durations/capacities, so every generated key across all of
+    // today's templates — not just templates[0] — must be considered.
+    const capacityMap = buildSlotCapacityMap(templates);
     let scheduledTime: string;
 
     if (isSequential) {
@@ -248,11 +263,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       if (!body.time) {
         throw badRequest("VALIDATION_ERROR", "time is required.", "time");
       }
-      let aligned = false;
-      for (const key of generateSlotTimes(template.start_time, template.end_time, dur)) {
-        if (key === body.time) aligned = true;
-      }
-      if (!aligned) {
+      if (!capacityMap.has(body.time)) {
         throw unprocessable(
           "OUTSIDE_DOCTOR_AVAILABILITY",
           "The requested time is not an available slot for this doctor.",
@@ -279,78 +290,95 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     const triedTimes = new Set<string>();
     let attemptsLeft = isSequential ? 25 : 1;
     for (;;) {
-      try {
-        await withTransaction(async (conn) => {
-          await conn.query(
-            `INSERT INTO appointments
-               (id, patient_id, clinic_id, branch_id, doctor_id, scheduled_date, scheduled_time, duration_minutes, status, fee_amount, currency)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
-            [
-              id,
-              auth.userId,
-              branch.clinic_id,
-              body.branch_id,
-              body.doctor_id,
-              body.date,
-              scheduledTime,
-              dur,
-              assignment.fee_amount,
-              assignment.currency,
-            ],
-          );
-          const servicePatient = await resolveServicePatient(conn, auth, patientDetails);
-          await conn.query(
-            `INSERT INTO appointment_patients
-               (id, appointment_id, patient_id, booking_source, booked_by, relationship, name, phone, age, gender)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              newId(),
-              id,
-              servicePatient.patientId,
-              servicePatient.bookingSource,
-              servicePatient.bookedBy,
-              patientDetails.relationship,
-              patientDetails.name,
-              patientDetails.phone ?? null,
-              patientDetails.age ?? null,
-              patientDetails.gender ?? null,
-            ],
-          );
-          const payload = {
-            appointment_id: id,
-            doctor_id: body.doctor_id,
-            patient_id: auth.userId,
-            date: body.date,
-            time: scheduledTime,
-            visitor_name: patientDetails.name,
-            visitor_relationship: patientDetails.relationship,
-          };
-          await notifyBranchStaff(conn, body.branch_id, "new_booking", payload);
-          await createNotification(conn, branch.owner_user_id, "new_booking", payload, body.branch_id);
-        });
-        break;
-      } catch (err) {
-        if (!isUniqueViolation(err)) throw err;
-        if (!isSequential) {
-          throw conflict(
-            "SLOT_ALREADY_BOOKED",
-            "This time slot was just taken. Please choose another.",
-          );
+      const capacity = capacityMap.get(scheduledTime);
+      const maxPatients = capacity?.maxPatients ?? 1;
+      const dur = capacity?.durationMinutes ?? Number(template.slot_duration_minutes);
+      let seq = 0;
+      let inserted = false;
+      // Try slot_seq 0, 1, 2... up to this slot's capacity — a duplicate-key error
+      // means that particular seq is taken, so the next one is tried immediately
+      // (same guarantee the old single-seq unique constraint gave for max_patients=1).
+      while (seq < maxPatients) {
+        try {
+          await withTransaction(async (conn) => {
+            await conn.query(
+              `INSERT INTO appointments
+                 (id, patient_id, clinic_id, branch_id, doctor_id, scheduled_date, scheduled_time, slot_seq, duration_minutes, status, fee_amount, currency)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`,
+              [
+                id,
+                auth.userId,
+                branch.clinic_id,
+                body.branch_id,
+                body.doctor_id,
+                body.date,
+                scheduledTime,
+                seq,
+                dur,
+                assignment.fee_amount,
+                assignment.currency,
+              ],
+            );
+            const servicePatient = await resolveServicePatient(conn, auth, patientDetails);
+            await conn.query(
+              `INSERT INTO appointment_patients
+                 (id, appointment_id, patient_id, booking_source, booked_by, relationship, name, phone, age, gender)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              [
+                newId(),
+                id,
+                servicePatient.patientId,
+                servicePatient.bookingSource,
+                servicePatient.bookedBy,
+                patientDetails.relationship,
+                patientDetails.name,
+                patientDetails.phone ?? null,
+                patientDetails.age ?? null,
+                patientDetails.gender ?? null,
+              ],
+            );
+            const payload = {
+              appointment_id: id,
+              doctor_id: body.doctor_id,
+              doctor_name: assignment.doctor_name,
+              branch_name: branch.name,
+              patient_id: auth.userId,
+              date: body.date,
+              time: scheduledTime,
+              visitor_name: patientDetails.name,
+              visitor_relationship: patientDetails.relationship,
+            };
+            await notifyBranchStaff(conn, body.branch_id, "new_booking", payload);
+            await createClinicUserNotification(conn, branch.owner_user_id, "new_booking", payload, body.branch_id);
+          });
+          inserted = true;
+          break;
+        } catch (err) {
+          if (!isUniqueViolation(err)) throw err;
+          seq += 1;
         }
-        triedTimes.add(scheduledTime);
-        attemptsLeft -= 1;
-        const next: string | null =
-          attemptsLeft > 0
-            ? await findNextSequentialSlot(pool, body.doctor_id, body.branch_id, body.date, tz, triedTimes)
-            : null;
-        if (!next) {
-          throw conflict(
-            "DOCTOR_FULLY_BOOKED",
-            "No slots are left for this doctor on the selected date.",
-          );
-        }
-        scheduledTime = next;
       }
+      if (inserted) break;
+
+      if (!isSequential) {
+        throw conflict(
+          "SLOT_ALREADY_BOOKED",
+          "This time slot was just taken. Please choose another.",
+        );
+      }
+      triedTimes.add(scheduledTime);
+      attemptsLeft -= 1;
+      const next: string | null =
+        attemptsLeft > 0
+          ? await findNextSequentialSlot(pool, body.doctor_id, body.branch_id, body.date, tz, triedTimes)
+          : null;
+      if (!next) {
+        throw conflict(
+          "DOCTOR_FULLY_BOOKED",
+          "No slots are left for this doctor on the selected date.",
+        );
+      }
+      scheduledTime = next;
     }
 
     // Independent reads — none depends on the others — so they run as one round trip.
@@ -382,7 +410,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     if (info) {
       const isForSelf = patientDetails.relationship === "self";
       const subject = `New appointment booked — ${patientDetails.name} with Dr. ${info.doctor_name}`;
-      const smsText = `Jido Healthcare: New appointment booked — ${patientDetails.name} with Dr. ${info.doctor_name} on ${body.date} at ${scheduledTime} at ${info.branch_name}.`;
+      const clinicWhatsappText = `Jido Healthcare: New appointment booked — ${patientDetails.name} with Dr. ${info.doctor_name} on ${body.date} at ${scheduledTime} at ${info.branch_name}.`;
       const emailBody = [
         `A new appointment has been booked at ${info.branch_name}.`,
         "",
@@ -418,10 +446,10 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
           },
         ],
       });
-      // sendEmail/notifyPhonesSmsWhatsapp already catch their own errors — no reason to
-      // hold the response on the round trips once the booking itself is committed.
+      // sendEmail/notifyPhonesWhatsapp already catch their own errors — no reason to hold
+      // the response on the round trips once the booking itself is committed.
       void Promise.all(recipients.map((email) => sendEmail(email, subject, emailBody, emailHtmlBody)));
-      void notifyPhonesSmsWhatsapp(recipientPhones, smsText);
+      void notifyPhonesWhatsapp(recipientPhones, clinicWhatsappText);
 
       // Send the booking confirmation to the walk-in patient's number when one was
       // provided, otherwise fall back to the account holder's recorded phone.
@@ -432,7 +460,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
           patientDetails.name,
           patientDetails.relationship,
         );
-        void notifyPhonesSmsWhatsapp([patientPhone], bookedText);
+        void notifyPhonesWhatsapp([patientPhone], bookedText);
       }
     }
 

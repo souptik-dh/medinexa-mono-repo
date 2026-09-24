@@ -174,6 +174,26 @@ Auth: none. Unauthenticated liveness/readiness check — pings the database and 
 > an account without a password reports `requires_password_setup: true` and the user may
 > set one via [`POST /auth/set-password`](#post-authset-password).
 
+### OTP delivery
+
+Every "send OTP" endpoint (patient/clinic-owner/doctor/branch-staff login, `send-otp`,
+`forgot-password`, `verify-phone/send`) generates **one** code and sends that same code over
+WhatsApp, SMS, and email (email only when one is on file / supplied), in parallel. The
+response returns as soon as **any** channel confirms delivery — it does not wait for slower
+channels — and is `503` only when every attempted channel fails. A channel that hasn't
+answered within 15 s counts as failed.
+
+`delivery` reports each channel as:
+
+| Status | Meaning |
+|---|---|
+| `sent` | provider accepted the message |
+| `failed` | provider rejected it, errored, or timed out |
+| `pending` | still in flight when another channel had already succeeded (final result is logged server-side) |
+| `skipped` | not attempted (no email on file) |
+
+Clients should show "OTP sent successfully" whenever `success` is `true`.
+
 ### POST /auth/patient/send-otp
 
 Public. Rate limited 20/min per IP. **Step 1 of the patient two-step flow.** Takes a phone
@@ -193,14 +213,19 @@ patient account). The email is only an OTP delivery channel, not a verification 
 | `email` | string? | optional, additional OTP delivery channel |
 | `name` | string? | optional, 1–255 (used for registration context) |
 
-**Response `200`**
+**Response `200`** — at least one channel delivered the code (see [OTP delivery](#otp-delivery))
 
 ```json
 {
   "ok": true,
-  "message": "If an account exists for this phone number, an OTP has been sent."
+  "success": true,
+  "message": "OTP sent successfully",
+  "delivery": { "whatsapp": "failed", "sms": "sent", "email": "pending" }
 }
 ```
+
+**Response `503`** — every channel failed: same shape with `ok`/`success` `false` and
+`"message": "Unable to send OTP through any available channel"`.
 
 **Errors:** `400 VALIDATION_ERROR`.
 
@@ -311,13 +336,19 @@ whether the phone is registered. Verify with `POST /auth/patient/verify-otp`.
 { "phone": "+919876543210" }
 ```
 
-**Response `200`**
+**Response `200`** — at least one channel delivered the code (see [OTP delivery](#otp-delivery))
 
 ```json
 {
-  "message": "If an account exists for this phone number, an OTP has been sent."
+  "ok": true,
+  "success": true,
+  "message": "OTP sent successfully",
+  "delivery": { "whatsapp": "failed", "sms": "sent", "email": "pending" }
 }
 ```
+
+**Response `503`** — every channel failed: same shape with `ok`/`success` `false` and
+`"message": "Unable to send OTP through any available channel"`.
 
 **Errors:** `400 VALIDATION_ERROR`.
 
@@ -369,14 +400,19 @@ details and sends a one-time code (purpose `phone_verification`) to the phone/em
 | `email` | string? | optional, additional OTP delivery channel |
 | `phone` | string | required, normalized to `+91XXXXXXXXXX` |
 
-**Response `200`**
+**Response `200`** — at least one channel delivered the code (see [OTP delivery](#otp-delivery))
 
 ```json
 {
   "ok": true,
-  "message": "If an account exists for this phone number, an OTP has been sent."
+  "success": true,
+  "message": "OTP sent successfully",
+  "delivery": { "whatsapp": "failed", "sms": "sent", "email": "pending" }
 }
 ```
+
+**Response `503`** — every channel failed: same shape with `ok`/`success` `false` and
+`"message": "Unable to send OTP through any available channel"`.
 
 ### POST /auth/clinic-owner/register
 
@@ -438,13 +474,19 @@ and sends a one-time code (purpose `clinic_owner_login`). Verify with
 { "phone": "+919876543211" }
 ```
 
-**Response `200`**
+**Response `200`** — at least one channel delivered the code (see [OTP delivery](#otp-delivery))
 
 ```json
 {
-  "message": "If an account exists for this phone number, an OTP has been sent."
+  "ok": true,
+  "success": true,
+  "message": "OTP sent successfully",
+  "delivery": { "whatsapp": "failed", "sms": "sent", "email": "pending" }
 }
 ```
+
+**Response `503`** — every channel failed: same shape with `ok`/`success` `false` and
+`"message": "Unable to send OTP through any available channel"`.
 
 ### POST /auth/clinic-owner/verify-otp
 
@@ -513,8 +555,9 @@ summary, same as `verify-otp`.
 
 Public. Rate limited 20/min per IP. Single-use, 24h-expiry token. With phone-first sign-in,
 email is no longer required to activate an account, so this endpoint remains for:
-**confirming a pending email change** requested via `POST /patients/me/change-email` — on
-success it updates `users.email` to the new address.
+**confirming a pending email change** requested via `POST /patients/me/change-email` or via
+`PATCH /auth/me` (`clinic_owner`/`branch_staff`/`doctor`/`sys_admin`) — on success it updates
+`users.email` to the new address.
 
 The verification link is emailed as `{VERIFY_EMAIL_URL}/verify_email?token={VERIFICATION_TOKEN}` — `VERIFY_EMAIL_URL` defaults to `https://healthcare.jido.co.in`.
 
@@ -546,13 +589,19 @@ sends a one-time code (purpose `doctor_login`). Verify with
 { "phone": "+919900000001" }
 ```
 
-**Response `200`**
+**Response `200`** — at least one channel delivered the code (see [OTP delivery](#otp-delivery))
 
 ```json
 {
-  "message": "If an account exists for this phone number, an OTP has been sent."
+  "ok": true,
+  "success": true,
+  "message": "OTP sent successfully",
+  "delivery": { "whatsapp": "failed", "sms": "sent", "email": "pending" }
 }
 ```
+
+**Response `503`** — every channel failed: same shape with `ok`/`success` `false` and
+`"message": "Unable to send OTP through any available channel"`.
 
 **Errors:** `400 VALIDATION_ERROR`.
 
@@ -603,7 +652,7 @@ The doctor's **phone** is the primary invite identifier and must be verified wit
 `phone_verification` OTP first (sent via `POST /auth/verify-phone/send` or any OTP-send
 endpoint). A password is optional.
 
-On success, an in-app `doctor_invite_accepted` notification is created for whoever sent the invite **and** for the clinic owner (deduped if they're the same person), and the clinic owner is emailed (and SMS'd) that the doctor has joined.
+On success, an in-app + push `doctor_invite_accepted` notification (with the doctor's name, branch name, and clinic name in its payload) is created for whoever sent the invite **and** for the clinic owner (deduped if they're the same person), and the clinic owner is emailed (and SMS'd) that the doctor has joined. Retrying an already-accepted invite never re-sends any of this — the `409 INVITE_ALREADY_ACCEPTED` guard below runs before any notification is created.
 
 **Request body**
 
@@ -652,7 +701,19 @@ On success, an in-app `doctor_invite_accepted` notification is created for whoev
 }
 ```
 
-**Errors:** `404 INVITE_NOT_FOUND`, `410 INVITE_EXPIRED`, `409 INVITE_ALREADY_ACCEPTED`, `401 INVALID_OTP`/`410 OTP_EXPIRED`, `409 PHONE_ALREADY_REGISTERED`, `409 EMAIL_ALREADY_REGISTERED`, `409 REG_NO_ALREADY_REGISTERED`.
+**Errors:** `404 INVITE_NOT_FOUND`, `410 INVITE_EXPIRED`, `410 INVITE_REVOKED`, `409 INVITE_ALREADY_ACCEPTED` (the code matches an invite this doctor already accepted - a reused link never repeats the acceptance), `401 INVALID_OTP`/`410 OTP_EXPIRED`, `409 PHONE_ALREADY_REGISTERED`, `409 EMAIL_ALREADY_REGISTERED`, `409 REG_NO_ALREADY_REGISTERED`.
+
+Invite codes are valid for 24 hours from creation.
+
+### GET /auth/doctor/invite-status
+
+Public. Rate limited 30/min per IP. Used by the accept-invite page to decide what to render for a link before requesting an OTP - only `pending` should open the acceptance form.
+
+**Query:** `code` (required), plus `phone` or `email` (the one the invite was sent to).
+
+**Response `200`:** `{ "status": "pending" | "accepted" | "expired" | "revoked", "expires_at": "…" }` - a lapsed invite reports `expired` even before anyone has tried to accept it.
+
+**Errors:** `400 VALIDATION_ERROR`, `404 INVITE_NOT_FOUND`.
 
 ### POST /auth/branch-staff/login
 
@@ -664,19 +725,27 @@ Public. Rate limited 20/min per IP. Requests a passwordless OTP for an existing 
 { "phone": "+919876543212" }
 ```
 
-**Response `200`**
+**Response `200`** — at least one channel delivered the code (see [OTP delivery](#otp-delivery))
 
 ```json
 {
-  "message": "If an account exists for this phone number, an OTP has been sent."
+  "ok": true,
+  "success": true,
+  "message": "OTP sent successfully",
+  "delivery": { "whatsapp": "failed", "sms": "sent", "email": "pending" }
 }
 ```
+
+**Response `503`** — every channel failed: same shape with `ok`/`success` `false` and
+`"message": "Unable to send OTP through any available channel"`.
 
 **Errors:** `403 NOT_BRANCH_STAFF` — "Access Denied: If an account exists for this phone number, it is not registered as Branch Staff."
 
 ### POST /auth/branch-staff/verify-otp
 
 Verifies the OTP and issues tokens. Rate limited 20/min per IP. Max 5 attempts per OTP.
+
+The **first** successful verify-otp for a given staff membership ("joining" the clinic) sends a push + in-app `staff_joined` notification to the clinic owner, with the staff member's name, branch name, and clinic name in its payload. This is recorded via `branch_staff.joined_at` (set once, atomically), so every later login by the same staff member — and any retry of this same request — never notifies again. A notification failure here never fails the login itself.
 
 **Request body**
 
@@ -742,10 +811,11 @@ with phone + password, no OTP round-trip. Returns the same `user` shape as
 
 Public. Rate limited 20/min per IP. **Password reset, step 1.** Takes a registered **phone
 number**. If an **active** account with a password exists for it, a one-time code is sent
-(purpose `phone_verification`, SMS + email). Always returns the same message (does not
-reveal whether the phone exists). Works for any role, including `branch_staff` — but only
-once that account has a password set via `POST /auth/set-password`; accounts with no
-password yet are silently skipped (same generic response either way).
+(purpose `phone_verification`, WhatsApp + SMS + email). Works for any role, including
+`branch_staff` — but only once that account has a password set via `POST /auth/set-password`.
+Phones with no matching account (or no password yet) are silently skipped and get
+`200 { "message": "If an account exists for this phone number, an OTP has been sent." }`
+with no `delivery` field.
 
 **Request body**
 
@@ -753,13 +823,19 @@ password yet are silently skipped (same generic response either way).
 { "phone": "+919876543210" }
 ```
 
-**Response `200`**
+**Response `200`** — at least one channel delivered the code (see [OTP delivery](#otp-delivery))
 
 ```json
 {
-  "message": "If an account exists for this phone number, an OTP has been sent."
+  "ok": true,
+  "success": true,
+  "message": "OTP sent successfully",
+  "delivery": { "whatsapp": "failed", "sms": "sent", "email": "pending" }
 }
 ```
+
+**Response `503`** — every channel failed: same shape with `ok`/`success` `false` and
+`"message": "Unable to send OTP through any available channel"`.
 
 **Errors:** `400 VALIDATION_ERROR`.
 
@@ -831,14 +907,19 @@ doctor's phone before accepting an invite. Una‌uthenticated — the OTP is key
 { "phone": "+919876543210", "email": "aisha@example.com" }
 ```
 
-**Response `200`**
+**Response `200`** — at least one channel delivered the code (see [OTP delivery](#otp-delivery))
 
 ```json
 {
   "ok": true,
-  "message": "If an account exists for this phone number, an OTP has been sent."
+  "success": true,
+  "message": "OTP sent successfully",
+  "delivery": { "whatsapp": "failed", "sms": "sent", "email": "pending" }
 }
 ```
+
+**Response `503`** — every channel failed: same shape with `ok`/`success` `false` and
+`"message": "Unable to send OTP through any available channel"`.
 
 ### POST /auth/verify-phone
 
@@ -923,6 +1004,70 @@ Auth required. Revokes the given refresh token.
 ```
 
 **Response `204 No Content`**
+
+### GET /auth/me
+
+Auth required (any role). Basic account profile for the signed-in user — `name`/`email`/`phone`
+as stored on `users`, regardless of role. This is the generic counterpart to the role-specific
+profile endpoints (`GET /doctors/me`, `GET /patients/me`) — it's what the clinic portal
+(`clinic_owner`/`branch_staff`) uses today since those two roles have no role-specific profile
+endpoint of their own.
+
+**Response `200`**
+
+```json
+{
+  "id": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
+  "name": "Suresh Nair",
+  "email": "owner@example.com",
+  "phone": "+919876543211",
+  "phone_verified": true,
+  "role": "clinic_owner"
+}
+```
+
+### PATCH /auth/me
+
+Auth required (any role). Updates the signed-in user's `name`/`email`/`phone` on `users`. `phone`
+and `email` are login identities, so neither is overwritten directly:
+
+- `phone` equal to the current number is a no-op. A **different** number is rejected outright —
+  `400 PHONE_CHANGE_REQUIRES_VERIFICATION` — the client must instead run
+  `POST /auth/verify-phone/send` + `POST /auth/verify-phone` (OTP) to change it. There is no
+  endpoint that changes `users.phone` directly for any role.
+- `email` equal to the current address is a no-op. A **different** address does not update
+  `users.email` immediately — it creates a 24h `email_verification_tokens` row (same table/flow
+  as `POST /patients/me/change-email`) and emails a confirmation link to the **new** address (and
+  a heads-up notice to the old one, if one existed). The change only lands once that link is
+  opened via `POST /auth/verify-email`. The response reports the requested address as
+  `pending_email` and includes a `message` telling the caller to check their inbox; the `email`
+  field in the same response is still the **old**, unchanged address.
+- `email` can be cleared to `null`; `name`/`phone` cannot be cleared to empty.
+
+**Request body** (partial) — any subset of `name, phone, email`.
+
+```json
+{ "name": "Suresh Nair", "phone": "+919876543211", "email": "owner@example.com" }
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `name` | string? | cannot be cleared to empty |
+| `phone` | string? | normalized to `+91XXXXXXXXXX`; must equal the current number or the request is rejected — see above |
+| `email` | string? | optional field, may be cleared to `null`; a changed value is not applied until confirmed — see above |
+
+**Response `200`** — the same shape as `GET /auth/me`, plus:
+
+```json
+{
+  "pending_email": "new@example.com",
+  "message": "Check your new email address for a confirmation link to complete the change."
+}
+```
+
+`pending_email` is `null` (and `message` omitted) when the request didn't change `email`.
+
+**Errors:** `400 VALIDATION_ERROR`, `400 PHONE_CHANGE_REQUIRES_VERIFICATION`, `409 EMAIL_ALREADY_REGISTERED`.
 
 ---
 
@@ -1736,18 +1881,21 @@ Auth: `clinic_owner` (owns branch) or `branch_staff` (own branch only).
 Auth: `clinic_owner` **or** `branch_staff` with `staff:manage`. Creates the staff user and sends
 a welcome message by **SMS and WhatsApp** to the new staff member's phone: "Hi {name}, you have
 been added as a staff member of {clinic name}, {branch name}. Welcome to Jido Healthcare! You can
-log in with this phone number using OTP." (staff sign in via phone + OTP).
+log in with this phone number using OTP." (staff sign in via phone + OTP — email is never used to
+sign in). The same welcome message is also **emailed** when `email` is provided; nothing is sent by
+email otherwise. Failures sending the welcome message never fail the request.
 
 **Request body**
 
 ```json
-{ "name": "Rohit Sharma", "phone": "+919876543212" }
+{ "name": "Rohit Sharma", "phone": "+919876543212", "email": "rohit@clinic.com" }
 ```
 
 | Field | Type | Notes |
 |---|---|---|
 | `name` | string | required |
 | `phone` | string | required, normalized to `+91XXXXXXXXXX`; the staff member's login identifier |
+| `email` | string? | optional — omit or send `null`/`""` for no email; validated as an email address when present. Never blocks staff creation either way, and is never a login identifier (OTP over `phone` is the only sign-in path) |
 | `permissions` | string[]? | optional, any subset of the keys above; defaults to the four appointment permissions plus `patients:view` |
 
 **Response `201`**
@@ -1757,6 +1905,7 @@ log in with this phone number using OTP." (staff sign in via phone + OTP).
   "id": "1a2b3c4d-5e6f-7890-abcd-ef1234567890",
   "branch_id": "5e8f6c7a-9d2f-4c8a-1b3e-4a5d8f6c7a8b",
   "name": "Rohit Sharma",
+  "email": "rohit@clinic.com",
   "phone": "+919876543212",
   "added_by": "3f9d6b5e-8f6b-4e3a-9c1d-2b7a5e4f8c1d",
   "permissions": ["appointments:confirm", "appointments:payment", "appointments:complete", "appointments:cancel", "patients:view"],
@@ -1828,17 +1977,23 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
   "slot_template": [
     {
       "weekday": 1,
+      "label": "morning",
       "start_time": "09:00",
       "end_time": "13:00",
       "slot_duration_minutes": 20,
+      "max_patients": 1,
+      "is_active": true,
       "start_date": "2026-08-17",
       "end_date": "2026-12-31"
     },
     {
-      "weekday": 3,
+      "weekday": 1,
+      "label": "evening",
       "start_time": "16:00",
       "end_time": "20:00",
       "slot_duration_minutes": 20,
+      "max_patients": 1,
+      "is_active": true,
       "start_date": "2026-08-17",
       "end_date": null
     }
@@ -1860,11 +2015,14 @@ Auth: `clinic_owner` (must own the branch) **or** `branch_staff` with `doctors:m
 | `currency` | string | required, 3-letter code |
 | `certificate` | string? | max 500 |
 | `slot_type` | string? | `fixed` \| `sequential`, defaults to `fixed` — see [Slot types](#slot-types) |
-| `slot_template` | array | required, ≥ 1 entry |
+| `slot_template` | array | required, ≥ 1 entry. Multiple entries may share the same `weekday` (e.g. a `morning` and an `evening` range) as long as their time windows don't overlap — overlapping ranges for the same weekday return `422 VALIDATION_ERROR` |
 | `slot_template[].weekday` | number | 0 (Sun) – 6 (Sat); the pattern repeats every week within the date range below |
+| `slot_template[].label` | string? | `morning` \| `afternoon` \| `evening` \| `custom` \| `null` — display hint only, not used by scheduling logic |
 | `slot_template[].start_time` | string | `HH:MM` |
 | `slot_template[].end_time` | string | `HH:MM`, must be after start |
 | `slot_template[].slot_duration_minutes` | number | 5–240 |
+| `slot_template[].max_patients` | number? | 1–100, defaults to `1` — how many concurrent bookings each generated slot in this range allows |
+| `slot_template[].is_active` | boolean? | defaults to `true` — an inactive range is excluded from availability/booking without deleting it |
 | `slot_template[].start_date` | string | `YYYY-MM-DD`, required — first date the weekly pattern applies |
 | `slot_template[].end_date` | string? | `YYYY-MM-DD`, nullable — last date the pattern applies; `null`/omitted means it repeats indefinitely |
 
@@ -2227,6 +2385,14 @@ Auth: `clinic_owner`, must own the branch **or** `branch_staff` with `doctors:ma
 
 **Errors:** `404 BRANCH_NOT_FOUND`, `403 NOT_CLINIC_OWNER`, `404 DOCTOR_NOT_FOUND`, `400 INVALID_PUBLIC_ID`, `400 VALIDATION_ERROR`.
 
+### GET /doctor-assignments/:id
+
+Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff` with `doctors:manage`. Returns the assignment's current `slot_template` rows so a schedule editor can load-then-edit them (nothing else returns these raw rows).
+
+**Response `200`** — same shape as the PATCH response below.
+
+**Errors:** `404 ASSIGNMENT_NOT_FOUND`.
+
 ### PATCH /doctor-assignments/:id
 
 Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff` with `doctors:manage`. Doctors may only update `slot_type`/`slot_template`/`certificate`; attempting to set `fee_amount` as a doctor returns `403 FEE_OWNER_CONTROLLED`.
@@ -2239,9 +2405,12 @@ Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff`
   "slot_type": "sequential",
   "slot_template": [{
     "weekday": 2,
+    "label": "morning",
     "start_time": "10:00",
     "end_time": "14:00",
     "slot_duration_minutes": 30,
+    "max_patients": 1,
+    "is_active": true,
     "start_date": "2026-08-17",
     "end_date": "2026-12-31"
   }],
@@ -2251,7 +2420,17 @@ Auth: `clinic_owner` (branch scope) **or** `doctor` (self) **or** `branch_staff`
 
 `slot_type` ∈ `fixed | sequential` — see [Slot types](#slot-types). Switching an assignment to `sequential` does not require changing `slot_template`; the same weekday/time-range/duration rows are reused, just booked in order instead of by patient-picked time.
 
+Each `slot_template` entry:
+- `label` ∈ `morning | afternoon | evening | custom | null` — a display hint only, not used by scheduling logic.
+- `max_patients` (default `1`) — how many concurrent bookings this range's generated slots each allow (a "group slot" capacity, not a total for the whole range). Availability responses report per-slot `capacity`/`remaining` derived from this.
+- `is_active` (default `true`) — an inactive range is excluded from availability/booking entirely (as if it didn't exist) without deleting its definition, so it can be re-enabled later without re-entering it.
+- A clinic may set several entries for the **same weekday** (e.g. a `morning` and an `evening` range) as long as their `[start_time, end_time)` windows don't overlap — overlapping ranges for the same weekday are rejected with `422 VALIDATION_ERROR`, regardless of `is_active`.
+
 Sending `slot_template` fully replaces the assignment's existing rows — it is not a diff/patch of individual entries. Each entry's `weekday` pattern repeats every week between `start_date` and `end_date` (or indefinitely if `end_date` is `null`). To keep a doctor's weekly schedule but pull them off a single date within that range (holiday, leave, etc.), use the exceptions endpoints below instead of shrinking the date range. These per-entry dates are also what `GET /branches/:id/doctors` aggregates into its top-level `start_date`/`end_date` per doctor — see that endpoint's docs.
+
+**Auto-reschedule on `slot_template` change:** whenever a request includes `slot_template`, every existing `pending`/`confirmed` appointment for this doctor at this branch (today or later) is checked against the *new* rows. One that no longer lines up (its weekday/time no longer falls inside any active range, e.g. the range moved, was removed, or `slot_duration_minutes` changed so the exact time no longer aligns) is automatically moved to the soonest matching open slot under the new schedule — same slot-picking logic as `next_available_slot` elsewhere, so it respects branch closures, doctor leaves, and capacity, and never doubles up two rescheduled patients into the same slot. If no matching slot exists within the next 60 days, the appointment is cancelled instead (`status` → `cancelled`), the same fallback already used when a doctor goes on leave over their only remaining slots (see `POST /doctor-assignments/:id/exceptions`). `paid` appointments are left untouched either way — moving or cancelling a paid visit has refund implications out of scope here; the clinic must resolve those manually.
+
+Every affected patient is notified — in-app notification (`appointment_rescheduled` or `appointment_cancelled`), push, email, and WhatsApp (if a phone is on file) — after the transaction commits, worded as "please reschedule your appointment" for moved appointments. This runs synchronously inside the PATCH request, so the response is not returned until every affected appointment has been resolved and notified.
 
 **Response `200`**
 
@@ -2263,11 +2442,27 @@ Sending `slot_template` fully replaces the assignment's existing rows — it is 
   "fee_amount": 600,
   "currency": "INR",
   "slot_type": "sequential",
-  "certificate_url": "https://example.com/new-cert.pdf"
+  "certificate_url": "https://example.com/new-cert.pdf",
+  "slot_template": [{
+    "id": "f1a2b3c4-...",
+    "weekday": 2,
+    "label": "morning",
+    "start_time": "10:00",
+    "end_time": "14:00",
+    "slot_duration_minutes": 30,
+    "max_patients": 1,
+    "is_active": true,
+    "start_date": "2026-08-17",
+    "end_date": "2026-12-31"
+  }],
+  "rescheduled_appointment_count": 2,
+  "cancelled_appointment_count": 0
 }
 ```
 
-**Errors:** `404 ASSIGNMENT_NOT_FOUND`, `403 FEE_OWNER_CONTROLLED`.
+`rescheduled_appointment_count`/`cancelled_appointment_count` are always present (`0` when `slot_template` wasn't in the request, or nothing was affected) — a quick signal for the clinic UI to surface ("2 appointments were automatically rescheduled") without a follow-up call.
+
+**Errors:** `404 ASSIGNMENT_NOT_FOUND`, `403 FEE_OWNER_CONTROLLED`, `422 VALIDATION_ERROR` (overlapping ranges for the same weekday, or another `slot_template` validation failure).
 
 ### DELETE /doctor-assignments/:id
 
@@ -2495,14 +2690,14 @@ Two modes, selected by which query params are present:
   "leave": null,
   "closure": null,
   "slots": [
-    { "time": "09:00", "available": true, "slot_type": "fixed" },
-    { "time": "09:20", "available": true, "slot_type": "fixed" },
-    { "time": "09:40", "available": false, "slot_type": "fixed" }
+    { "time": "09:00", "available": true, "slot_type": "fixed", "capacity": 1, "remaining": 1 },
+    { "time": "09:20", "available": true, "slot_type": "fixed", "capacity": 3, "remaining": 2 },
+    { "time": "09:40", "available": false, "slot_type": "fixed", "capacity": 1, "remaining": 0 }
   ]
 }
 ```
 
-`status` ∈ `available | leave | clinic_closed | unavailable | fully_booked | outside_schedule | past`. `leave` is `{ start_date, end_date, reason }` when `status = "leave"`, else `null`. `closure` is `{ start_date, end_date, reason }` when `status = "clinic_closed"` **and** it was a specific branch closure (not just a recurring closed weekday), else `null` — see [Branch schedule](#branch-schedule). `slots`/`status`/`is_bookable`/`leave`/`closure` were added additively — `date`+`slots` is unchanged from the prior contract, so existing clients keep working untouched. Each slot carries the `slot_type` of the template it came from (see [Slot types](#slot-types)); for a `sequential` assignment the client should not let the patient pick a slot directly — `POST /appointments` auto-assigns the next open one.
+`status` ∈ `available | leave | clinic_closed | unavailable | fully_booked | outside_schedule | past`. `leave` is `{ start_date, end_date, reason }` when `status = "leave"`, else `null`. `closure` is `{ start_date, end_date, reason }` when `status = "clinic_closed"` **and** it was a specific branch closure (not just a recurring closed weekday), else `null` — see [Branch schedule](#branch-schedule). `slots`/`status`/`is_bookable`/`leave`/`closure` were added additively — `date`+`slots` is unchanged from the prior contract, so existing clients keep working untouched. Each slot carries the `slot_type` of the template it came from (see [Slot types](#slot-types)); for a `sequential` assignment the client should not let the patient pick a slot directly — `POST /appointments` auto-assigns the next open one. `capacity` is that slot template range's `max_patients` and `remaining` is `capacity` minus current non-cancelled bookings at that exact time (added additively; `available` is simply `remaining > 0` and stays correct for clients that ignore the new fields).
 
 **Range mode** — `?from=2026-08-16&to=2026-08-31&branch_id=<id>` (all three required; range capped at 62 days). Returns calendar availability, leave info, and slots for every date in one response instead of one call per day.
 
@@ -2527,7 +2722,7 @@ Two modes, selected by which query params are present:
       "is_bookable": true,
       "leave": null,
       "closure": null,
-      "slots": [{ "time": "09:00", "available": true, "slot_type": "fixed" }]
+      "slots": [{ "time": "09:00", "available": true, "slot_type": "fixed", "capacity": 1, "remaining": 1 }]
     },
     {
       "date": "2026-08-20",
@@ -5399,6 +5594,7 @@ Payment-gateway webhook receiver — the automatic counterpart to the client-dri
 | `CLINIC_NOT_FOUND` / `BRANCH_NOT_FOUND` / `DOCTOR_NOT_FOUND` / `ASSIGNMENT_NOT_FOUND` / `INVITE_NOT_FOUND` / `APPOINTMENT_NOT_FOUND` / `PRESCRIPTION_NOT_FOUND` / `RECEIPT_NOT_FOUND` / `DOCUMENT_NOT_FOUND` / `PATIENT_NOT_FOUND` / `PATIENT_DOCUMENT_NOT_FOUND` / `MEDICATION_NOT_FOUND` / `DOSE_NOT_FOUND` / `NOTIFICATION_NOT_FOUND` / `JOB_NOT_FOUND` / `IMAGE_NOT_FOUND` / `SESSION_NOT_FOUND` / `EXCEPTION_NOT_FOUND` / `CLOSURE_NOT_FOUND` / `TEST_NOT_FOUND` / `SCHEDULE_NOT_FOUND` | 404 | Resource missing (or not visible to the caller) |
 | `USER_NOT_FOUND` / `SUPER_ADMIN_NOT_FOUND` / `PAYMENT_NOT_FOUND` / `SUBSCRIPTION_NOT_FOUND` | 404 | Super Admin / subscription resource missing |
 | `INVITE_EXPIRED` / `OTP_EXPIRED` / `RESET_TOKEN_EXPIRED` | 410 | Expired one-time code |
+| `INVITE_REVOKED` | 410 | Invite withdrawn by the clinic |
 | `FILE_TOO_LARGE` | 413 | Upload exceeds size limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | Upload has a disallowed MIME type |
 | `RATE_LIMITED` | 429 | Too many requests |

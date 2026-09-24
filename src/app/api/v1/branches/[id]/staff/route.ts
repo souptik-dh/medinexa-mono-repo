@@ -1,12 +1,12 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
-import { parseBody, phoneSchema } from "@/lib/validators";
+import { parseBody, phoneSchema, optionalEmailSchema } from "@/lib/validators";
 import { requireRoles } from "@/lib/auth";
 import { getOwnedBranch } from "@/lib/scope";
 import { conflict, isUniqueViolation } from "@/lib/errors";
 import { newId } from "@/lib/ids";
-import { sendSms, sendWhatsapp } from "@/lib/notifications";
+import { sendWhatsapp, sendEmail, emailHtml } from "@/lib/notifications";
 import {
   BRANCH_STAFF_PERMISSIONS,
   DEFAULT_BRANCH_STAFF_PERMISSIONS,
@@ -58,6 +58,8 @@ export const GET = api({ rateLimit: 200 }, async (ctx) => {
 const createSchema = z.object({
   name: z.string().trim().min(1).max(255),
   phone: phoneSchema,
+  // Optional — a blank string from the form means "no email", not a validation error.
+  email: z.preprocess((v) => (v === "" ? undefined : v), optionalEmailSchema),
   permissions: z.array(z.enum(BRANCH_STAFF_PERMISSIONS)).optional(),
 });
 
@@ -79,8 +81,8 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
   try {
     await withTransaction(async (conn) => {
       await conn.query(
-        `INSERT INTO users (id, name, phone, role, status) VALUES (?, ?, ?, 'branch_staff', 'active')`,
-        [userId, body.name, body.phone],
+        `INSERT INTO users (id, name, email, phone, role, status) VALUES (?, ?, ?, ?, 'branch_staff', 'active')`,
+        [userId, body.name, body.email ?? null, body.phone],
       );
       await conn.query(
         `INSERT INTO branch_staff (id, branch_id, user_id, added_by, permissions_json) VALUES (?, ?, ?, ?, ?)`,
@@ -108,13 +110,18 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     `Jido Healthcare: Hi ${body.name}, you have been added as a staff member of ` +
     `${branchInfo?.clinic_name ?? "your clinic"}, ${branchInfo?.branch_name ?? "your branch"}. ` +
     `Welcome to Jido Healthcare! You can log in with this phone number using OTP.`;
-  await Promise.allSettled([sendSms(body.phone, welcomeText), sendWhatsapp(body.phone, welcomeText)]);
+  await sendWhatsapp(body.phone, welcomeText);
+  // Email is optional — only attempted when the form actually collected one.
+  if (body.email) {
+    await sendEmail(body.email, "Welcome to Jido Healthcare", welcomeText, emailHtml(welcomeText));
+  }
 
   return json(
     {
       id: staffId,
       branch_id: branchId,
       name: body.name,
+      email: body.email ?? null,
       phone: body.phone,
       added_by: auth.userId,
       permissions,

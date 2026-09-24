@@ -14,7 +14,6 @@ import {
   sendEmail,
   detailsEmailHtml,
   patientEmailHtml,
-  sendSms,
   sendWhatsapp,
   personalizeForPatient,
 } from "@/lib/notifications";
@@ -117,7 +116,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       appointment.visitor_name,
       appointment.visitor_relationship,
     );
-    await Promise.allSettled([sendSms(patientPhone, confirmText), sendWhatsapp(patientPhone, confirmText)]);
+    await sendWhatsapp(patientPhone, confirmText);
   }
 
   const updated = await getLabTestAppointmentInScope(pool, id, auth);

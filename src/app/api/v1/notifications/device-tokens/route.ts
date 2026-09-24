@@ -15,15 +15,20 @@ const registerSchema = z.object({
 // registered to a different account after logout/login. The upsert reassigns it to
 // whoever is currently authenticated rather than erroring, so a shared/reused device
 // always ends up pointing at the right account.
+//
+// The patient app and the xclinic (clinic-side) app are separate Firebase projects,
+// so a token is only ever valid against the project that issued it. `app` is derived
+// from the caller's role rather than trusted from the request body.
 export const POST = api({ rateLimit: 200 }, async (ctx) => {
   const auth = requireRoles(ctx.auth, ["patient", "branch_staff", "doctor", "clinic_owner"]);
   const body = parseBody(registerSchema, await readJson(ctx.request));
+  const app = auth.role === "patient" ? "patient" : "clinic";
 
   await pool.query(
-    `INSERT INTO device_tokens (id, user_id, token, platform)
-     VALUES (?, ?, ?, ?)
-     ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), platform = VALUES(platform)`,
-    [newId(), auth.userId, body.token, body.platform],
+    `INSERT INTO device_tokens (id, user_id, token, platform, app)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE user_id = VALUES(user_id), platform = VALUES(platform), app = VALUES(app)`,
+    [newId(), auth.userId, body.token, body.platform, app],
   );
 
   return json({ registered: true }, 201);

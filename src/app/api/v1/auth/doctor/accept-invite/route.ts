@@ -5,9 +5,10 @@ import { pool, withTransaction, parseDbTimestamp, type Row } from "@/lib/db";
 import { hashPassword, hashToken, issueTokens } from "@/lib/auth";
 import { newId } from "@/lib/ids";
 import { ApiError, conflict, notFound, isUniqueViolation, badRequest } from "@/lib/errors";
-import { createNotification, sendEmail, emailHtml, sendSmsIfPhone } from "@/lib/notifications";
+import { createClinicUserNotification, sendEmail, emailHtml, sendWhatsapp } from "@/lib/notifications";
 import { getInviteSpecializations } from "@/lib/specializations";
 import { assertClinicOperational, resolveClinicIdByBranch } from "@/lib/subscriptions";
+import { effectiveInviteStatus, findInviteByCode } from "@/lib/doctor-invites";
 import type { ResultSetHeader } from "mysql2/promise";
 
 const schema = z.object({
@@ -50,20 +51,30 @@ async function verifyAcceptOtp(phone: string, otp: string): Promise<void> {
 export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
   const body = parseBody(schema, await readJson(ctx.request));
 
-  // Look up the pending invite by phone (invites have phone as primary
-  // identifier); fall back to email for backward compatibility.
-  const [invites] = await pool.query<Row[]>(
-    `SELECT * FROM doctor_invites
-      WHERE (phone = ? OR (email = ? AND phone IS NULL)) AND status = 'pending'
-      ORDER BY created_at DESC LIMIT 1`,
-    [body.phone, body.email ?? null],
-  );
-  const invite = invites[0];
-  if (!invite || hashToken(body.invite_code) !== invite.invite_code_hash) {
+  // Match the code against this doctor's invites in any status, so a reused link
+  // gets "already accepted" / "expired" / "revoked" rather than a generic not-found.
+  const invite = await findInviteByCode(pool, body.invite_code, body.phone, body.email ?? null);
+  if (!invite) {
     throw notFound("INVITE_NOT_FOUND", "Invite not found or invite code is invalid.");
   }
-  if (parseDbTimestamp(invite.expires_at).getTime() < Date.now()) {
-    await pool.query(`UPDATE doctor_invites SET status = 'expired' WHERE id = ?`, [invite.id]);
+  const inviteStatus = effectiveInviteStatus(invite);
+  if (inviteStatus === "accepted") {
+    throw conflict("INVITE_ALREADY_ACCEPTED", "This invitation has already been accepted.");
+  }
+  if (inviteStatus === "revoked") {
+    throw new ApiError(410, "INVITE_REVOKED", "This invitation was withdrawn by the clinic. Contact the clinic for a new one.");
+  }
+  if (inviteStatus === "expired") {
+    if (invite.status === "pending") {
+      await pool.query(
+        `UPDATE doctor_invites SET status = 'expired' WHERE id = ? AND status = 'pending'`,
+        [invite.id],
+      ).catch((err) => {
+        // uniq_invite_pending also covers 'expired'; an older expired row for this
+        // doctor just means this one stays 'pending' in the table (still reported expired).
+        if (!isUniqueViolation(err)) throw err;
+      });
+    }
     throw new ApiError(410, "INVITE_EXPIRED", "This invite has expired. Contact the clinic for a new one.");
   }
 
@@ -81,7 +92,8 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
   const slotTemplates = invite.slot_template as Array<Record<string, unknown>>;
 
   const [ownerRows] = await pool.query<Row[]>(
-    `SELECT c.owner_user_id, co.email AS owner_email
+    `SELECT c.owner_user_id, co.email AS owner_email, co.phone AS owner_phone,
+            b.name AS branch_name, c.name AS clinic_name
        FROM branches b
        JOIN clinics c ON c.id = b.clinic_id
        JOIN users co ON co.id = c.owner_user_id
@@ -100,7 +112,7 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
       [regNo, smcName, doctorDegree, body.phone, invite.id],
     );
     if (claim.affectedRows !== 1) {
-      throw conflict("INVITE_ALREADY_ACCEPTED", "This invite has already been accepted.");
+      throw conflict("INVITE_ALREADY_ACCEPTED", "This invitation has already been accepted.");
     }
 
     await conn.query(
@@ -133,31 +145,37 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
       const [eh, em] = String(t.end_time).split(":");
       await conn.query(
         `INSERT INTO doctor_slot_templates
-           (id, doctor_branch_assignment_id, weekday, start_time, end_time, slot_duration_minutes, start_date, end_date)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+           (id, doctor_branch_assignment_id, weekday, label, start_time, end_time, slot_duration_minutes, max_patients, is_active, start_date, end_date)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           newId(),
           assignmentId,
           t.weekday,
+          t.label ?? null,
           `${h}:${m}:00`,
           `${eh}:${em}:00`,
           t.slot_duration_minutes,
+          // Invites created before max_patients/is_active existed store neither in
+          // their JSON snapshot — default to today's implicit behavior (1 patient, active).
+          t.max_patients ?? 1,
+          t.is_active === false ? 0 : 1,
           t.start_date,
           t.end_date ?? null,
         ],
       );
     }
-    await createNotification(conn, invite.invited_by, "doctor_invite_accepted", {
+    const acceptedPayload = {
       doctor_id: doctorId,
+      doctor_name: invite.name,
       branch_id: invite.branch_id,
+      branch_name: owner?.branch_name ?? null,
+      clinic_name: owner?.clinic_name ?? null,
+      status: "accepted",
       phone: body.phone,
-    });
+    };
+    await createClinicUserNotification(conn, invite.invited_by, "doctor_invite_accepted", acceptedPayload);
     if (owner && owner.owner_user_id !== invite.invited_by) {
-      await createNotification(conn, owner.owner_user_id, "doctor_invite_accepted", {
-        doctor_id: doctorId,
-        branch_id: invite.branch_id,
-        phone: body.phone,
-      });
+      await createClinicUserNotification(conn, owner.owner_user_id, "doctor_invite_accepted", acceptedPayload);
     }
   }).catch((err) => {
     if (isUniqueViolation(err)) {
@@ -181,7 +199,9 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
       acceptedBody,
       emailHtml(acceptedBody),
     );
-    await sendSmsIfPhone(pool, owner.owner_user_id, acceptedBody);
+    if (owner.owner_phone) {
+      await sendWhatsapp(owner.owner_phone as string, acceptedBody);
+    }
   }
 
   const { access_token, refresh_token } = await issueTokens({

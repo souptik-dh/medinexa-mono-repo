@@ -1,15 +1,14 @@
 import { api, json } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
-import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
+import { getAppointmentInScope, getAppointmentNames, transition, serializeAppointment } from "@/lib/appointments";
 import {
   createPatientNotification,
   sendEmail,
   detailsEmailHtml,
-  sendSms,
   sendWhatsapp,
   sendWhatsappFile,
-  notifyPhonesSmsWhatsapp,
+  notifyPhonesWhatsapp,
   branchContactPhones,
   personalizeForPatient,
 } from "@/lib/notifications";
@@ -27,10 +26,13 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
     await assertClinicOperational(conn, appt.clinic_id);
     await assertBranchStaffPermission(conn, auth, appt.branch_id, "appointments:confirm");
     await transition(conn, appt, "confirmed", auth.userId, ["pending"]);
+    const names = await getAppointmentNames(conn, appt.id);
     await createPatientNotification(conn, appt.patient_id, "booking_confirmed", {
       appointment_id: appt.id,
       date: appt.scheduled_date,
       time: appt.scheduled_time,
+      doctor_name: names.doctor_name,
+      branch_name: names.branch_name,
     });
   });
 
@@ -83,7 +85,6 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   const confirmBody = `Your appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
   const confirmText = personalizeForPatient(confirmBody, info?.visitor_name, info?.visitor_relationship);
   const whatsappConfirmText = `${confirmText}${receipt ? ` Receipt No: ${receipt.receiptNumber}.` : ""}`;
-  const smsConfirm = () => sendSms(patientPhone, confirmText);
   const whatsappConfirm = () => sendWhatsapp(patientPhone, whatsappConfirmText);
   if (info?.patient_email) {
     const confirmBody = `Hi ${info.patient_name ?? "there"},\n\nYour appointment with Dr. ${info.doctor_name} at ${info.branch_name} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
@@ -105,7 +106,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
     );
   }
   if (patientPhone) {
-    await Promise.allSettled([smsConfirm(), whatsappConfirm()]);
+    await whatsappConfirm();
     if (receipt) {
       const pdf = buildReceiptPdf({
         title: "Booking Confirmation Receipt",
@@ -132,10 +133,8 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   }
 
   const clinicPhones = await branchContactPhones(pool, appointment.branch_id);
-  void notifyPhonesSmsWhatsapp(
-    clinicPhones,
-    `Jido Healthcare: Appointment with Dr. ${info.doctor_name} for ${info.patient_name ?? "a patient"} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`,
-  );
+  const clinicConfirmText = `Jido Healthcare: Appointment with Dr. ${info.doctor_name} for ${info.patient_name ?? "a patient"} on ${appointment.scheduled_date} at ${appointment.scheduled_time} has been confirmed.`;
+  void notifyPhonesWhatsapp(clinicPhones, clinicConfirmText);
 
   return json(serializeAppointment(appointment));
 });

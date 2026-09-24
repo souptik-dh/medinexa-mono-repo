@@ -119,6 +119,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     document_id: id,
     title,
     document_type: documentType,
+    description,
   });
 
   const [rows] = await pool.query<RowDataPacket[]>(`${DOCUMENT_SELECT_JOIN} WHERE pd.id = ?`, [id]);

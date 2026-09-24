@@ -3,7 +3,7 @@ import { pool, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
 import { requireAssignedDoctor } from "@/lib/prescriptions";
 import { getAppointmentInScope } from "@/lib/appointments";
-import { sendEmail, sendSms, patientEmailHtml } from "@/lib/notifications";
+import { sendEmail, sendWhatsapp, patientEmailHtml } from "@/lib/notifications";
 import { notFound } from "@/lib/errors";
 
 export const POST = api({ rateLimit: 200 }, async (ctx) => {
@@ -27,7 +27,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
 
   const rxBody = `Your prescription for appointment ${appointment.id} is ready. Download it from the app.`;
   if (patient.phone) {
-    await sendSms(
+    await sendWhatsapp(
       patient.phone,
       `Jido Healthcare: Your prescription for appointment ${appointment.id} is ready. Download it from the app.`,
     );

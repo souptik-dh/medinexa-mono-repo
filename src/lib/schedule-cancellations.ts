@@ -1,11 +1,13 @@
 import { pool, type Row } from "@/lib/db";
-import { createPatientNotification, sendEmail, detailsEmailHtml, sendSms } from "@/lib/notifications";
+import { createPatientNotification, sendEmail, detailsEmailHtml, sendWhatsapp } from "@/lib/notifications";
+import type { RescheduledAppointment } from "@/lib/appointments";
 
 // Shared by the branch-closure and doctor-leave routes: once a closure/leave has cascaded
 // into cancelling pre-existing appointments (see autoCancelAppointmentsInRange /
 // autoCancelLabTestAppointmentsInRange), these notify each affected patient in-app and by
-// email (and SMS, when a phone is on file) — unlike a manual cancel, an auto-cancel is a
-// surprise to the patient, so it always gets an email/SMS, not just an in-app notification.
+// email (and WhatsApp, when a phone is on file) — unlike a manual cancel, an auto-cancel is
+// a surprise to the patient, so it always gets an email/WhatsApp message, not just an
+// in-app notification.
 
 export async function notifyAutoCancelledDoctorAppointments(
   cancelled: Row[],
@@ -31,7 +33,7 @@ export async function notifyAutoCancelledDoctorAppointments(
       reason,
     });
     if (r.patient_phone) {
-      await sendSms(
+      await sendWhatsapp(
         r.patient_phone,
         `Jido Healthcare: Your appointment with Dr. ${r.doctor_name} on ${r.scheduled_date} at ${r.scheduled_time} has been cancelled. Reason: ${reason}`,
       );
@@ -49,6 +51,66 @@ export async function notifyAutoCancelledDoctorAppointments(
             { label: "Doctor", value: `Dr. ${r.doctor_name}` },
             { label: "Branch", value: branchName },
             { label: "Date & Time", value: `${r.scheduled_date} at ${r.scheduled_time}` },
+            { label: "Reason", value: reason },
+          ],
+        }),
+      );
+    }
+  }
+}
+
+// Companion to notifyAutoCancelledDoctorAppointments: fired after
+// rescheduleAppointmentsAfterTemplateChange moves appointments to a new slot instead of
+// cancelling them — the patient still needs to know their doctor's schedule changed and
+// their visit moved, so this always emails/WhatsApps too, not just an in-app notification.
+export async function notifyRescheduledDoctorAppointments(
+  rescheduled: RescheduledAppointment[],
+  branchName: string,
+  reason: string,
+): Promise<void> {
+  if (rescheduled.length === 0) return;
+  const [rows] = await pool.query<Row[]>(
+    `SELECT a.id, a.patient_id, u.email AS patient_email, u.phone AS patient_phone, d.name AS doctor_name
+       FROM appointments a
+       JOIN users u ON u.id = a.patient_id
+       JOIN doctors d ON d.id = a.doctor_id
+      WHERE a.id IN (?)`,
+    [rescheduled.map((r) => r.id)],
+  );
+  const byId = new Map(rescheduled.map((r) => [r.id, r]));
+
+  for (const row of rows) {
+    const r = byId.get(row.id);
+    if (!r) continue;
+    await createPatientNotification(pool, row.patient_id, "appointment_rescheduled", {
+      appointment_id: row.id,
+      doctor_name: row.doctor_name,
+      old_date: r.old_date,
+      old_time: r.old_time,
+      new_date: r.new_date,
+      new_time: r.new_time,
+      reason,
+    });
+    if (row.patient_phone) {
+      await sendWhatsapp(
+        row.patient_phone,
+        `Jido Healthcare: Please reschedule your appointment — Dr. ${row.doctor_name}'s availability changed, so your visit on ${r.old_date} at ${r.old_time} has been moved to ${r.new_date} at ${r.new_time}. Reason: ${reason}`,
+      );
+    }
+    if (row.patient_email) {
+      await sendEmail(
+        row.patient_email,
+        `Appointment Rescheduled — ${branchName}`,
+        `Your appointment with Dr. ${row.doctor_name} has been rescheduled.\nPrevious: ${r.old_date} at ${r.old_time}\nNew: ${r.new_date} at ${r.new_time}\nReason: ${reason}`,
+        detailsEmailHtml({
+          heading: "Appointment Rescheduled",
+          intro: `Dr. ${row.doctor_name}'s availability changed, so your appointment has been moved to a new time. Please review and reschedule again if this doesn't work for you.`,
+          patientFacing: true,
+          rows: [
+            { label: "Doctor", value: `Dr. ${row.doctor_name}` },
+            { label: "Branch", value: branchName },
+            { label: "Previous Date & Time", value: `${r.old_date} at ${r.old_time}` },
+            { label: "New Date & Time", value: `${r.new_date} at ${r.new_time}` },
             { label: "Reason", value: reason },
           ],
         }),
@@ -83,7 +145,7 @@ export async function notifyAutoCancelledLabTestAppointments(
       reason,
     });
     if (r.patient_phone) {
-      await sendSms(
+      await sendWhatsapp(
         r.patient_phone,
         `Jido Healthcare: Your ${r.test_name} appointment on ${r.appointment_date} at ${r.start_time} has been cancelled. Reason: ${reason}`,
       );

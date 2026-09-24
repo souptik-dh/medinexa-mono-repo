@@ -6,6 +6,8 @@ import { hashToken, issueTokens } from "@/lib/auth";
 import { loadRoleBindings } from "@/lib/auth-flows";
 import { loadStaffPermissions } from "@/lib/permissions";
 import { ApiError, forbidden, unauthorized } from "@/lib/errors";
+import { createClinicUserNotification } from "@/lib/notifications";
+import type { ResultSetHeader } from "mysql2/promise";
 
 const MAX_ATTEMPTS = 5;
 
@@ -56,6 +58,42 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
   const permissions = branchId
     ? await loadStaffPermissions(pool, branchId, user.id)
     : [];
+
+  // First successful login for this staff member = "joining" the clinic. The atomic
+  // UPDATE ... WHERE joined_at IS NULL both records it and doubles as the guard: only
+  // the login that actually flips it from NULL fires the notification, so a retried
+  // verify-otp call (or any later login) never notifies the owner again.
+  if (branchId) {
+    const [claim] = await pool.query<ResultSetHeader>(
+      `UPDATE branch_staff SET joined_at = UTC_TIMESTAMP(3) WHERE branch_id = ? AND user_id = ? AND joined_at IS NULL`,
+      [branchId, user.id],
+    );
+    if (claim.affectedRows === 1) {
+      const [ownerRows] = await pool.query<Row[]>(
+        `SELECT c.owner_user_id, b.name AS branch_name, c.name AS clinic_name
+           FROM branches b JOIN clinics c ON c.id = b.clinic_id
+          WHERE b.id = ?`,
+        [branchId],
+      );
+      const owner = ownerRows[0];
+      if (owner) {
+        // Best-effort: a notification failure must never block the staff member's
+        // login, which is the actual critical path here.
+        try {
+          await createClinicUserNotification(pool, owner.owner_user_id, "staff_joined", {
+            staff_user_id: user.id,
+            staff_name: user.name,
+            branch_id: branchId,
+            branch_name: owner.branch_name,
+            clinic_name: owner.clinic_name,
+          }, branchId);
+        } catch (err) {
+          console.error("[staff_joined] failed to notify clinic owner:", err);
+        }
+      }
+    }
+  }
+
   const { access_token, refresh_token } = await issueTokens({
     id: user.id,
     role: "branch_staff",

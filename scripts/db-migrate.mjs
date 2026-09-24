@@ -652,6 +652,38 @@ try {
     console.log('Applied migration: doctor_slot_exceptions.end_date/status (leave ranges)');
   }
 
+  const [slotLabelCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'doctor_slot_templates' AND COLUMN_NAME = 'label'`,
+  );
+  if (Number(slotLabelCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE doctor_slot_templates
+         ADD COLUMN label ENUM('morning','afternoon','evening','custom') NULL AFTER weekday,
+         ADD COLUMN max_patients SMALLINT NOT NULL DEFAULT 1 AFTER slot_duration_minutes,
+         ADD COLUMN is_active TINYINT(1) NOT NULL DEFAULT 1 AFTER max_patients`,
+    );
+    console.log('Applied migration: doctor_slot_templates.label/max_patients/is_active');
+  }
+
+  const [apptSlotSeqCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'appointments' AND COLUMN_NAME = 'slot_seq'`,
+  );
+  if (Number(apptSlotSeqCols[0].cnt) === 0) {
+    // Widening slot_key to include slot_seq preserves every existing row's uniqueness
+    // (each becomes "<scheduled_time>#0"), so this is safe to run against live data —
+    // it only enables max_patients > 1 to book multiple rows at the same time going forward.
+    await conn.query(
+      `ALTER TABLE appointments
+         DROP INDEX uniq_doctor_date_slot,
+         ADD COLUMN slot_seq SMALLINT NOT NULL DEFAULT 0 AFTER scheduled_time,
+         MODIFY COLUMN slot_key VARCHAR(8) GENERATED ALWAYS AS (IF(status = 'cancelled', NULL, CONCAT(scheduled_time, '#', slot_seq))) STORED,
+         ADD UNIQUE KEY uniq_doctor_date_slot (doctor_id, scheduled_date, slot_key)`,
+    );
+    console.log('Applied migration: appointments.slot_seq (per-slot capacity support)');
+  }
+
   const [operatingDaysTables] = await conn.query(
     `SELECT COUNT(*) AS cnt FROM information_schema.TABLES
       WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'branch_operating_days'`,
@@ -1444,6 +1476,28 @@ try {
          ADD COLUMN referring_doctor_name VARCHAR(255) NULL AFTER prescription_id`,
     );
     console.log('Applied migration: lab_test_appointments.referring_doctor_name');
+  }
+
+  const [deviceTokenAppCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'device_tokens' AND COLUMN_NAME = 'app'`,
+  );
+  if (Number(deviceTokenAppCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE device_tokens ADD COLUMN app ENUM('patient','clinic') NOT NULL DEFAULT 'patient' AFTER platform`,
+    );
+    console.log('Applied migration: device_tokens.app');
+  }
+
+  const [branchStaffJoinedAtCols] = await conn.query(
+    `SELECT COUNT(*) AS cnt FROM information_schema.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'branch_staff' AND COLUMN_NAME = 'joined_at'`,
+  );
+  if (Number(branchStaffJoinedAtCols[0].cnt) === 0) {
+    await conn.query(
+      `ALTER TABLE branch_staff ADD COLUMN joined_at DATETIME(3) NULL AFTER permissions_json`,
+    );
+    console.log('Applied migration: branch_staff.joined_at');
   }
 
   console.log('Schema applied successfully.');

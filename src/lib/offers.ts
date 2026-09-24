@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { Pool, PoolConnection, RowDataPacket } from "mysql2/promise";
 import { pool } from "@/lib/db";
 import { idSchema, currencySchema } from "@/lib/validators";
-import { sendSms, sendWhatsapp, sendEmail, detailsEmailHtml, createNotification } from "@/lib/notifications";
+import { sendWhatsapp, sendEmail, detailsEmailHtml, createClinicUserNotification } from "@/lib/notifications";
 
 type Db = Pool | PoolConnection;
 type Row = RowDataPacket;
@@ -14,6 +14,9 @@ const round2 = (n: number): number => Math.round(n * 100) / 100;
 // bodies (and therefore the rendered preview) stay identical.
 // ---------------------------------------------------------------------------
 
+// `sms` stays in the schema for API back-compat with existing callers, but per policy
+// SMS is reserved for OTP and doctor invitations — sendOfferToClinic below never actually
+// dispatches over SMS, regardless of what a caller sends for this field.
 export const offerChannelsSchema = z
   .object({
     sms: z.boolean().default(true),
@@ -105,7 +108,8 @@ export function planChannelDelivery(
   contact: Pick<ResolvedRecipient, "ownerEmail" | "ownerPhone">,
 ): { sms: ChannelPlan; whatsapp: ChannelPlan; email: ChannelPlan; portal: ChannelPlan } {
   return {
-    sms: !channels.sms ? "disabled" : contact.ownerPhone ? "will_send" : "skipped_no_phone",
+    // Always "disabled" — SMS is never sent for offers, regardless of channels.sms.
+    sms: "disabled",
     whatsapp: !channels.whatsapp ? "disabled" : contact.ownerPhone ? "will_send" : "skipped_no_phone",
     email: !channels.email ? "disabled" : contact.ownerEmail ? "will_send" : "skipped_no_email",
     portal: channels.portal ? "will_send" : "disabled",
@@ -230,17 +234,14 @@ export async function sendOfferToClinic(opts: {
 }): Promise<OfferDeliveryResult> {
   const { channels, contact, renderedMessage, offer, regularAmount } = opts;
 
-  const smsPromise: Promise<ChannelDeliveryStatus> =
-    channels.sms && contact.ownerPhone
-      ? sendSms(contact.ownerPhone, renderedMessage)
-          .then(() => "SENT" as const)
-          .catch(() => "FAILED" as const)
-      : Promise.resolve("SKIPPED" as const);
+  // SMS is reserved for OTP and doctor invitations — never dispatched here, regardless
+  // of channels.sms (kept in the schema only for API back-compat with existing callers).
+  const sms: ChannelDeliveryStatus = "SKIPPED";
 
   const whatsappPromise: Promise<ChannelDeliveryStatus> =
     channels.whatsapp && contact.ownerPhone
       ? sendWhatsapp(contact.ownerPhone, renderedMessage)
-          .then(() => "SENT" as const)
+          .then((ok) => (ok ? ("SENT" as const) : ("FAILED" as const)))
           .catch(() => "FAILED" as const)
       : Promise.resolve("SKIPPED" as const);
 
@@ -268,12 +269,12 @@ export async function sendOfferToClinic(opts: {
           .catch(() => "FAILED" as const)
       : Promise.resolve("SKIPPED" as const);
 
-  const [sms, whatsapp, email] = await Promise.all([smsPromise, whatsappPromise, emailPromise]);
+  const [whatsapp, email] = await Promise.all([whatsappPromise, emailPromise]);
 
   let portalNotificationId: string | null = null;
   if (channels.portal) {
     try {
-      portalNotificationId = await createNotification(pool, contact.ownerUserId, "subscription_offer", {
+      portalNotificationId = await createClinicUserNotification(pool, contact.ownerUserId, "subscription_offer", {
         clinic_id: contact.clinicId,
         message: renderedMessage,
         offer_price: offer.discountedAmount,

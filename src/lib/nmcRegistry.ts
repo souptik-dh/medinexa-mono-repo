@@ -1,12 +1,4 @@
-import https from "node:https";
-
-const NMC_SEARCH_URL = "https://www.nmc.org.in/MCIRest/open/getDataFromService?service=searchDoctor";
-
-// nmc.org.in serves an incomplete certificate chain (no intermediate), so Node's
-// default fetch (undici) rejects it with UNABLE_TO_VERIFY_LEAF_SIGNATURE — same
-// class of legacy-govt-portal TLS issue as PRDEODB in tradeLicense.ts, just a
-// different symptom, so this one call also goes through node:https instead of fetch().
-const nmcAgent = new https.Agent({ rejectUnauthorized: false });
+const NMC_SEARCH_URL = "https://nmc.org.in/indian-medical-register/search";
 
 export interface NmcDoctorRecord {
   doctorId: number;
@@ -24,101 +16,83 @@ export interface NmcDoctorRecord {
 }
 
 interface NmcRawDoctorRecord {
-  doctorId: number;
-  registrationNo: string | null;
-  smcName: string | null;
-  firstName: string | null;
-  middleName: string | null;
-  lastName: string | null;
-  parentName: string | null;
-  regDate: string | null;
-  yearInfo: number | null;
-  doctorDegree: string | null;
+  id: number;
+  name: string | null;
+  father_name: string | null;
+  registration_no: string | null;
+  registration_date: string | null;
+  state_medical_council: string | null;
+  year_of_info: number | null;
+  qualification: string | null;
   university: string | null;
-  yearOfPassing: string | null;
-  address: string | null;
-  removedStatus: boolean | null;
+  qualification_year: string | null;
+  permanent_address: string | null;
+  removed_status: string | boolean | null;
 }
 
-function postJson(url: string, body: string): Promise<{ status: number; text: string }> {
-  return new Promise((resolve, reject) => {
-    const req = https.request(
-      url,
-      {
-        method: "POST",
-        agent: nmcAgent,
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
-        },
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (chunk) => {
-          data += chunk;
-        });
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, text: data }));
-      },
-    );
-    req.on("error", reject);
-    req.write(body);
-    req.end();
-  });
+interface NmcSearchResponse {
+  success: boolean;
+  data: NmcRawDoctorRecord[];
 }
 
 function normalize(raw: NmcRawDoctorRecord): NmcDoctorRecord {
-  const name = [raw.firstName, raw.middleName, raw.lastName]
-    .filter((part): part is string => !!part?.trim())
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-
   return {
-    doctorId: raw.doctorId,
-    registrationNo: (raw.registrationNo ?? "").trim(),
-    name,
-    fatherOrHusbandName: raw.parentName?.trim() || null,
-    smcName: raw.smcName?.trim() || null,
-    registrationDate: raw.regDate?.trim() || null,
-    yearOfRegistration: raw.yearInfo ?? null,
-    doctorDegree: raw.doctorDegree?.trim() || null,
+    doctorId: raw.id,
+    registrationNo: (raw.registration_no ?? "").trim(),
+    name: (raw.name ?? "").replace(/\s+/g, " ").trim(),
+    fatherOrHusbandName: raw.father_name?.trim() || null,
+    smcName: raw.state_medical_council?.trim() || null,
+    registrationDate: raw.registration_date?.trim() || null,
+    yearOfRegistration: raw.year_of_info ?? null,
+    doctorDegree: raw.qualification?.trim() || null,
     university: raw.university?.trim() || null,
-    yearOfPassing: raw.yearOfPassing?.trim() || null,
-    address: raw.address?.trim() || null,
-    removed: raw.removedStatus === true,
+    yearOfPassing: raw.qualification_year?.trim() || null,
+    address: raw.permanent_address?.trim() || null,
+    removed: raw.removed_status === "1" || raw.removed_status === true,
   };
 }
 
 // The upstream service matches registrationNo as a substring, not exact, so a short
 // or numeric-only registration number (e.g. "12345") can come back with thousands of
-// unrelated doctors. We do the exact match ourselves. The same registration number can
-// legitimately belong to more than one record in the registry (re-issued numbers, data
-// corrections, etc.), so we return every exact match rather than silently picking one —
-// the caller (clinic owner sending an invite) picks the right doctor from the list.
+// unrelated doctors — the search endpoint caps per_page at 100 and won't honor
+// anything higher, so we take the first (and only) page rather than paginate through
+// what can be tens of thousands of pages for a generic query. We do the exact match
+// ourselves within that page. The same registration number can legitimately belong to
+// more than one record in the registry (re-issued numbers, data corrections, etc.), so
+// we return every exact match rather than silently picking one — the caller (clinic
+// owner sending an invite) picks the right doctor from the list.
 export async function searchNmcDoctorsByRegistrationNo(
   registrationNo: string,
 ): Promise<NmcDoctorRecord[]> {
-  const { status, text } = await postJson(
-    NMC_SEARCH_URL,
-    JSON.stringify({ registrationNo }),
-  );
+  const url = new URL(NMC_SEARCH_URL);
+  url.searchParams.set("search_type", "reg_no");
+  url.searchParams.set("reg_no", registrationNo);
+  url.searchParams.set("page", "1");
+  url.searchParams.set("per_page", "100");
 
-  if (status !== 200) {
-    throw new Error(`NMC registry returned HTTP ${status}`);
+  const res = await fetch(url, {
+    headers: {
+      accept: "application/json",
+      "x-requested-with": "XMLHttpRequest",
+    },
+  });
+
+  if (res.status !== 200) {
+    throw new Error(`NMC registry returned HTTP ${res.status}`);
   }
 
-  let raw: unknown;
+  let parsed: NmcSearchResponse;
   try {
-    raw = JSON.parse(text);
+    parsed = await res.json();
   } catch {
     throw new Error("NMC registry returned an unrecognized (non-JSON) response.");
   }
-  if (!Array.isArray(raw)) {
+  if (parsed?.success !== true || !Array.isArray(parsed.data)) {
     throw new Error("NMC registry returned an unrecognized response shape.");
   }
 
   const target = registrationNo.trim().toLowerCase();
-  return (raw as NmcRawDoctorRecord[])
-    .filter((r) => (r.registrationNo ?? "").trim().toLowerCase() === target)
+  return parsed.data
+    .filter((r) => (r.registration_no ?? "").trim().toLowerCase() === target)
     .map(normalize);
 }

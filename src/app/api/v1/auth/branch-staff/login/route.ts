@@ -4,7 +4,7 @@ import { parseBody, phoneSchema } from "@/lib/validators";
 import { pool, type Row } from "@/lib/db";
 import { generateOtp, hashToken } from "@/lib/auth";
 import { newId } from "@/lib/ids";
-import { sendOtpDual } from "@/lib/notifications";
+import { deliverOtp, sendOtpStatus } from "@/lib/auth-flows";
 import { forbidden } from "@/lib/errors";
 
 const schema = z.object({ phone: phoneSchema });
@@ -34,12 +34,12 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
      VALUES (?, ?, ?, 'branch_staff_login', ?, ?)`,
     [newId(), body.phone, users[0].email ?? null, hashToken(`${body.phone}:${otp}`), expiresAt],
   );
-  await sendOtpDual({
+  const result = await deliverOtp({
     phone: body.phone,
     email: users[0].email ?? null,
     otp,
     expiryMinutes: 10,
   });
 
-  return json({ message: "If an account exists for this phone number, an OTP has been sent." });
+  return json(result, sendOtpStatus(result));
 });

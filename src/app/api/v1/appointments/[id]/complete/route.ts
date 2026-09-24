@@ -1,11 +1,11 @@
 import { api, json } from "@/lib/http";
 import { pool, withTransaction, type Row } from "@/lib/db";
 import { requireRoles } from "@/lib/auth";
-import { getAppointmentInScope, transition, serializeAppointment } from "@/lib/appointments";
+import { getAppointmentInScope, getAppointmentNames, transition, serializeAppointment } from "@/lib/appointments";
 import { hasSlotPassedInTz } from "@/lib/availability";
 import {
   createPatientNotification,
-  notifyPhonesSmsWhatsapp,
+  notifyPhonesWhatsapp,
   branchContactPhones,
   sendWhatsappFile,
   personalizeForPatient,
@@ -30,8 +30,13 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
       );
     }
     await transition(conn, appt, "completed", auth.userId, ["paid"]);
+    const names = await getAppointmentNames(conn, appt.id);
     await createPatientNotification(conn, appt.patient_id, "consultation_completed", {
       appointment_id: appt.id,
+      date: appt.scheduled_date,
+      time: appt.scheduled_time,
+      doctor_name: names.doctor_name,
+      branch_name: names.branch_name,
     });
   });
 
@@ -85,10 +90,8 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
   });
 
   const clinicPhones = await branchContactPhones(pool, appointment.branch_id);
-  void notifyPhonesSmsWhatsapp(
-    clinicPhones,
-    `Jido Healthcare: Consultation for ${info?.patient_name ?? "a patient"} with Dr. ${info?.doctor_name} at ${info?.branch_name} has been completed.`,
-  );
+  const clinicCompleteText = `Jido Healthcare: Consultation for ${info?.patient_name ?? "a patient"} with Dr. ${info?.doctor_name} at ${info?.branch_name} has been completed.`;
+  void notifyPhonesWhatsapp(clinicPhones, clinicCompleteText);
 
   if (patientPhone) {
     const completeText = personalizeForPatient(
@@ -96,7 +99,7 @@ export const PATCH = api({ rateLimit: 200 }, async (ctx) => {
       info.visitor_name,
       info.visitor_relationship,
     );
-    void notifyPhonesSmsWhatsapp([patientPhone], completeText);
+    void notifyPhonesWhatsapp([patientPhone], completeText);
     if (receipt) {
       const pdf = buildReceiptPdf({
         title: "Consultation Completion Receipt",

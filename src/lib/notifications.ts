@@ -10,7 +10,9 @@ export type NotificationType =
   | "prescription_ready"
   | "doctor_invited"
   | "doctor_invite_accepted"
+  | "staff_joined"
   | "appointment_cancelled"
+  | "appointment_rescheduled"
   | "lab_test_booked"
   | "lab_test_approved"
   | "lab_test_rejected"
@@ -57,11 +59,34 @@ export async function notifyBranchStaff(
     `INSERT INTO notifications (id, user_id, branch_id, type, payload_json) VALUES ?`,
     [values],
   );
+
+  const content = pushContentForClinic(type, payload);
+  await Promise.all(
+    rows.map((row) =>
+      sendFcmToUser(row.user_id as string, { title: content.title, body: content.body, data: { type } }, "clinic"),
+    ),
+  );
 }
 
 export interface PushMessage {
   title: string;
   body: string;
+}
+
+function withDoctor(name: unknown): string | null {
+  return typeof name === "string" && name.trim().length > 0 ? `Dr. ${name}` : null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text;
+}
+
+function money(amount: unknown, currency: unknown): string | null {
+  return typeof amount === "number" ? `${amount}${typeof currency === "string" ? ` ${currency}` : ""}` : null;
 }
 
 /** Maps an in-app notification type to a user-facing push title/body. */
@@ -70,81 +95,130 @@ export function pushContentFor(
   payload: Record<string, unknown> = {},
 ): PushMessage {
   const when = [payload.date, payload.time].filter(Boolean).join(" at ");
+  const doctor = withDoctor(payload.doctor_name);
+  const branch = asString(payload.branch_name);
+  const doctorAt = [doctor, branch ? `at ${branch}` : null].filter(Boolean).join(" ");
+  const testName = asString(payload.test_name);
+  const apptNo = asString(payload.appointment_number);
+  const apptNoSuffix = apptNo ? ` ${apptNo}` : "";
+  const reasonSuffix = asString(payload.reason) ? ` Reason: ${payload.reason}` : "";
   switch (type) {
     case "booking_confirmed":
       return {
         title: "Appointment confirmed",
-        body: when
-          ? `Your appointment for ${when} has been confirmed.`
-          : "Your appointment has been confirmed.",
+        body: doctor
+          ? `Your appointment with ${doctorAt}${when ? ` on ${when}` : ""} has been confirmed.`
+          : when
+            ? `Your appointment for ${when} has been confirmed.`
+            : "Your appointment has been confirmed.",
       };
-    case "payment_received":
+    case "payment_received": {
+      const amount = money(payload.amount, payload.currency);
+      const method = asString(payload.method) ? ` via ${payload.method}` : "";
       return {
         title: "Payment received",
-        body: `Payment for your appointment${when ? ` on ${when}` : ""} has been received.`,
+        body: amount
+          ? `Payment of ${amount}${method} received for your appointment${doctor ? ` with ${doctorAt}` : ""}${when ? ` on ${when}` : ""}.`
+          : `Payment for your appointment${when ? ` on ${when}` : ""} has been received.`,
       };
+    }
     case "consultation_completed":
       return {
         title: "Consultation completed",
-        body: `Your consultation${when ? ` on ${when}` : ""} is complete.`,
+        body: doctor
+          ? `Your consultation with ${doctorAt}${when ? ` on ${when}` : ""} is complete.`
+          : `Your consultation${when ? ` on ${when}` : ""} is complete.`,
       };
-    case "prescription_ready":
+    case "prescription_ready": {
+      const excerpt = asString(payload.prescription_text);
+      const snippet = excerpt ? truncate(excerpt.trim(), 200) : null;
       return {
         title: "Prescription ready",
-        body: "Your prescription is ready to view.",
+        body: doctor
+          ? `${doctor} has issued your prescription${snippet ? `: ${snippet}` : ""}.`
+          : snippet
+            ? `Your prescription is ready: ${snippet}`
+            : "Your prescription is ready to view.",
       };
-    case "patient_document_uploaded":
+    }
+    case "patient_document_uploaded": {
+      const title = asString(payload.title);
+      const description = asString(payload.description);
+      const snippet = description ? truncate(description.trim(), 150) : null;
       return {
         title: "New document available",
-        body: typeof payload.title === "string"
-          ? `${payload.title} is now available in Reports & Prescriptions.`
+        body: title
+          ? `${title}${snippet ? ` — ${snippet}` : ""} is now available in Reports & Prescriptions.`
           : "A new document is now available in Reports & Prescriptions.",
       };
+    }
     case "appointment_cancelled":
       return {
         title: "Appointment cancelled",
-        body: `Your appointment${when ? ` on ${when}` : ""} has been cancelled.`,
+        body: doctor
+          ? `Your appointment with ${doctorAt}${when ? ` on ${when}` : ""} has been cancelled.${reasonSuffix}`
+          : `Your appointment${when ? ` on ${when}` : ""} has been cancelled.${reasonSuffix}`,
       };
+    case "appointment_rescheduled": {
+      const oldWhen = [payload.old_date, payload.old_time].filter(Boolean).join(" at ");
+      const newWhen = [payload.new_date, payload.new_time].filter(Boolean).join(" at ");
+      return {
+        title: "Appointment rescheduled",
+        body: `Please reschedule your appointment${doctor ? ` with ${doctorAt}` : ""} — the doctor's availability changed${oldWhen ? `, so your visit on ${oldWhen}` : ""}${newWhen ? ` has been moved to ${newWhen}` : ""}.${reasonSuffix}`,
+      };
+    }
     case "lab_test_booked":
       return {
         title: "Lab test booked",
-        body: when
-          ? `Your lab test booking for ${when} has been submitted.`
-          : "Your lab test booking has been submitted.",
+        body: testName
+          ? `Your lab test booking${apptNoSuffix} (${testName})${branch ? ` at ${branch}` : ""}${when ? ` for ${when}` : ""} has been submitted.`
+          : when
+            ? `Your lab test booking for ${when} has been submitted.`
+            : "Your lab test booking has been submitted.",
       };
-    case "lab_test_approved":
+    case "lab_test_approved": {
+      const precautions = Array.isArray(payload.precautions)
+        ? payload.precautions.filter((p): p is string => typeof p === "string")
+        : [];
       return {
         title: "Lab test confirmed",
-        body: when
-          ? `Your lab test appointment for ${when} has been confirmed.`
-          : "Your lab test appointment has been confirmed.",
+        body: testName
+          ? `Your lab test${apptNoSuffix} (${testName})${branch ? ` at ${branch}` : ""}${when ? ` on ${when}` : ""} has been confirmed.${precautions.length > 0 ? ` Precautions: ${precautions.join(", ")}` : ""}`
+          : when
+            ? `Your lab test appointment for ${when} has been confirmed.`
+            : "Your lab test appointment has been confirmed.",
       };
+    }
     case "lab_test_rejected":
       return {
         title: "Lab test booking rejected",
-        body: when
-          ? `Your lab test booking for ${when} has been rejected.`
-          : "Your lab test booking has been rejected.",
+        body: testName
+          ? `Your lab test booking${apptNoSuffix} (${testName}) has been rejected.${reasonSuffix}`
+          : `Your lab test booking${when ? ` for ${when}` : ""} has been rejected.${reasonSuffix}`,
       };
     case "lab_test_cancelled":
       return {
         title: "Lab test cancelled",
-        body: when
-          ? `Your lab test appointment for ${when} has been cancelled.`
-          : "Your lab test appointment has been cancelled.",
+        body: testName
+          ? `Your lab test${apptNoSuffix} (${testName})${when ? ` on ${when}` : ""} has been cancelled.${reasonSuffix}`
+          : `Your lab test appointment${when ? ` on ${when}` : ""} has been cancelled.${reasonSuffix}`,
       };
     case "lab_test_completed":
       return {
         title: "Lab test completed",
-        body: when
-          ? `Your lab test on ${when} has been completed.`
-          : "Your lab test has been completed.",
+        body: testName
+          ? `Your lab test${apptNoSuffix} (${testName}) has been completed. Your report is now available.`
+          : `Your lab test${when ? ` on ${when}` : ""} has been completed.`,
       };
-    case "lab_test_payment_success":
+    case "lab_test_payment_success": {
+      const amount = money(payload.amount, payload.currency);
       return {
         title: "Payment received",
-        body: `Payment for your lab test${when ? ` on ${when}` : ""} has been received.`,
+        body: amount
+          ? `Payment of ${amount} received for your lab test${testName ? ` (${testName})` : ""}${apptNoSuffix}.`
+          : `Payment for your lab test${when ? ` on ${when}` : ""} has been received.`,
       };
+    }
     case "subscription_expiring":
       return {
         title: "Subscription expiring soon",
@@ -207,6 +281,145 @@ export async function createPatientNotification(
     body: content.body,
     data: { type, ...(typeof payload.appointment_id === "string" ? { appointment_id: payload.appointment_id } : {}) },
   });
+}
+
+/**
+ * Maps an in-app notification type to a push title/body worded for the xclinic
+ * (clinic-side) audience — staff, doctors, and clinic owners — as opposed to
+ * `pushContentFor`, which is worded for the patient app.
+ */
+export function pushContentForClinic(
+  type: NotificationType,
+  payload: Record<string, unknown> = {},
+): PushMessage {
+  const when = [payload.date, payload.time].filter(Boolean).join(" at ");
+  const visitor = asString(payload.visitor_name);
+  const doctor = withDoctor(payload.doctor_name);
+  const branch = asString(payload.branch_name);
+  const clinic = asString(payload.clinic_name);
+  const staffName = asString(payload.staff_name);
+  const testName = asString(payload.test_name);
+  const apptNo = asString(payload.appointment_number);
+  const apptNoSuffix = apptNo ? ` ${apptNo}` : "";
+  const reasonSuffix = asString(payload.reason) ? ` Reason: ${payload.reason}` : "";
+  switch (type) {
+    case "new_booking":
+      return {
+        title: "New booking",
+        body: visitor
+          ? `${visitor} booked an appointment${doctor ? ` with ${doctor}` : ""}${branch ? ` at ${branch}` : ""}${when ? ` for ${when}` : ""}.`
+          : `A new appointment was booked${when ? ` for ${when}` : ""}.`,
+      };
+    case "appointment_cancelled":
+      return {
+        title: "Appointment cancelled",
+        body: visitor
+          ? `${visitor}'s appointment${doctor ? ` with ${doctor}` : ""}${when ? ` on ${when}` : ""} has been cancelled.${reasonSuffix}`
+          : `An appointment${when ? ` on ${when}` : ""} has been cancelled.${reasonSuffix}`,
+      };
+    case "lab_test_booked":
+      return {
+        title: "New lab test booking",
+        body: visitor
+          ? `${visitor} booked a lab test${testName ? ` (${testName})` : ""}${branch ? ` at ${branch}` : ""}${when ? ` for ${when}` : ""}.`
+          : `A new lab test was booked${when ? ` for ${when}` : ""}.`,
+      };
+    case "lab_test_cancelled":
+      return {
+        title: "Lab test cancelled",
+        body: visitor
+          ? `${visitor}'s lab test${testName ? ` (${testName})` : ""}${when ? ` on ${when}` : ""} has been cancelled.${reasonSuffix}`
+          : `A lab test${when ? ` on ${when}` : ""} has been cancelled.${reasonSuffix}`,
+      };
+    case "doctor_invite_accepted": {
+      const at = [clinic, branch].filter(Boolean).join(" — ");
+      return {
+        title: "Doctor invitation accepted",
+        body: doctor
+          ? `${doctor} has accepted your invitation${at ? ` and joined ${at}` : ""}.`
+          : "A doctor has accepted your invitation.",
+      };
+    }
+    case "staff_joined": {
+      const at = [clinic, branch].filter(Boolean).join(" — ");
+      return {
+        title: "Staff member joined",
+        body: staffName
+          ? `${staffName} has joined${at ? ` ${at}` : " your clinic"} as a staff member.`
+          : `A staff member has joined${at ? ` ${at}` : " your clinic"}.`,
+      };
+    }
+    case "payment_received": {
+      const amount = money(payload.amount, payload.currency);
+      const method = asString(payload.method) ? ` via ${payload.method}` : "";
+      return {
+        title: "Payment received",
+        body: amount
+          ? `A payment of ${amount}${method} has been received${visitor ? ` from ${visitor}` : ""}${branch ? ` at ${branch}` : ""}.`
+          : "A payment has been received.",
+      };
+    }
+    case "lab_test_payment_success": {
+      const amount = money(payload.amount, payload.currency);
+      return {
+        title: "Lab test payment received",
+        body: amount
+          ? `A payment of ${amount} has been received${visitor ? ` from ${visitor}` : ""} for lab test${testName ? ` (${testName})` : ""}${apptNoSuffix}.`
+          : "A lab test payment has been received.",
+      };
+    }
+    case "subscription_expiring":
+    case "subscription_expired":
+    case "subscription_activated":
+    case "subscription_deactivated":
+    case "subscription_offer":
+      return pushContentFor(type, payload);
+    default:
+      return {
+        title: type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+        body: typeof payload.message === "string" ? payload.message : "You have a new notification.",
+      };
+  }
+}
+
+/**
+ * Creates the in-app notification AND delivers an FCM push (xclinic app) to every
+ * device the given clinic-side user (staff, doctor, or owner) is registered on.
+ * Push failures never fail the underlying request.
+ */
+export async function createClinicUserNotification(
+  db: Pick<PoolConnection, "query">,
+  userId: string,
+  type: NotificationType,
+  payload: Record<string, unknown> = {},
+  branchId: string | null = null,
+): Promise<string> {
+  const id = await createNotification(db, userId, type, payload, branchId);
+  const content = pushContentForClinic(type, payload);
+  await sendFcmToUser(userId, { title: content.title, body: content.body, data: { type } }, "clinic");
+  return id;
+}
+
+/**
+ * Creates the in-app notification AND delivers an FCM push (xclinic app) to both
+ * audiences on the clinic side of an event: every branch_staff member at the
+ * branch, and the clinic owner. Use this (instead of calling `notifyBranchStaff`
+ * alone) for anything a patient triggers that the clinic needs to act on or track
+ * (cancellations, payments, etc.) — without it, the owner silently never learns
+ * about the event unless they also happen to be registered as branch staff.
+ */
+export async function notifyClinicSide(
+  db: Pick<PoolConnection, "query">,
+  branchId: string,
+  clinicId: string,
+  type: NotificationType,
+  payload: Record<string, unknown> = {},
+): Promise<void> {
+  const owner = await clinicOwnerContact(db, clinicId);
+  await Promise.all([
+    notifyBranchStaff(db, branchId, type, payload),
+    owner ? createClinicUserNotification(db, owner.userId, type, payload, branchId) : Promise.resolve(),
+  ]);
 }
 
 /**
@@ -323,24 +536,17 @@ ${imgTag}
 
 // Hosted on Cloudinary (not APP_URL) so the logo renders in emails even if
 // the app deployment is down or hasn't served /public assets yet.
-const LOGO_URL =
-  process.env.EMAIL_LOGO_URL ??
-  "https://res.cloudinary.com/p274ocjz/image/upload/v1787036452/medinexa/email-logo.png";
 const APP_ICON_URL =
   process.env.EMAIL_APP_ICON_URL ??
   "https://res.cloudinary.com/p274ocjz/image/upload/v1787035848/medinexa/email-app-icon.png";
-
-function logoImg(): string {
-  return `<img src="${LOGO_URL}" alt="Jido Healthcare" style="display:block;margin:0 auto;border:0;max-height:56px;width:auto;filter:drop-shadow(0 4px 10px rgba(0,0,0,0.15));"/>`;
-}
 
 function appIconImg(): string {
   return `<img src="${APP_ICON_URL}" alt="Jido Healthcare" width="64" height="64" style="display:block;margin:0 auto;border:0;border-radius:14px;box-shadow:0 4px 10px rgba(0,0,0,0.15);"/>`;
 }
 
-/** Branded HTML email with the centered logo (non-patient recipients). */
+/** Branded HTML email with the centered app icon as the logo. */
 export function emailHtml(body: string): string {
-  return emailShell(logoImg(), textToHtml(body));
+  return emailShell(appIconImg(), textToHtml(body));
 }
 
 /** Branded HTML email for a login OTP, with the code rendered large and bold in a dashed box. */
@@ -352,7 +558,7 @@ export function otpEmailHtml(otp: string, expiryMinutes: number): string {
 <span style="font-family:'Courier New',Courier,monospace;font-size:36px;font-weight:800;letter-spacing:8px;color:${BRAND_PURPLE};">${escapeHtml(otp)}</span>
 </div>
 <p style="color:#94a3b8;font-size:13px;margin:0;">This code expires in ${expiryMinutes} minutes. Do not share this code with anyone.</p>`;
-  return emailShell(logoImg(), body);
+  return emailShell(appIconImg(), body);
 }
 
 /** Branded HTML email with the centered app icon (patient recipients). */
@@ -388,7 +594,7 @@ ${opts.note ? `<p style="color:#94a3b8;font-size:13px;margin:0 0 20px;">${escape
 <hr style="border:0;border-top:1px solid #e2e8f0;margin:25px 0;"/>
 <p style="color:#94a3b8;font-size:12px;margin:0 0 8px;line-height:1.4;">If the button doesn't work, copy and paste this link into your browser:</p>
 <p style="color:${BRAND_PURPLE};font-size:12px;word-break:break-all;margin:0;">${escapeHtml(opts.ctaUrl)}</p>`;
-  return emailShell(logoImg(), body);
+  return emailShell(appIconImg(), body);
 }
 
 /**
@@ -423,7 +629,7 @@ ${opts.intro ? `<p style="color:#64748b;font-size:14px;margin:0 0 24px;">${escap
 </td></tr>
 </table>
 ${opts.note ? `<p style="color:#94a3b8;font-size:12px;margin:0;line-height:1.5;">${escapeHtml(opts.note)}</p>` : ""}`;
-  return emailShell(opts.patientFacing ? appIconImg() : logoImg(), body);
+  return emailShell(appIconImg(), body);
 }
 
 /**
@@ -445,7 +651,7 @@ You have been successfully added to <strong>${escapeHtml(opts.branchName)}</stro
 You can now manage your schedule and appointments at this branch using your existing MediBook account. No further action is required.
 </p>
 <p style="color:#94a3b8;font-size:13px;margin:0;">If you have any questions, please contact the clinic administrator.</p>`;
-  return emailShell(logoImg(), body);
+  return emailShell(appIconImg(), body);
 }
 
 /**
@@ -520,16 +726,25 @@ export async function sendEmail(
 /**
  * SMS delivery through the Jido SMS Gateway (credentials in .env via
  * SMS_API_KEY, an optional SMS_API_URL override). Falls back to a console log
- * in local dev when SMS_API_KEY is not configured. Never throws.
+ * in local dev when SMS_API_KEY is not configured. Never throws — resolves
+ * true when the gateway accepted the message, false otherwise.
+ *
+ * Not exported. Policy: SMS is reserved for OTP/confirmation codes and doctor
+ * invitations — every other notification (to patients, clinic owners, doctors,
+ * and branch staff alike) goes out over WhatsApp + email + push only, with no
+ * SMS fallback if those fail. This is the one place that can reach the SMS
+ * gateway, so keeping it unexported is what actually enforces the policy —
+ * route handlers can't call it even by accident. The only callers are
+ * `sendOtpSms`/`sendOtpDual` (OTP) and `sendInviteDual` (doctor invites) below.
  */
-export async function sendSms(to: string, body: string): Promise<void> {
+async function sendSms(to: string, body: string): Promise<boolean> {
   const apiKey = process.env.SMS_API_KEY;
   const apiUrl =
     process.env.SMS_API_URL ??
     "https://jido-sms-gateway.onrender.com/api/3rdparty/v1/messages";
   if (!apiKey) {
     console.log(`[sms:stub] to=${to} body=${body}`);
-    return;
+    return true;
   }
   try {
     const res = await fetch(apiUrl, {
@@ -546,9 +761,12 @@ export async function sendSms(to: string, body: string): Promise<void> {
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       console.error(`[sms] Gateway rejected send to ${to} (${res.status}): ${detail}`);
+      return false;
     }
+    return true;
   } catch (err) {
     console.error(`[sms] send to ${to} failed:`, err);
+    return false;
   }
 }
 
@@ -671,13 +889,17 @@ async function runWahaSessionRecovery(
   console.error(`[whatsapp] session "${session}" did not recover to WORKING within 2 hours.`);
 }
 
-export async function sendWhatsapp(to: string, body: string): Promise<void> {
+/**
+ * Resolves true when WAHA accepted the message, false otherwise (a background
+ * session-recovery retry may still deliver it later). Never throws.
+ */
+export async function sendWhatsapp(to: string, body: string): Promise<boolean> {
   const apiKey = process.env.WAHA_API_KEY;
   const baseUrl = process.env.WAHA_BASE_URL ?? "http://localhost:3000";
   const session = process.env.WAHA_SESSION ?? "default";
   if (!apiKey) {
     console.log(`[whatsapp:stub] to=${to} body=${body}`);
-    return;
+    return true;
   }
   const chatId = `${to.replace(/\D/g, "")}@c.us`;
   const payload = { session, chatId, text: body };
@@ -691,9 +913,12 @@ export async function sendWhatsapp(to: string, body: string): Promise<void> {
       if (res.status === 404 || res.status === 422) {
         void recoverWahaSessionAndRetry(baseUrl, apiKey, session, "/api/sendText", payload);
       }
+      return false;
     }
+    return true;
   } catch (err) {
     console.error(`[whatsapp] send to ${to} failed:`, err);
+    return false;
   }
 }
 
@@ -735,9 +960,9 @@ export async function sendWhatsappFile(
   }
 }
 
-/** Sends the same message to every phone number over both SMS and WhatsApp. */
-export async function notifyPhonesSmsWhatsapp(phones: string[], text: string): Promise<void> {
-  await Promise.all(phones.flatMap((phone) => [sendSms(phone, text), sendWhatsapp(phone, text)]));
+/** Sends the same message to every phone number over WhatsApp. */
+export async function notifyPhonesWhatsapp(phones: string[], text: string): Promise<void> {
+  await Promise.all(phones.map((phone) => sendWhatsapp(phone, text)));
 }
 
 /**
@@ -763,8 +988,8 @@ export async function sendOtpSms(
   phone: string,
   otp: string,
   expiryMinutes: number,
-): Promise<void> {
-  await sendSms(
+): Promise<boolean> {
+  return sendSms(
     phone,
     `Your Jido Healthcare confirmation code is ${otp}. It expires in ${expiryMinutes} minutes. Do not share this code with anyone.`,
   );
@@ -775,67 +1000,111 @@ export async function sendOtpWhatsapp(
   phone: string,
   otp: string,
   expiryMinutes: number,
-): Promise<void> {
-  await sendWhatsapp(
+): Promise<boolean> {
+  return sendWhatsapp(
     phone,
     `Your Jido Healthcare confirmation code is ${otp}. It expires in ${expiryMinutes} minutes. Do not share this code with anyone.`,
   );
 }
 
+export type OtpChannel = "whatsapp" | "sms" | "email";
+
 /**
- * Sends a one-time code via SMS, email (if an email is on file), and WhatsApp.
- * Failures never reject the caller.
+ * Per-channel OTP delivery status: "sent" (provider accepted it), "failed"
+ * (provider rejected it, errored, or timed out), "pending" (still in flight when
+ * another channel had already succeeded — its final status is logged), or
+ * "skipped" (channel not applicable, e.g. no email on file).
  */
-export async function sendOtpDual(opts: {
+export type OtpChannelStatus = "sent" | "failed" | "pending" | "skipped";
+
+export interface OtpDeliveryResult {
+  /** True when at least one channel delivered the code. */
+  delivered: boolean;
+  delivery: Record<OtpChannel, OtpChannelStatus>;
+}
+
+/** A channel that hasn't answered within this window counts as failed. */
+const OTP_CHANNEL_TIMEOUT_MS = 15_000;
+
+/**
+ * Sends the same one-time code via WhatsApp, SMS, and email (if an email is on
+ * file), all in parallel. Resolves as soon as ANY channel confirms delivery —
+ * it never waits on slower channels once one has succeeded — or once every
+ * channel has failed. Each channel's final outcome is logged independently,
+ * including ones that settle after this has resolved. Never throws.
+ */
+export function sendOtpDual(opts: {
   phone: string;
   email?: string | null;
   otp: string;
   expiryMinutes: number;
-}): Promise<void> {
-  const smsPromise = sendOtpSms(opts.phone, opts.otp, opts.expiryMinutes);
-  const whatsappPromise = sendOtpWhatsapp(opts.phone, opts.otp, opts.expiryMinutes);
-  const emailPromise = opts.email
-    ? sendEmail(
-        opts.email,
+}): Promise<OtpDeliveryResult> {
+  const channels: Partial<Record<OtpChannel, () => Promise<boolean>>> = {
+    whatsapp: () => sendOtpWhatsapp(opts.phone, opts.otp, opts.expiryMinutes),
+    sms: () => sendOtpSms(opts.phone, opts.otp, opts.expiryMinutes),
+  };
+  if (opts.email) {
+    const email = opts.email;
+    channels.email = () =>
+      sendEmail(
+        email,
         "Your Jido Healthcare login code",
         `Your one-time login code is ${opts.otp}. It expires in ${opts.expiryMinutes} minutes. Do not share this code with anyone.`,
         otpEmailHtml(opts.otp, opts.expiryMinutes),
-      )
-    : Promise.resolve();
-  await Promise.allSettled([smsPromise, whatsappPromise, emailPromise]);
+      );
+  }
+
+  const delivery: Record<OtpChannel, OtpChannelStatus> = {
+    whatsapp: "pending",
+    sms: "pending",
+    email: opts.email ? "pending" : "skipped",
+  };
+  const active = Object.keys(channels) as OtpChannel[];
+
+  return new Promise((resolve) => {
+    let settled = 0;
+    let resolved = false;
+    const finish = (delivered: boolean) => {
+      if (resolved) return;
+      resolved = true;
+      console.log(`[otp] to=${opts.phone} delivered=${delivered} ${JSON.stringify(delivery)}`);
+      resolve({ delivered, delivery: { ...delivery } });
+    };
+
+    for (const channel of active) {
+      const started = Date.now();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<"timeout">((r) => {
+        timer = setTimeout(() => r("timeout"), OTP_CHANNEL_TIMEOUT_MS);
+      });
+      Promise.race([channels[channel]!().catch(() => false), timeout])
+        .then((outcome) => {
+          clearTimeout(timer);
+          const ok = outcome === true;
+          const lateNote = resolved ? " (after response)" : "";
+          console.log(
+            `[otp] channel=${channel} to=${opts.phone} status=${ok ? "sent" : outcome === "timeout" ? "timeout" : "failed"} ms=${Date.now() - started}${lateNote}`,
+          );
+          if (!resolved) delivery[channel] = ok ? "sent" : "failed";
+          settled += 1;
+          if (ok) finish(true);
+          else if (settled === active.length) finish(false);
+        });
+    }
+  });
 }
 
-/** Sends a doctor invitation link via SMS. */
-export async function sendInviteSms(opts: {
+/**
+ * Sends a doctor invitation link via SMS + WhatsApp (email is sent separately by the
+ * caller, since it also carries the branded invite card). Doctor invitations are the
+ * one non-OTP flow allowed to use SMS.
+ */
+export async function sendInviteDual(opts: {
   phone: string;
   doctorName: string;
   clinicName: string;
   inviteUrl: string;
 }): Promise<void> {
-  await sendSms(
-    opts.phone,
-    `Dr. ${opts.doctorName}, you have been invited to join ${opts.clinicName} on MediBook. Accept your invitation here: ${opts.inviteUrl}`,
-  );
-}
-
-/**
- * Sends an SMS to a user's registered phone number, if one is on file.
- * Used to mirror email notifications over SMS (per the dual-channel policy).
- * Never throws; silently no-ops when the user has no phone.
- */
-export async function sendSmsIfPhone(
-  db: Pick<PoolConnection, "query">,
-  userId: string,
-  message: string,
-): Promise<void> {
-  try {
-    const [rows] = await db.query<RowDataPacket[]>(
-      `SELECT phone FROM users WHERE id = ? AND phone IS NOT NULL`,
-      [userId],
-    );
-    const phone = rows[0]?.phone as string | undefined;
-    if (phone) await sendSms(phone, message);
-  } catch (err) {
-    console.error(`[sms] failed to send to user ${userId}:`, err);
-  }
+  const text = `Dr. ${opts.doctorName}, you have been invited to join ${opts.clinicName} on MediBook. Accept your invitation here: ${opts.inviteUrl}`;
+  await Promise.allSettled([sendSms(opts.phone, text), sendWhatsapp(opts.phone, text)]);
 }

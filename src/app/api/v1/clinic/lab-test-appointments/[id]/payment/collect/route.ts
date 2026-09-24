@@ -3,7 +3,7 @@ import { requireRoles } from "@/lib/auth";
 import { pool, withTransaction } from "@/lib/db";
 import { parseBody } from "@/lib/validators";
 import { getLabTestAppointmentInScope, auditLabAction, serializeLabTestPayment } from "@/lib/lab-tests";
-import { createPatientNotification, notifyPhonesSmsWhatsapp, personalizeForPatient } from "@/lib/notifications";
+import { createPatientNotification, notifyClinicSide, notifyPhonesWhatsapp, personalizeForPatient } from "@/lib/notifications";
 import { assertBranchStaffPermission } from "@/lib/permissions";
 import { assertClinicOperational } from "@/lib/subscriptions";
 import { badRequest, conflict, notFound } from "@/lib/errors";
@@ -86,6 +86,17 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
     currency: appointment.currency,
   });
 
+  await notifyClinicSide(pool, appointment.branch_id, appointment.clinic_id, "lab_test_payment_success", {
+    appointment_id: id,
+    appointment_number: appointment.appointment_number,
+    patient_id: appointment.patient_id,
+    test_name: appointment.test_name,
+    amount: Number(appointment.price),
+    currency: appointment.currency,
+    visitor_name: appointment.visitor_name ?? appointment.patient_name,
+    branch_name: appointment.branch_name,
+  });
+
   const [rows] = await pool.query<RowDataPacket[]>(
     `SELECT * FROM lab_test_payments WHERE appointment_id = ? ORDER BY updated_at DESC LIMIT 1`,
     [id],
@@ -129,7 +140,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       appointment.visitor_name,
       appointment.visitor_relationship,
     );
-    void notifyPhonesSmsWhatsapp([patientPhone], paymentText);
+    void notifyPhonesWhatsapp([patientPhone], paymentText);
   }
 
   return json(serializeLabTestPayment(rows[0]));

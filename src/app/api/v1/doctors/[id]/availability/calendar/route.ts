@@ -3,6 +3,7 @@ import { api, json } from "@/lib/http";
 import { badRequest, notFound } from "@/lib/errors";
 import {
   addDays,
+  bookingCutoffAppliesToRole,
   computeDateAvailability,
   getActiveLeaves,
   getAvailabilityPeriods,
@@ -51,6 +52,7 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
   const leaves = leavesByAssignment.get(assignment.assignmentId) ?? [];
   const today = todayInTz(assignment.timezone);
   const branchSchedule = await getBranchSchedule(pool, assignment.branchId, { from: monthStart, to: monthEnd });
+  const applyBookingCutoff = bookingCutoffAppliesToRole(ctx.auth?.role);
 
   const dates = [];
   for (let d = monthStart; d <= monthEnd; d = addDays(d, 1)) {
@@ -64,6 +66,7 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
       leaves,
       today,
       branchSchedule,
+      applyBookingCutoff,
     );
     dates.push({ date: info.date, status: info.status, is_bookable: info.is_bookable });
   }

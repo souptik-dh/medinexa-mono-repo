@@ -11,12 +11,12 @@ import {
 import { generateLabTestSlots } from "@/lib/lab-test-availability";
 import {
   notifyBranchStaff,
-  createNotification,
+  createClinicUserNotification,
   branchContactEmails,
   branchContactPhones,
   sendEmail,
   detailsEmailHtml,
-  notifyPhonesSmsWhatsapp,
+  notifyPhonesWhatsapp,
   personalizeForPatient,
 } from "@/lib/notifications";
 import { runIdempotent } from "@/lib/idempotency";
@@ -251,7 +251,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         visitor_relationship: patientDetails.relationship,
       };
       await notifyBranchStaff(conn, body.branch_id, "lab_test_booked", notifyPayload);
-      await createNotification(conn, branch.owner_user_id, "lab_test_booked", notifyPayload, body.branch_id);
+      await createClinicUserNotification(conn, branch.owner_user_id, "lab_test_booked", notifyPayload, body.branch_id);
 
       await auditLabAction(conn, auth.userId, "appointment_created", appointmentId, {
         branch_id: body.branch_id,
@@ -312,8 +312,8 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
       await sendEmail(email, emailSubject, "", emailBody);
     }
 
-    const smsText = `Jido Healthcare: New lab test booking ${appointmentNumber} (${blt.test_name}) for ${patientDetails.name} at ${branch.name} on ${body.appointment_date} at ${body.start_time} — please review and approve/reject.`;
-    void notifyPhonesSmsWhatsapp(staffPhones, smsText);
+    const staffWhatsappText = `Jido Healthcare: New lab test booking ${appointmentNumber} (${blt.test_name}) for ${patientDetails.name} at ${branch.name} on ${body.appointment_date} at ${body.start_time} — please review and approve/reject.`;
+    void notifyPhonesWhatsapp(staffPhones, staffWhatsappText);
 
     const patientPhone = appointment.visitor_phone || appointment.patient_phone;
     if (patientPhone) {
@@ -322,7 +322,7 @@ export const POST = api({ rateLimit: 200 }, async (ctx) => {
         patientDetails.name,
         patientDetails.relationship,
       );
-      void notifyPhonesSmsWhatsapp([patientPhone], bookedText);
+      void notifyPhonesWhatsapp([patientPhone], bookedText);
     }
 
     return { status: 201, body: serializeLabTestAppointment(appointment) };

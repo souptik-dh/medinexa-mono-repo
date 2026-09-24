@@ -4,6 +4,7 @@ import { pool, type Row } from "@/lib/db";
 import { badRequest, notFound } from "@/lib/errors";
 import {
   addDays,
+  bookingCutoffAppliesToRole,
   computeDateAvailability,
   getActiveLeaves,
   getAvailabilityPeriods,
@@ -30,6 +31,7 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
   const from = sp.get("from");
   const to = sp.get("to");
   const dateParam = sp.get("date");
+  const applyBookingCutoff = bookingCutoffAppliesToRole(ctx.auth?.role);
 
   // Range mode (§2): from/to + branch_id, one call replaces N single-date lookups.
   if (from || to) {
@@ -76,6 +78,7 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
         leaves,
         today,
         branchSchedule,
+        applyBookingCutoff,
       );
       dates.push({
         date: info.date,
@@ -150,6 +153,7 @@ export const GET = api({ rateLimit: 120 }, async (ctx) => {
     leaves,
     today,
     branchSchedule,
+    applyBookingCutoff,
   );
 
   return json({

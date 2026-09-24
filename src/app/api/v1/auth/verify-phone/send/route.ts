@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { api, json, readJson } from "@/lib/http";
 import { parseBody, phoneSchema, optionalEmailSchema } from "@/lib/validators";
-import { sendPhoneOtp } from "@/lib/auth-flows";
+import { sendPhoneOtp, sendOtpStatus } from "@/lib/auth-flows";
 
 const schema = z.object({
   phone: phoneSchema,
@@ -21,5 +21,5 @@ export const POST = api({ rateLimit: 20, rateKey: "ip" }, async (ctx) => {
     email: body.email ?? null,
     purpose: "phone_verification",
   });
-  return json(result);
+  return json(result, sendOtpStatus(result));
 });
